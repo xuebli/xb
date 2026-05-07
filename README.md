@@ -33,24 +33,27 @@ xb init --package myapp
 xb init --package myapp --sudoers
 
 cd myapp
-bash dev.sh start    # 启动
-bash dev.sh stop     # 停止
+
+# 启动开发环境
+xb dev
+
+# 查看状态
+xb dev --status
+
+# 停止
+xb dev --stop
 ```
 
 ## 构建
 
 ```bash
-# 构建前端
-bash build.sh -f
-
-# 构建后端
-bash build.sh -b
-
-# 构建 Electron DEB 包
-bash build.sh -e
-
 # 构建所有
-bash build.sh -a
+xb build
+
+# 单独构建
+xb build -f    # 前端
+xb build -b    # 后端
+xb build -e    # Electron DEB
 ```
 
 ## 项目结构
@@ -73,6 +76,13 @@ myapp/
 ├── dev.sh                  # 开发脚本
 ├── build.sh                # 打包脚本
 └── .venv                   # Python 虚拟环境
+```
+
+## 版本管理
+
+```bash
+# 查看当前版本
+xb version
 ```
 
 ## 配置

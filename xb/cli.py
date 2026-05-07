@@ -6,13 +6,36 @@ xb CLI 入口
 import click
 from rich.console import Console
 
+from .commands.build import build
+from .commands.dev import dev
 from .commands.init import XbGroup, init_command
+from .commands.version import version
 
 console = Console()
 
 
-@click.group(cls=XbGroup)
-@click.version_option(version="0.0.0", prog_name="xb")
+class ColorfulXbGroup(XbGroup):
+    def format_help(self, ctx, formatter):
+        console.print(
+            "\n[bold green]Usage:[/bold green] [cyan]xb [OPTIONS] COMMAND [ARGS]...[/cyan]\n"
+        )
+        console.print("[dim]xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具[/dim]")
+        console.print("[dim]类似 uv，专为 Electron 桌面应用设计。[/dim]\n")
+        console.print("[bold green]Options:[/bold green]")
+        console.print("  [cyan]--version[/cyan]  Show the version and exit.")
+        console.print("  [cyan]--help[/cyan]     Show this message and exit.\n")
+        console.print("[bold green]Commands:[/bold green]")
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None:
+                continue
+            help_text = cmd.get_short_help_str()
+            console.print(f"  [cyan]{subcommand:<10}[/cyan] {help_text}")
+        console.print()
+
+
+@click.group(cls=ColorfulXbGroup)
+@click.version_option(version="0.1.0", prog_name="xb")
 def main():
     """
     xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具
@@ -22,8 +45,10 @@ def main():
     pass
 
 
-# 注册命令
 main.add_command(init_command, name="init")
+main.add_command(dev, name="dev")
+main.add_command(build, name="build")
+main.add_command(version, name="version")
 
 
 if __name__ == "__main__":

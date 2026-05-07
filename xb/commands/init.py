@@ -18,74 +18,26 @@ console = Console()
 
 
 class ParamSummaryCommand(click.Command):
-    def get_short_help_str(self, limit=80):
-        param_parts = []
-        for param in self.params:
-            if isinstance(param, click.Option):
-                opts = "/".join(param.opts)
-                if param.required:
-                    param_parts.append(f"{opts} <{param.name}>")
-                elif param.is_flag:
-                    param_parts.append(f"{opts}")
-                else:
-                    param_parts.append(f"{opts} <{param.name}>")
-
-        text = click.Command.get_short_help_str(self, limit)
-        if param_parts:
-            text = f"{' | '.join(param_parts)}\n    {text}"
-        return text
+    pass
 
 
 class XbGroup(click.Group):
     def format_commands(self, ctx, formatter):
-        from click.formatting import HelpFormatter
-
+        commands = []
         for subcommand in self.list_commands(ctx):
             cmd = self.get_command(ctx, subcommand)
             if cmd is None:
                 continue
+            commands.append((subcommand, cmd.get_short_help_str()))
 
-            formatter.write_text("")
-            formatter.write_text(f"Command: {subcommand}")
-            formatter.write_text("-" * 50)
+        if commands:
+            formatter.width - 6 - max(len(cmd[0]) for cmd in commands)
+            rows = []
+            for subcommand, help_text in commands:
+                rows.append((subcommand, help_text))
 
-            with click.Context(cmd, info_name=f"xb {subcommand}") as sub_ctx:
-                sub_formatter = HelpFormatter(width=formatter.width)
-                cmd.format_usage(sub_ctx, sub_formatter)
-                formatter.write_text(sub_formatter.getvalue().strip())
-
-                help_text = cmd.get_help(sub_ctx)
-                lines = help_text.split("\n")
-                in_options = False
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if stripped.startswith("Usage:"):
-                        continue
-                    if stripped.startswith("Options:"):
-                        in_options = True
-                        continue
-                    if in_options:
-                        continue
-                    formatter.write_text(f"  {stripped}")
-
-                formatter.write_text("")
-                formatter.write_text("  Options:")
-                for param in cmd.params:
-                    if isinstance(param, click.Option):
-                        if "--help" in param.opts:
-                            continue
-                        sorted_opts = sorted(param.opts, key=lambda x: len(x))
-                        opts = ", ".join(sorted_opts)
-                        param_type = ""
-                        if not param.is_flag and param.type.name != "choice":
-                            param_type = f" {param.type.name.upper()}"
-                        help_str = param.help or ""
-                        if param.required:
-                            help_str += " [required]"
-                        left_part = f"{opts}{param_type}"
-                        formatter.write_text(f"    {left_part:<24} {help_str}")
+            with formatter.section("Commands"):
+                formatter.write_dl(rows)
 
 
 @click.command(cls=ParamSummaryCommand)
