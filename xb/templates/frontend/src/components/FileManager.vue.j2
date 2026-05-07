@@ -1,0 +1,429 @@
+<template>
+  <div v-if="showManager" class="file-overlay" @click="closeIfOutside">
+    <div class="file-dialog" @click.stop>
+      <div class="dialog-header">
+        <h2>⚙️ 配置文件管理</h2>
+        <button class="close-btn" @click="close">×</button>
+      </div>
+
+      <div class="dialog-body">
+        <div class="file-list">
+          <h3>配置文件列表</h3>
+          <div v-if="loading" class="loading">加载中...</div>
+          <div v-else-if="error" class="error">{{ error }}</div>
+          <div v-else-if="files.length === 0" class="empty">暂无配置文件</div>
+          <div v-else class="files">
+            <div
+              v-for="file in files"
+              :key="file.name"
+              class="file-item"
+              :class="{ active: selectedFile?.name === file.name }"
+              @click="loadFile(file.name)"
+            >
+              <div class="file-icon">📄</div>
+              <div class="file-info">
+                <div class="file-name">{{ file.name }}</div>
+                <div class="file-meta">{{ formatSize(file.size) }} · {{ formatTime(file.modified) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="file-editor">
+          <div v-if="!selectedFile" class="editor-placeholder">
+            <p>👈 选择一个文件开始编辑</p>
+          </div>
+          <div v-else class="editor-content">
+            <div class="editor-header">
+              <h3>{{ selectedFile.name }}</h3>
+              <div class="editor-actions">
+                <button @click="saveFile" :disabled="saving || !hasChanges">
+                  {{ saving ? '保存中...' : '💾 保存' }}
+                </button>
+              </div>
+            </div>
+            
+            <div v-if="fileError" class="validation-error">
+              ⚠️ YAML 格式错误: {{ fileError }}
+            </div>
+            
+            <textarea
+              v-model="fileContent"
+              class="code-editor"
+              spellcheck="false"
+              @input="onContentChange"
+            ></textarea>
+            
+            <div class="editor-footer">
+              <span class="file-path">{{ selectedFile.path }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+
+const showManager = ref(false)
+const loading = ref(false)
+const error = ref('')
+const files = ref([])
+const selectedFile = ref(null)
+const fileContent = ref('')
+const originalContent = ref('')
+const saving = ref(false)
+const fileError = ref('')
+
+const hasChanges = computed(() => fileContent.value !== originalContent.value)
+
+const open = () => {
+  showManager.value = true
+  loadFileList()
+}
+
+const close = () => {
+  if (hasChanges.value) {
+    if (!confirm('有未保存的更改,确定要关闭吗?')) {
+      return
+    }
+  }
+  showManager.value = false
+  selectedFile.value = null
+  fileContent.value = ''
+  originalContent.value = ''
+}
+
+const closeIfOutside = (e) => {
+  if (e.target.classList.contains('file-overlay')) {
+    close()
+  }
+}
+
+const loadFileList = async () => {
+  loading.value = true
+  error.value = ''
+  
+  try {
+    const response = await fetch(`${API_BASE}/api/files/list`)
+    if (!response.ok) throw new Error('获取文件列表失败')
+    
+    const data = await response.json()
+    files.value = data.files || []
+  } catch (e) {
+    error.value = e.message
+    console.error('加载文件列表失败:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadFile = async (filename) => {
+  try {
+    const response = await fetch(`${API_BASE}/api/files/read/${filename}`)
+    if (!response.ok) throw new Error('读取文件失败')
+    
+    const data = await response.json()
+    selectedFile.value = data
+    fileContent.value = data.content
+    originalContent.value = data.content
+    fileError.value = data.is_valid ? '' : data.error
+  } catch (e) {
+    alert(`加载文件失败: ${e.message}`)
+    console.error('加载文件失败:', e)
+  }
+}
+
+const onContentChange = () => {
+  fileError.value = ''
+}
+
+const saveFile = async () => {
+  if (!selectedFile.value || !hasChanges.value) return
+  
+  saving.value = true
+  
+  try {
+    console.log('Saving file:', {
+      filename: selectedFile.value.filename,
+      contentLength: fileContent.value.length
+    })
+    
+    const response = await fetch(`${API_BASE}/api/files/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: selectedFile.value.filename,
+        content: fileContent.value
+      })
+    })
+    
+    console.log('Response status:', response.status)
+    
+    const data = await response.json()
+    console.log('Response data:', data)
+    
+    if (!response.ok) {
+      throw new Error(data.detail || '保存失败')
+    }
+    
+    originalContent.value = fileContent.value
+    alert('保存成功!')
+    await loadFileList()
+  } catch (e) {
+    console.error('Save error:', e)
+    alert(`保存失败: ${e.message}`)
+  } finally {
+    saving.value = false
+  }
+}
+
+const formatSize = (bytes) => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const formatTime = (timestamp) => {
+  const date = new Date(timestamp * 1000)
+  return date.toLocaleString('zh-CN')
+}
+
+defineExpose({ open })
+</script>
+
+<style scoped>
+.file-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.file-dialog {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 1200px;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #1f2937;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.dialog-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.file-list {
+  width: 300px;
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.file-list h3 {
+  margin: 0 0 12px 0;
+  font-size: 0.9rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.loading, .error, .empty {
+  padding: 20px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.error {
+  color: #ef4444;
+}
+
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.file-item:hover {
+  background: #f3f4f6;
+}
+
+.file-item.active {
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+}
+
+.file-icon {
+  font-size: 1.5rem;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+
+.file-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 1.1rem;
+}
+
+.editor-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.editor-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.editor-actions button {
+  padding: 8px 16px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.editor-actions button:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.editor-actions button:disabled {
+  background: #d1d5db;
+  cursor: not-allowed;
+}
+
+.validation-error {
+  padding: 12px 24px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 0.9rem;
+  border-bottom: 1px solid #fecaca;
+}
+
+.code-editor {
+  flex: 1;
+  padding: 16px 24px;
+  border: none;
+  outline: none;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  resize: none;
+  overflow-y: auto;
+  background: #f9fafb;
+  color: #1f2937;
+}
+
+.editor-footer {
+  padding: 12px 24px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.file-path {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+</style>

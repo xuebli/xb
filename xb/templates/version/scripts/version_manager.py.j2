@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Tuple
+
+
+class VersionManager:
+    def __init__(self, project_root: str = None):
+        if project_root:
+            self.project_root = Path(project_root)
+        else:
+            self.project_root = Path(__file__).parent.parent.parent
+        self.electron_pkg_path = self.project_root / "electron" / "package.json"
+        self.pyproject_path = self.project_root / "pyproject.toml"
+
+    def parse_version(self, version_str: str) -> Tuple[int, int, int]:
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version_str)
+        if not match:
+            raise ValueError(f"Invalid version format: {version_str}")
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+    def bump_version(self, current_version: str, bump_type: str) -> str:
+        major, minor, patch = self.parse_version(current_version)
+        if bump_type == "major":
+            return f"{major + 1}.0.0"
+        elif bump_type == "minor":
+            return f"{major}.{minor + 1}.0"
+        elif bump_type == "patch":
+            return f"{major}.{minor}.{patch + 1}"
+        else:
+            raise ValueError(f"Invalid bump type: {bump_type}")
+
+    def update_pyproject_version(self, new_version: str):
+        if not self.pyproject_path.exists():
+            return
+
+        with open(self.pyproject_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        new_content = re.sub(
+            r'^version\s*=\s*"[^"]+"',
+            f'version = "{new_version}"',
+            content,
+            flags=re.MULTILINE,
+        )
+
+        with open(self.pyproject_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        print("✓ [[ package_name ]] version updated")
+
+    def update_version(self, bump_type: str) -> str:
+        if not self.electron_pkg_path.exists():
+            raise FileNotFoundError(
+                f"Electron package.json not found: {self.electron_pkg_path}"
+            )
+
+        with open(self.electron_pkg_path, "r", encoding="utf-8") as f:
+            pkg_config = json.load(f)
+
+        current_version = pkg_config.get("version", "1.0.0")
+        new_version = self.bump_version(current_version, bump_type)
+
+        pkg_config["version"] = new_version
+        with open(self.electron_pkg_path, "w", encoding="utf-8") as f:
+            json.dump(pkg_config, f, ensure_ascii=False, indent=2)
+
+        self.update_pyproject_version(new_version)
+
+        print(f"✓ Version updated: {current_version} -> {new_version}")
+        return new_version
+
+    def get_current_version(self) -> str:
+        if self.electron_pkg_path.exists():
+            with open(self.electron_pkg_path, "r", encoding="utf-8") as f:
+                pkg_config = json.load(f)
+            return pkg_config.get("version", "N/A")
+        elif self.pyproject_path.exists():
+            with open(self.pyproject_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            match = re.search(r'version\s*=\s*"([^"]+)"', content)
+            if match:
+                return match.group(1)
+        return "N/A"
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="[[ package_name_capitalized ]] Version Manager")
+    parser.add_argument("--project-dir", help="Project root directory")
+    parser.add_argument(
+        "bump_type", choices=["major", "minor", "patch"], help="Version bump type"
+    )
+
+    args = parser.parse_args()
+
+    try:
+        manager = VersionManager(args.project_dir)
+        manager.update_version(args.bump_type)
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

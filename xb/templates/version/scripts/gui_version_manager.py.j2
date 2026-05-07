@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import json
+import subprocess
+from pathlib import Path
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+
+class GuiVersionManager:
+    def __init__(self):
+        self.project_root = Path(__file__).parent.parent.parent
+        self.electron_pkg_path = self.project_root / "electron" / "package.json"
+
+        self.root = tk.Tk()
+        self.root.title("🔖 版本管理")
+        self.root.geometry("500x400")
+        self.root.resizable(False, False)
+
+        self.center_window()
+        self.root.protocol("WM_DELETE_WINDOW", self.cancel_commit)
+        self.create_ui()
+
+    def center_window(self):
+        self.root.update_idletasks()
+        x = (self.root.winfo_screenwidth() // 2) - (500 // 2)
+        y = (self.root.winfo_screenheight() // 2) - (400 // 2)
+        self.root.geometry(f"500x400+{x}+{y}")
+
+    def create_ui(self):
+        main_frame = ttk.Frame(self.root, padding="30")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        ttk.Label(main_frame, text="🔖 版本管理", font=("Arial", 18, "bold")).grid(
+            row=0, column=0, pady=(0, 10)
+        )
+
+        current_version = self.get_current_version()
+        ttk.Label(
+            main_frame,
+            text=f"[[ package_name]] 版本: {current_version}",
+            font=("Arial", 12),
+            foreground="#666",
+        ).grid(row=1, column=0, pady=(0, 30))
+
+        ttk.Label(main_frame, text="选择版本类型:", font=("Arial", 11, "bold")).grid(
+            row=2, column=0, sticky=tk.W, pady=(0, 15)
+        )
+
+        self.version_type = tk.StringVar(value="patch")
+
+        type_frame = ttk.Frame(main_frame)
+        type_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 30))
+
+        ttk.Radiobutton(
+            type_frame,
+            text="🔧 Patch (x.y.z+1) - Bug修复",
+            variable=self.version_type,
+            value="patch",
+        ).grid(row=0, column=0, sticky=tk.W, pady=5)
+
+        ttk.Radiobutton(
+            type_frame,
+            text="✨ Minor (x.y+1.0) - 新功能",
+            variable=self.version_type,
+            value="minor",
+        ).grid(row=1, column=0, sticky=tk.W, pady=5)
+
+        ttk.Radiobutton(
+            type_frame,
+            text="🎉 Major (x+1.0.0) - 重大更新",
+            variable=self.version_type,
+            value="major",
+        ).grid(row=2, column=0, sticky=tk.W, pady=5)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, pady=(20, 0))
+
+        ttk.Button(
+            button_frame, text="🚀 更新版本", command=self.update_version, width=15
+        ).grid(row=0, column=0, padx=5)
+
+        ttk.Button(
+            button_frame, text="⏭️ 跳过", command=self.skip_version_update, width=15
+        ).grid(row=0, column=1, padx=5)
+
+        ttk.Button(
+            button_frame, text="❌ 取消", command=self.cancel_commit, width=15
+        ).grid(row=0, column=2, padx=5)
+
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+
+    def get_current_version(self) -> str:
+        try:
+            if self.electron_pkg_path.exists():
+                with open(self.electron_pkg_path, "r", encoding="utf-8") as f:
+                    pkg_data = json.load(f)
+                return pkg_data.get("version", "N/A")
+            return "N/A"
+        except Exception:
+            return "N/A"
+
+    def update_version(self):
+        version_type = self.version_type.get()
+        confirm_msg = (
+            f"确认更新版本？\n\n版本类型: {version_type}\n将更新 electron/package.json"
+        )
+
+        if not messagebox.askyesno("确认更新", confirm_msg):
+            return
+
+        try:
+            cmd = [
+                sys.executable,
+                str(self.project_root / "version" / "scripts" / "version_manager.py"),
+                version_type,
+            ]
+
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=self.project_root
+            )
+
+            if result.returncode == 0:
+                subprocess.run(
+                    ["git", "add", "electron/package.json", "pyproject.toml"],
+                    cwd=self.project_root,
+                    check=True,
+                )
+                new_version = self.get_current_version()
+                messagebox.showinfo("成功", f"版本更新成功！\n新版本: {new_version}")
+                self.root.destroy()
+            else:
+                messagebox.showerror("错误", f"版本更新失败:\n{result.stderr}")
+        except Exception as e:
+            messagebox.showerror("错误", f"更新版本时发生错误: {e}")
+
+    def cancel_commit(self):
+        try:
+            if messagebox.askyesno(
+                "确认取消", "确定要取消本次提交吗？\n这将中断Git提交流程。"
+            ):
+                self.root.destroy()
+                sys.exit(1)
+        except tk.TclError:
+            sys.exit(1)
+
+    def skip_version_update(self):
+        try:
+            if messagebox.askyesno(
+                "确认跳过", "确定要跳过版本更新吗？\n将直接提交代码。"
+            ):
+                self.root.destroy()
+                sys.exit(0)
+        except tk.TclError:
+            sys.exit(0)
+
+    def run(self):
+        self.root.mainloop()
+
+
+def main():
+    app = GuiVersionManager()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()

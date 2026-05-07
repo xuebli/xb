@@ -1,0 +1,42 @@
+import sys
+from loguru import logger
+from .path_manager import path_manager
+
+
+class LoggerManager:
+    _initialized = False
+
+    def __init__(self, name: str = None):
+        self.name = name or "app"
+        self.log_file = path_manager.get_log_path("backend.log")
+
+        if not LoggerManager._initialized:
+            self._setup_logger()
+            LoggerManager._initialized = True
+
+    def _setup_logger(self):
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.remove()
+
+        logger.add(
+            sys.stdout,
+            format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[module]}</cyan> | <level>{message}</level>",
+            level="INFO",
+        )
+
+        logger.add(
+            self.log_file,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[module]} | {message}",
+            level="DEBUG",
+            rotation="5 MB",
+            retention=10,
+            compression="zip",
+            encoding="utf-8",
+        )
+
+    def get_logger(self):
+        return logger.bind(module=self.name)
+
+
+def get_logger(name: str = None):
+    return LoggerManager(name).get_logger()

@@ -1,0 +1,86 @@
+import pathlib
+import sys
+import yaml
+from pathlib import Path
+
+
+class PathManager:
+    def __init__(self, app_name: str = "[[ package_name]]"):
+        self.app_name = app_name
+        self.is_packaged = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+
+        if self.is_packaged:
+            self.config_dir = pathlib.Path.home() / ".config" / app_name
+            self.data_dir = pathlib.Path.home() / ".local" / "share" / app_name
+            self.logs_dir = self.data_dir / "logs"
+            self.reports_dir = self.data_dir / "reports"
+
+            install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
+            self.scripts_dir = install_root / "scripts"
+            self.frontend_dir = install_root / "frontend"
+
+        else:
+            self.data_dir = Path(__file__).parent.parent.parent.resolve()
+            self.config_dir = self.data_dir / "configs"
+            self.logs_dir = self.data_dir / "datas" / "logs"
+            self.reports_dir = self.data_dir / "datas" / "reports"
+            self.scripts_dir = self.data_dir / "scripts"
+            self.frontend_dir = None
+
+    def get_config_path(self, filename: str) -> pathlib.Path:
+        return self.config_dir / filename
+
+    def get_config_dir(self) -> pathlib.Path:
+        return self.config_dir
+
+    def get_log_path(self, filename: str) -> pathlib.Path:
+        return self.logs_dir / filename
+
+    def get_report_path(self, filename: str) -> pathlib.Path:
+        return self.reports_dir / filename
+
+    def get_script_path(self, filename: str) -> pathlib.Path:
+        return self.scripts_dir / filename
+
+    def get_frontend_path(self) -> pathlib.Path:
+        return self.frontend_dir
+
+    def load_config(self, config_file: str = "global_config.yaml") -> dict:
+        if not hasattr(self, "_config_cache"):
+            self._config_cache = None
+
+        if self._config_cache is not None:
+            return self._config_cache
+
+        config_path = self.get_config_path(config_file)
+
+        try:
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    self._config_cache = yaml.safe_load(f) or {}
+            else:
+                self._config_cache = {}
+            return self._config_cache
+        except Exception as e:
+            print(f"加载配置失败: {e}")
+            self._config_cache = {}
+            return self._config_cache
+
+    def get_config_value(self, key: str, default=None) -> str:
+        config = self.load_config()
+
+        for k in key.split("."):
+            if isinstance(config, dict):
+                config = config.get(k)
+                if config is None:
+                    return default
+            else:
+                return default
+
+        return config
+
+    def reload_config(self):
+        self._config_cache = None
+
+
+path_manager = PathManager("[[ package_name]]")

@@ -1,0 +1,153 @@
+# [[ package_name_capitalized]]
+
+基于 **UV + FastAPI + Vue3 + Electron** 的跨平台桌面应用。
+
+## 特性
+
+- 一键启动开发环境
+- 自动构建 Linux DEB 安装包
+- 智能路径管理（开发/生产自动切换）
+- 版本管理（提交时更新版本号）
+[% if enable_sudo %]
+- Sudo 免密配置
+[% endif %]
+
+## 技术栈
+
+**前端**: Vue 3 + Vite  
+**后端**: FastAPI + Uvicorn  
+**桌面**: Electron  
+**依赖**: uv  
+**构建**: PyInstaller + electron-builder
+
+## 项目结构
+
+```
+[[ package_name]]/
+├── pyproject.toml      # Python 依赖 (uv)
+├── backend/            # FastAPI 后端
+│   ├── main.py
+│   ├── api/
+│   └── managers/
+├── frontend/           # Vue 3 前端
+├── electron/           # Electron 桌面
+├── version/            # 版本管理
+│   ├── hooks/
+│   └── scripts/
+├── configs/            # 配置文件
+├── datas/              # 运行时数据
+├── dev.sh              # 开发脚本
+└── build.sh            # 打包脚本
+```
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- Node.js 16+
+- Linux
+
+### 开发环境
+
+```bash
+# 安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+bash dev.sh start   # 启动
+bash dev.sh stop    # 停止
+bash dev.sh status  # 查看状态
+```
+
+**访问地址:**
+- 前端: http://localhost:5173
+- 后端 API: http://localhost:8000
+- API 文档: http://localhost:8000/docs
+
+### 打包构建
+
+```bash
+bash build.sh -a    # 全部
+bash build.sh -f    # 前端
+bash build.sh -b    # 后端
+bash build.sh -e    # Electron DEB
+```
+
+构建产物: `electron/dist/[[ package_name]]_<version>_amd64.deb`
+
+## 核心功能
+
+### 路径管理
+- 自动区分开发/生产环境
+- 生产模式符合 Linux XDG 标准
+- 配置: `~/.config/[[ package_name]]/`
+- 数据: `~/.local/share/[[ package_name]]/`
+
+### 版本管理
+
+```bash
+
+# 安装 Git hooks
+bash version/scripts/install_hooks.sh
+# 提交代码时自动更新版本号
+git commit -m "feat: add new feature"
+```
+
+[% if enable_sudo %]
+### Sudo 配置
+
+密码存储在 configs/global_config.yaml
+修改 backend/managers/sudoers_manager.py 中的 commands 列表来添加需要免密的命令。
+例如：
+
+```python
+self.commands = [
+    "/usr/bin/apt-get update",
+    "/usr/bin/apt-get install -y some-package"
+]
+```
+
+[% endif %]
+## API 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api` | 欢迎信息 |
+| GET | `/api/health` | 健康检查 |
+[% if enable_sudo %]
+| GET | `/api/config/check` | 检查配置 |
+| POST | `/api/config/save` | 保存配置 |
+[% endif %]
+| GET | `/files/list` | 列出文件 |
+| GET | `/files/read` | 读取文件内容 |
+| POST | `/files/write` | 写入文件内容 |
+
+## 调试
+
+```bash
+# 后端
+.venv/bin/python backend/main.py
+
+# 前端
+cd frontend && npm run dev
+
+# Electron
+cd electron && npm start
+```
+
+## 常见问题
+
+**后端启动失败**
+```bash
+cat datas/logs/backend.log
+lsof -i :8000
+```
+
+**前端构建失败**
+```bash
+cd frontend && rm -rf node_modules && npm install
+```
+
+## 许可证
+
+MIT

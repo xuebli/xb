@@ -1,0 +1,38 @@
+const { app, BrowserWindow, Menu } = require('electron');
+const { spawn } = require('child_process');
+const path = require('path');
+const os = require('os');
+
+app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
+app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
+
+let win;
+let backend;
+
+app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+
+    const backendPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'server')
+        : path.join(__dirname, '..', 'dist', 'server');
+
+    backend = spawn(backendPath);
+
+    backend.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('[Backend]', output);
+
+        if (output.includes('应用启动完成')) {
+            win = new BrowserWindow({
+                width: 1200,
+                height: 800
+            });
+
+            win.loadURL('http://localhost:8000');
+        }
+    });
+});
+
+app.on('quit', () => {
+    if (backend) backend.kill();
+});

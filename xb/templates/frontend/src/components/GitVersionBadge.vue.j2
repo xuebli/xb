@@ -1,0 +1,290 @@
+<script setup>
+import { ref, computed } from 'vue'
+
+const version = ref('v' + (__APP_VERSION__ || '0.0.0'))
+const commits = ref(__GIT_COMMITS__ || [])
+const showModal = ref(false)
+
+const parseCommitMessage = (message) => {
+  if (!message) return []
+  
+  const lines = message.split('\n')
+  const parsed = []
+  let isFirstLine = true
+  
+  for (const line of lines) {
+    if (!line.trim()) continue
+    
+    if (isFirstLine) {
+      parsed.push({ level: -1, text: line.trim() })
+      isFirstLine = false
+      continue
+    }
+    
+    const leadingSpaces = line.match(/^( *)/)[0].length
+    const level = Math.floor(leadingSpaces / 2)
+    const text = line.trim().replace(/^[-•○▪]\s*/, '')
+    
+    if (text) {
+      parsed.push({ level, text })
+    }
+  }
+  
+  return parsed
+}
+
+const processedCommits = computed(() => {
+  return commits.value.map(commit => ({
+    ...commit,
+    parsedMessage: parseCommitMessage(commit.message)
+  }))
+})
+</script>
+
+<template>
+  <div class="git-version-wrapper">
+    <span 
+      class="git-version-badge" 
+      @click="showModal = commits.length > 0 && true"
+      :title="commits.length > 0 ? '点击查看提交记录' : '版本号'"
+    >
+      {{ version }}
+    </span>
+
+    <div v-if="showModal" class="git-modal" @click="showModal = false">
+      <div class="git-modal-content" @click.stop>
+        <div class="git-modal-header">
+          <h3>Git 提交记录</h3>
+          <button @click="showModal = false" class="git-close-btn">✕</button>
+        </div>
+        
+        <div class="git-commits-container">
+          <div v-if="commits.length === 0" class="git-empty">
+            暂无提交记录
+          </div>
+          
+          <div v-else class="git-commits">
+            <div v-for="c in processedCommits" :key="c.hash" class="git-commit">
+              <div class="git-commit-header">
+                <code class="git-hash">{{ c.hash }}</code>
+                <span class="git-date">{{ c.date }}</span>
+              </div>
+              <div class="git-commit-body">
+                <div 
+                  v-for="(line, idx) in c.parsedMessage" 
+                  :key="idx"
+                  :class="['git-msg-line', line.level === -1 ? 'level-title' : `level-${line.level}`]"
+                >
+                  <span v-if="line.level === 0" class="git-bullet">•</span>
+                  <span v-else-if="line.level === 1" class="git-bullet sub">○</span>
+                  <span v-else-if="line.level >= 2" class="git-bullet sub">▪</span>
+                  <span class="git-msg-text">{{ line.text }}</span>
+                </div>
+              </div>
+              <div class="git-author">{{ c.author }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.git-version-wrapper {
+  display: inline-block;
+}
+
+.git-version-badge {
+  cursor: pointer;
+  padding: 8px 20px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  font-weight: 600;
+  transition: all 0.3s;
+  display: inline-block;
+  color: inherit;
+  user-select: none;
+}
+
+.git-version-badge:hover {
+  background: rgba(255, 255, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.git-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.git-modal-content {
+  background: white;
+  border-radius: 8px;
+  max-width: 700px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  animation: slideUp 0.3s;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.git-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.git-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.git-close-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 1.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.git-close-btn:hover {
+  background: #f3f4f6;
+}
+
+.git-commits-container {
+  overflow-y: auto;
+  padding: 12px 20px;
+  flex: 1;
+}
+
+.git-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: #9ca3af;
+}
+
+.git-commit {
+  padding: 12px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.git-commit:last-child {
+  border-bottom: none;
+}
+
+.git-commit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.git-hash {
+  background: #fef3c7;
+  color: #d97706;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.git-date {
+  color: #9ca3af;
+  font-size: 0.75rem;
+}
+
+.git-commit-body {
+  margin-bottom: 8px;
+}
+
+.git-msg-line {
+  display: flex;
+  align-items: flex-start;
+  color: #374151;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  text-align: left;
+  margin: 3px 0;
+}
+
+.git-msg-line.level-title {
+  padding-left: 0;
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 0.9375rem;
+  margin-bottom: 8px;
+  margin-top: 0;
+}
+
+.git-msg-line.level-0 {
+  padding-left: 0;
+  color: #374151;
+}
+
+.git-msg-line.level-1 {
+  padding-left: 24px;
+  color: #4b5563;
+  font-size: 0.8125rem;
+}
+
+.git-msg-line.level-2 {
+  padding-left: 48px;
+  color: #6b7280;
+  font-size: 0.8125rem;
+}
+
+.git-msg-line.level-3 {
+  padding-left: 72px;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+}
+
+.git-bullet {
+  display: inline-block;
+  margin-right: 8px;
+  color: #667eea;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+}
+
+.git-bullet.sub {
+  color: #9ca3af;
+  font-size: 0.75rem;
+}
+
+.git-msg-text {
+  flex: 1;
+}
+
+.git-author {
+  color: #9ca3af;
+  font-size: 0.75rem;
+  text-align: left;
+}
+</style>

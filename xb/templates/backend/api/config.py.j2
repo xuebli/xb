@@ -1,0 +1,253 @@
+[% if enable_sudo %]
+import re
+import pathlib
+[% endif %]
+import shutil
+import yaml
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from managers import path_manager, get_logger
+[% if enable_sudo %]
+from managers import sudoers_manager
+[% endif %]
+
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+[% if enable_sudo %]
+class ConfigRequest(BaseModel):
+    sudo_password: str
+
+
+[% endif %]
+class FileContentRequest(BaseModel):
+    filename: str
+    content: str
+
+
+[% if enable_sudo %]
+@router.get("/config/check")
+async def check_config():
+    config_file = path_manager.get_config_path("global_config.yaml")
+
+    if not config_file.exists():
+        return {
+            "valid": False,
+            "reason": "config_not_found",
+            "message": "配置文件不存在",
+            "config_path": str(config_file),
+            "is_packaged": path_manager.is_packaged,
+        }
+
+    try:
+        config = path_manager.load_config("global_config.yaml")
+        password = config.get("sudo_password", "")
+
+        if not password:
+            return {
+                "valid": False,
+                "reason": "password_empty",
+                "message": "密码未设置",
+                "config_path": str(config_file),
+                "is_packaged": path_manager.is_packaged,
+            }
+
+        if not sudoers_manager.verify_password(password):
+            return {
+                "valid": False,
+                "reason": "password_incorrect",
+                "message": "密码不正确",
+                "config_path": str(config_file),
+                "is_packaged": path_manager.is_packaged,
+            }
+
+        sudoers_manager.setup()
+
+        return {
+            "valid": True,
+            "message": "配置正常",
+            "config_path": str(config_file),
+            "is_packaged": path_manager.is_packaged,
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "reason": "config_error",
+            "message": f"配置文件错误: {str(e)}",
+            "config_path": str(config_file),
+            "is_packaged": path_manager.is_packaged,
+        }
+
+
+[% endif %]
+[% if enable_sudo %]
+@router.post("/config/save")
+async def save_config(config_req: ConfigRequest):
+    try:
+        password = config_req.sudo_password.strip()
+        logger.info("收到配置保存请求")
+
+        if not password:
+            raise HTTPException(status_code=400, detail="密码不能为空")
+
+        config_file = path_manager.get_config_path("global_config.yaml")
+        logger.info(f"配置文件路径: {config_file}")
+
+        if not config_file.exists():
+            if path_manager.is_packaged:
+                example_file = pathlib.Path(
+                    "/opt/Demo/resources/configs/global_config.yaml.example"
+                )
+            else:
+                example_file = (
+                    pathlib.Path(__file__).parent.parent.parent
+                    / "configs"
+                    / "global_config.yaml.example"
+                )
+
+            if example_file.exists():
+                config_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(example_file, config_file)
+            else:
+                raise HTTPException(
+                    status_code=500, detail=f"找不到配置模板文件: {example_file}"
+                )
+
+        with open(config_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        new_content = re.sub(
+            r"^sudo_password\s*:.*$",
+            f'sudo_password: "{password}"',
+            content,
+            flags=re.MULTILINE,
+        )
+
+        if new_content == content:
+            logger.warning("配置文件中未找到 sudo_password 行，将追加")
+            new_content = content.rstrip() + f'\n\nsudo_password: "{password}"\n'
+
+        with open(config_file, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        path_manager.reload_config()
+
+        if not sudoers_manager.setup():
+            raise HTTPException(
+                status_code=500, detail="sudo 免密配置失败，请检查密码是否正确"
+            )
+
+        return {"success": True, "message": "配置保存成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存配置失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
+
+
+[% endif %]
+@router.get("/files/list")
+async def list_config_files():
+    """获取所有配置文件列表"""
+    try:
+        config_dir = path_manager.get_config_dir()
+
+        if not config_dir.exists():
+            return {"files": []}
+
+        yaml_files = []
+        for file_path in config_dir.glob("*.yaml"):
+            yaml_files.append(
+                {
+                    "name": file_path.name,
+                    "path": str(file_path),
+                    "size": file_path.stat().st_size,
+                    "modified": file_path.stat().st_mtime,
+                }
+            )
+
+        return {
+            "files": sorted(yaml_files, key=lambda x: x["name"]),
+            "config_dir": str(config_dir),
+        }
+    except Exception as e:
+        logger.error(f"获取配置文件列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取文件列表失败: {str(e)}")
+
+
+@router.get("/files/read/{filename}")
+async def read_config_file(filename: str):
+    """读取配置文件内容"""
+    try:
+        if not filename.endswith(".yaml"):
+            raise HTTPException(status_code=400, detail="只支持 .yaml 文件")
+
+        file_path = path_manager.get_config_path(filename)
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        try:
+            yaml.safe_load(content)
+            is_valid = True
+            error_msg = None
+        except yaml.YAMLError as e:
+            is_valid = False
+            error_msg = str(e)
+
+        return {
+            "filename": filename,
+            "content": content,
+            "path": str(file_path),
+            "is_valid": is_valid,
+            "error": error_msg,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"读取文件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
+
+
+@router.post("/files/write")
+async def write_config_file(req: FileContentRequest):
+    """写入配置文件内容"""
+    try:
+        if not req.filename.endswith(".yaml"):
+            raise HTTPException(status_code=400, detail="只支持 .yaml 文件")
+
+        try:
+            yaml.safe_load(req.content)
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"YAML 格式错误: {str(e)}")
+
+        file_path = path_manager.get_config_path(req.filename)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        backup_path = file_path.with_suffix(".yaml.bak")
+        if file_path.exists():
+            shutil.copy2(file_path, backup_path)
+            logger.info(f"已备份配置文件: {backup_path}")
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(req.content)
+
+        path_manager.reload_config()
+
+        logger.info(f"配置文件已更新: {req.filename}")
+
+        return {
+            "success": True,
+            "message": f"文件 {req.filename} 保存成功",
+            "path": str(file_path),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"写入文件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"写入文件失败: {str(e)}")

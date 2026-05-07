@@ -1,0 +1,40 @@
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [vue()],
+  define: {
+    __APP_VERSION__: JSON.stringify((() => {
+      try {
+        return JSON.parse(readFileSync(resolve(__dirname, '../electron/package.json'), 'utf-8')).version
+      } catch {
+        return '0.0.0'
+      }
+    })()),
+    __GIT_COMMITS__: JSON.stringify((() => {
+      try {
+        const output = execSync(
+          'git log -10 --format="%H%n%an%n%ai%n%B%n====END===="',
+          { cwd: resolve(__dirname, '..'), encoding: 'utf-8', maxBuffer: 1024 * 1024 }
+        ).trim()
+        
+        return output.split('====END====').filter(Boolean).map(block => {
+          const lines = block.trim().split('\n')
+          if (lines.length < 4) return null
+          return {
+            hash: lines[0]?.substring(0, 7) || '',
+            author: lines[1] || '',
+            date: lines[2]?.substring(0, 10) || '',
+            message: lines.slice(3).join('\n').trim()
+          }
+        }).filter(Boolean)
+      } catch {
+        return []
+      }
+    })())
+  }
+})

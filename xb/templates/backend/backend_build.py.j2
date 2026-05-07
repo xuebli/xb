@@ -1,0 +1,29 @@
+import PyInstaller.__main__
+from pathlib import Path
+
+project_root = Path(__file__).parent.parent
+dist_dir = project_root / "dist"
+
+PyInstaller.__main__.run(
+    [
+        str(Path(__file__).parent / "main.py"),
+        "--name=server",
+        "--onefile",
+        "--clean",
+        f"--distpath={dist_dir}",
+        "--workpath=build/backend",
+        "--specpath=.",
+        "--hidden-import=uvicorn.logging",
+        "--hidden-import=uvicorn.loops",
+        "--hidden-import=uvicorn.loops.auto",
+        "--hidden-import=uvicorn.protocols",
+        "--hidden-import=uvicorn.protocols.http",
+        "--hidden-import=uvicorn.protocols.http.auto",
+        "--hidden-import=uvicorn.protocols.websockets",
+        "--hidden-import=uvicorn.protocols.websockets.auto",
+        "--hidden-import=uvicorn.lifespan",
+        "--hidden-import=uvicorn.lifespan.on",
+    ]
+)
+
+print(f"\n✓ 后端打包完成: {dist_dir / 'server'}")

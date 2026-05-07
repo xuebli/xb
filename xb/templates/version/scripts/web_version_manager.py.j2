@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import os
+import json
+import subprocess
+import socket
+import threading
+from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+VERSION_MANAGER = PROJECT_ROOT / "version" / "scripts" / "version_manager.py"
+ELECTRON_PKG = PROJECT_ROOT / "electron" / "package.json"
+
+result_event = threading.Event()
+user_result: dict = {"action": None, "data": None}
+
+TIMEOUT_SECONDS = 120
+
+
+def get_current_version():
+    try:
+        with open(ELECTRON_PKG, "r", encoding="utf-8") as f:
+            return json.load(f).get("version", "N/A")
+    except Exception:
+        return "N/A"
+
+
+def build_html():
+    current_version = get_current_version()
+
+    return (
+        '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+        "<title>版本管理</title>\n<style>\n"
+        "*{margin:0;padding:0;box-sizing:border-box}\n"
+        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fa;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:2rem}\n"
+        ".card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:2.5rem;width:100%;max-width:500px}\n"
+        ".title{font-size:1.5rem;font-weight:700;margin-bottom:.5rem;text-align:center}\n"
+        ".version{text-align:center;color:#666;font-size:1rem;margin-bottom:2rem}\n"
+        ".label{font-size:.9rem;font-weight:600;margin-bottom:1rem;color:#333}\n"
+        ".type-group{display:flex;flex-direction:column;gap:.75rem;margin-bottom:2rem}\n"
+        ".type-opt{padding:1rem;border:2px solid #e4e7ed;border-radius:8px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:.75rem}\n"
+        ".type-opt:hover{border-color:#409eff;background:#ecf5ff}\n"
+        ".type-opt input{display:none}\n"
+        ".type-opt input:checked + label{border-color:#409eff;background:#ecf5ff}\n"
+        ".type-opt label{cursor:pointer;display:flex;align-items:center;gap:.75rem;width:100%}\n"
+        ".icon{font-size:1.3rem}\n"
+        ".type-text{flex:1}\n"
+        ".type-name{font-weight:600;color:#303133}\n"
+        ".type-desc{font-size:.82rem;color:#909399;margin-top:.2rem}\n"
+        ".actions{display:flex;gap:.75rem;margin-top:2rem}\n"
+        ".btn{flex:1;padding:.85rem;border:none;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer;transition:all .2s}\n"
+        ".btn:active{transform:scale(.97)}\n"
+        ".btn-primary{background:linear-gradient(135deg,#409eff,#6366f1);color:#fff;box-shadow:0 2px 8px rgba(64,158,255,.3)}\n"
+        ".btn-primary:hover{box-shadow:0 4px 14px rgba(64,158,255,.4)}\n"
+        ".btn-secondary{background:#f5f7fa;color:#606266;border:1.5px solid #e4e7ed}\n"
+        ".btn-secondary:hover{border-color:#409eff;color:#409eff}\n"
+        ".btn-cancel{background:#fef0f0;color:#f56c6c;border:1.5px solid #fbc4c4}\n"
+        ".btn-cancel:hover{background:#f56c6c;color:#fff}\n"
+        ".result{text-align:center;padding:2rem}\n"
+        ".result .icon{font-size:3rem;margin-bottom:1rem}\n"
+        ".result .msg{font-size:1.2rem;font-weight:600;margin-bottom:.5rem}\n"
+        ".result .sub{font-size:.85rem;color:#909399}\n"
+        ".result.ok .msg{color:#67c23a}\n"
+        ".result.fail .msg{color:#f56c6c}\n"
+        ".countdown{text-align:center;color:#909399;font-size:.75rem;margin-top:1rem}\n"
+        "@keyframes spin{to{transform:rotate(360deg)}}\n"
+        ".loading{pointer-events:none;opacity:.6}\n"
+        ".spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}\n"
+        '</style>\n</head>\n<body>\n<div class="card" id="main">\n'
+        '  <div class="title">🔖 版本管理</div>\n'
+        f'  <div class="version">[[ package_name ]] 版本: {current_version}</div>\n'
+        '  <div class="label">选择版本类型:</div>\n'
+        '  <div class="type-group">\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="patch" checked><label><div class="icon">🔧</div><div class="type-text"><div class="type-name">Patch (x.y.z+1)</div><div class="type-desc">Bug修复</div></div></label></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="minor"><label><div class="icon">✨</div><div class="type-text"><div class="type-name">Minor (x.y+1.0)</div><div class="type-desc">新功能</div></div></label></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="major"><label><div class="icon">🎉</div><div class="type-text"><div class="type-name">Major (x+1.0.0)</div><div class="type-desc">重大更新</div></div></label></label>\n'
+        "  </div>\n"
+        '  <div class="actions">\n'
+        '    <button class="btn btn-primary" id="btn-update" onclick="doUpdate()">🚀 更新版本</button>\n'
+        '    <button class="btn btn-secondary" onclick="doSkip()">⏭️ 跳过</button>\n'
+        '    <button class="btn btn-cancel" onclick="doCancel()">✖ 取消</button>\n'
+        "  </div>\n"
+        '  <div class="countdown" id="countdown"></div>\n'
+        "</div>\n"
+        "<script>\n"
+        "const TIMEOUT = " + str(TIMEOUT_SECONDS) + ";\n"
+        "(function init(){\n"
+        "  let left=TIMEOUT;\n"
+        '  const cd=document.getElementById("countdown");\n'
+        '  const tick=setInterval(()=>{left--;if(left<=0){clearInterval(tick);cd.textContent="⏰ 已超时，自动跳过";return}if(left<=30)cd.textContent="⏳ "+left+"秒后自动跳过"},1000);\n'
+        "})();\n"
+        'function getType(){const r=document.querySelector("input[name=vtype]:checked");return r?r.value:"patch"}\n'
+        'function showResult(ok,msg,sub){document.getElementById("main").innerHTML=\'<div class="result \'+(ok?"ok":"fail")+\'"><div class="icon">\'+(ok?"✅":"❌")+"</div>"+'
+        '\'<div class="msg">\'+msg+"</div>"+(sub?\'<div class="sub">\'+sub+"</div>":"")+"</div>"}\n'
+        'function setLoading(on){const b=document.getElementById("btn-update");if(on){b.classList.add("loading");b.innerHTML=\'<span class="spinner"></span> 更新中...\'}else{b.classList.remove("loading");b.innerHTML="🚀 更新版本"}}\n'
+        'async function post(action,body){const res=await fetch("/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});return res.json()}\n'
+        'async function doUpdate(){setLoading(true);try{const r=await post("update",{vtype:getType()});if(r.ok)showResult(true,"版本更新成功","新版本：v"+r.version);else showResult(false,"更新失败",r.error)}catch(e){showResult(false,"请求异常",e.message)}}\n'
+        'async function doSkip(){await post("skip",{});showResult(true,"已跳过版本更新","提交将继续执行")}\n'
+        'async function doCancel(){await post("cancel",{});showResult(false,"已取消本次提交","Git commit 已中断")}\n'
+        "</script>\n</body>\n</html>"
+    )
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        html = build_html().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
+        action = body.get("action")
+        resp: dict = {"ok": True}
+
+        if action == "update":
+            vtype = body.get("vtype", "patch")
+            cmd = [sys.executable, str(VERSION_MANAGER), vtype]
+
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+            if r.returncode == 0:
+                subprocess.run(
+                    ["git", "add", "electron/package.json", "pyproject.toml"],
+                    cwd=PROJECT_ROOT,
+                )
+                resp["version"] = get_current_version()
+            else:
+                resp["ok"] = False
+                resp["error"] = r.stderr.strip() or r.stdout.strip() or "unknown error"
+
+            user_result["action"] = "update"
+            user_result["data"] = resp
+            result_event.set()
+
+        elif action == "skip":
+            user_result["action"] = "skip"
+            result_event.set()
+
+        elif action == "cancel":
+            user_result["action"] = "cancel"
+            result_event.set()
+
+        payload = json.dumps(resp).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def open_browser(url):
+    browser = os.environ.get("BROWSER", "")
+    if browser:
+        try:
+            subprocess.Popen(
+                [browser, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return True
+        except Exception:
+            pass
+    if os.environ.get("VSCODE_IPC_HOOK_CLI"):
+        try:
+            subprocess.Popen(
+                ["code", "--open-url", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            pass
+    if os.environ.get("DISPLAY"):
+        try:
+            subprocess.Popen(
+                ["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return True
+        except Exception:
+            pass
+    return False
+
+
+def main():
+    port = find_free_port()
+    url = f"http://127.0.0.1:{port}"
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    opened = open_browser(url)
+
+    print(f"\n🌐 版本管理页面已启动: {url}")
+    if not opened:
+        print(f"   👆 Ctrl+点击 上方链接打开页面（{TIMEOUT_SECONDS}秒后自动跳过）")
+    else:
+        print(f"   浏览器已打开（{TIMEOUT_SECONDS}秒后自动跳过）")
+    print()
+
+    got_response = result_event.wait(timeout=TIMEOUT_SECONDS)
+    server.shutdown()
+
+    if not got_response:
+        sys.stdout.write(f"⚠️  等待超时（{TIMEOUT_SECONDS}秒），跳过版本更新\n")
+        sys.stdout.flush()
+        sys.exit(0)
+
+    action = user_result["action"]
+    if action == "cancel":
+        print("❌ 用户取消了提交")
+        sys.exit(1)
+    elif action == "skip":
+        print("✅ 跳过版本更新")
+        sys.exit(0)
+    elif action == "update":
+        data = user_result["data"]
+        if data and data.get("ok"):
+            print(f"✅ 版本更新成功: {data.get('version', '?')}")
+            sys.exit(0)
+        else:
+            print(f"❌ 版本更新失败: {data.get('error', 'unknown')}")
+            sys.exit(1)
+    else:
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

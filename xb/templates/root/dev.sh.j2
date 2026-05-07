@@ -1,0 +1,142 @@
+#!/bin/bash
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_PID="$PROJECT_ROOT/datas/pids/[[ package_name ]]_backend.pid"
+FRONTEND_PID="$PROJECT_ROOT/datas/pids/[[ package_name ]]_frontend.pid"
+mkdir -p "$PROJECT_ROOT/datas/pids"
+mkdir -p "$PROJECT_ROOT/datas/logs"
+touch "$BACKEND_PID" "$FRONTEND_PID"
+
+is_running() {
+    [ -f "$1" ] || return 1
+    local pid=$(cat "$1" 2>/dev/null)
+    [ -z "$pid" ] && return 1
+    ps -p "$pid" > /dev/null 2>&1
+}
+
+kill_all_processes() {
+    echo "清理旧进程..."
+    pkill -f "python.*main.py" 2>/dev/null
+    pkill -f "npm run dev" 2>/dev/null
+    pkill -f "vite" 2>/dev/null
+    rm -f "$BACKEND_PID" "$FRONTEND_PID"
+    sleep 1
+}
+
+start_backend() {
+    # 安装 Git Hooks (版本管理)
+    if [ -f "$PROJECT_ROOT/version/scripts/install_hooks.sh" ]; then
+        echo "检测到版本管理系统,安装 Git Hooks..."
+        bash "$PROJECT_ROOT/version/scripts/install_hooks.sh" > /dev/null 2>&1
+        echo "✓ Git Hooks 已安装"
+    fi
+
+    if is_running "$BACKEND_PID"; then
+        echo "后端已运行 (PID: $(cat $BACKEND_PID))"
+        return
+    fi
+    echo "启动后端..."
+    
+    cd "$PROJECT_ROOT"
+    
+    uv sync --extra dev
+    
+    nohup .venv/bin/python backend/main.py > /dev/null 2>&1 &
+    echo $! > "$BACKEND_PID"
+    sleep 2
+    
+    if is_running "$BACKEND_PID"; then
+        echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:8000)"
+    else
+        echo "✗ 后端启动失败,查看日志: datas/logs/backend.log"
+        return 1
+    fi
+}
+
+stop_backend() {
+    echo "停止后端..."
+    pkill -f "python.*main.py" 2>/dev/null
+    rm -f "$BACKEND_PID"
+    echo "✓ 后端已停止"
+}
+
+start_frontend() {
+    if is_running "$FRONTEND_PID"; then
+        echo "前端已运行 (PID: $(cat $FRONTEND_PID))"
+        return
+    fi
+    
+    if [ ! -d "$PROJECT_ROOT/frontend" ]; then
+        echo "无前端目录,跳过"
+        return
+    fi
+    
+    cd "$PROJECT_ROOT/frontend"
+    
+    if [ -f "package.json" ]; then
+        echo "启动前端..."
+        
+        if [ ! -d "node_modules" ]; then
+            echo "安装前端依赖..."
+            npm install
+        fi
+        
+        nohup npm run dev > ../datas/logs/frontend.log 2>&1 &
+        echo $! > "$FRONTEND_PID"
+        sleep 3
+        echo "✓ 前端已启动 (PID: $(cat $FRONTEND_PID), http://localhost:5173)"
+    fi
+}
+
+stop_frontend() {
+    echo "停止前端..."
+    pkill -f "npm run dev" 2>/dev/null
+    pkill -f "vite" 2>/dev/null
+    rm -f "$FRONTEND_PID"
+    echo "✓ 前端已停止"
+}
+
+status() {
+    echo "========================================="
+    echo "  服务状态"
+    echo "========================================="
+    
+    if is_running "$BACKEND_PID"; then
+        echo "✓ 后端: 运行中 (PID: $(cat $BACKEND_PID))"
+    else
+        echo "✗ 后端: 未运行"
+    fi
+    
+    if is_running "$FRONTEND_PID"; then
+        echo "✓ 前端: 运行中 (PID: $(cat $FRONTEND_PID))"
+    else
+        echo "✗ 前端: 未运行"
+    fi
+    
+    echo "========================================="
+}
+
+case "$1" in
+    start)
+        kill_all_processes
+        start_backend && start_frontend
+        echo ""
+        status
+        ;;
+    stop)
+        stop_backend
+        stop_frontend
+        ;;
+    restart)
+        $0 stop
+        sleep 2
+        $0 start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "使用方法: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

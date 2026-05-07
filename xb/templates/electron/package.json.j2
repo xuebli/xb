@@ -1,0 +1,56 @@
+{
+  "name": "[[ package_name]]",
+  "version": "1.0.0",
+  "description": "[[ package_name_capitalized]] App",
+  "main": "main.js",
+  "author": "[[ package_name]]@example.com",
+  "homepage": "https://example.com",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.[[ package_name]].app",
+    "productName": "[[ package_name_capitalized]]",
+    "files": [
+      "main.js",
+      "build/icon.png"
+    ],
+    "linux": {
+      "target": "deb",
+      "icon": "build/icon.png",
+      "category": "Utility"
+    },
+    "deb": {
+      "maintainer": "[[ package_name]]@example.com"
+    },
+    "extraResources": [
+      {
+        "from": "../dist/server",
+        "to": "server"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend"
+      },
+      {
+        "from": "../configs",
+        "to": "configs",
+        "filter": [
+          "!global_config.yaml"
+        ]
+      },
+      {
+        "from": "../scripts",
+        "to": "scripts",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "39.2.4",
+    "electron-builder": "26.0.12"
+  }
+}

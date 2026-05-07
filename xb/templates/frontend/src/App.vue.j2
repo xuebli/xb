@@ -1,0 +1,43 @@
+<script setup>
+import { ref } from 'vue'
+import HelloWorld from './components/HelloWorld.vue'
+import RefreshButton from './components/RefreshButton.vue'
+import GitVersionBadge from './components/GitVersionBadge.vue'
+[% if enable_sudo %]
+import ConfigSetup from './components/ConfigSetup.vue'
+[% endif %]
+import FileManager from './components/FileManager.vue'
+
+const fileManager = ref(null)
+
+const handleRefresh = () => {
+  console.log('刷新页面')
+  window.location.reload()
+}
+
+const openSettings = () => {
+  fileManager.value?.open()
+}
+</script>
+
+<template>
+  <div class="app">
+    [% if enable_sudo %]
+    <ConfigSetup />
+    [% endif %]
+    <FileManager ref="fileManager" />
+    <header class="header">
+      <div class="header-left">
+        <h1>🎯 [[ package_name_capitalized]]</h1>
+        <GitVersionBadge />
+      </div>
+      <div class="header-right">
+        <RefreshButton @refresh="handleRefresh" />
+        <button class="settings-btn" @click="openSettings" title="配置文件管理">
+          ⚙️
+        </button>
+      </div>
+    </header>
+    <HelloWorld />
+  </div>
+</template>

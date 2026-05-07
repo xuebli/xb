@@ -1,0 +1,92 @@
+import atexit
+import os
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from managers import get_logger[% if enable_sudo %], sudoers_manager[% endif %], path_manager
+from api.config import router as config_router
+
+logger = get_logger(__name__)
+_cleanup_done = False
+
+
+def cleanup():
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+[% if enable_sudo %]
+    sudoers_manager.remove()
+[% endif %]
+    logger.info("应用关闭")
+
+
+atexit.register(cleanup)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.opt(raw=True).info("=" * 80 + "\n")
+    logger.info("应用启动完成")
+
+    yield
+
+    cleanup()
+    logger.opt(raw=True).info("=" * 80 + "\n")
+
+
+app = FastAPI(title="[[ package_name_capitalized]] Backend", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if path_manager.is_packaged:
+    frontend_path = str(path_manager.get_frontend_path())
+    assets_path = os.path.join(frontend_path, "assets")
+    app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+
+
+app.include_router(config_router, prefix="/api")
+
+
+@app.get("/api")
+async def root():
+    return {"message": "Hello from [[ package_name_capitalized]] Backend"}
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "healthy"}
+
+
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    if not path_manager.is_packaged:
+        return {
+            "error": "开发模式下前端通过 Vite 服务器访问",
+            "frontend_url": "http://localhost:5173",
+        }
+
+    frontend_path = str(path_manager.get_frontend_path())
+
+    file_path = os.path.join(frontend_path, full_path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+
+    index_path = os.path.join(frontend_path, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+
+    return {"error": "File not found"}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None)

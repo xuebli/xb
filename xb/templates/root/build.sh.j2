@@ -1,0 +1,156 @@
+#!/bin/bash
+# [[ package_name_capitalized]] - 一键打包脚本
+
+set -e
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# 项目路径
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$PROJECT_ROOT/.venv"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
+ELECTRON_DIR="$PROJECT_ROOT/electron"
+
+# 记录开始时间
+START_TIME=$(date +%s)
+
+# 构建选项
+BUILD_BACKEND=false
+BUILD_FRONTEND=false
+BUILD_ELECTRON=false
+
+# 打印函数
+print_header() {
+    echo -e "\n${BOLD}${BLUE}============================================${NC}"
+    echo -e "${BOLD}${BLUE}$1${NC}"
+    echo -e "${BOLD}${BLUE}============================================${NC}\n"
+}
+
+print_success() { echo -e "${GREEN}✅ $1${NC}"; }
+print_error() { echo -e "${RED}❌ $1${NC}"; }
+print_info() { echo -e "${CYAN}ℹ️  $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+
+# 显示帮助
+show_help() {
+    echo -e "${BOLD}${CYAN}[[ package_name_capitalized]] - 一键打包脚本${NC}\n"
+    echo -e "${BOLD}使用:${NC} $0 [选项]\n"
+    echo -e "${BOLD}选项:${NC}"
+    echo -e "  ${GREEN}-a${NC}  构建所有 (前端+后端+Electron)"
+    echo -e "  ${GREEN}-f${NC}  只构建前端"
+    echo -e "  ${GREEN}-b${NC}  只构建后端"
+    echo -e "  ${GREEN}-e${NC}  只构建 Electron DEB"
+    echo -e "  ${GREEN}-h${NC}  显示帮助\n"
+}
+
+# 构建前端
+build_frontend() {
+    print_header "构建前端"
+    
+    cd "$FRONTEND_DIR"
+    [ ! -d "node_modules" ] && npm install
+    npm run build
+    
+    [ -d "dist" ] || [ -d "build" ] || { print_error "构建失败"; exit 1; }
+    print_success "前端构建完成"
+}
+
+# 构建后端
+build_backend() {
+    print_header "构建后端"
+    
+    cd "$PROJECT_ROOT"
+    
+    uv sync --extra dev
+    
+    print_info "使用 PyInstaller 打包后端..."
+    .venv/bin/python backend/backend_build.py
+    
+    [ -f "dist/server" ] || { print_error "后端打包失败"; exit 1; }
+    print_success "后端打包完成"
+}
+
+# 构建 Electron
+build_electron() {
+    print_header "构建 Electron DEB"
+    
+    [ ! -f "dist/server" ] && { print_error "请先构建后端: $0 -b"; exit 1; }
+    
+    cd "$ELECTRON_DIR"
+    [ ! -d "node_modules" ] && npm install
+    npm run build
+    
+    DEB=$(ls -t dist/*.deb 2>/dev/null | head -1)
+    [ -f "$DEB" ] || { print_error "打包失败"; exit 1; }
+    
+    cd dist && sha256sum *.deb > SHA256SUMS && cd ..
+    print_success "DEB 打包完成"
+}
+
+# 显示结果
+show_results() {
+    ELAPSED=$(($(date +%s) - START_TIME))
+    
+    print_header "构建完成"
+    echo -e "${GREEN}✅ 完成! 耗时: ${ELAPSED}s${NC}\n"
+    
+    if [ "$BUILD_ELECTRON" = true ]; then
+        DEB=$(ls -t "$ELECTRON_DIR/dist"/*.deb 2>/dev/null | head -1)
+        if [ -f "$DEB" ]; then
+            SIZE=$(du -h "$DEB" | cut -f1)
+            echo -e "${BOLD}${GREEN}📦 DEB: ${CYAN}$DEB${NC} ($SIZE)\n"
+            echo -e "${BOLD}安装:${NC} ${YELLOW}sudo dpkg -i $DEB${NC}"
+        fi
+    fi
+}
+
+# 解析参数
+[ $# -eq 0 ] && show_help && exit 0
+
+for arg in "$@"; do
+    case $arg in
+        -a) BUILD_FRONTEND=true; BUILD_BACKEND=true; BUILD_ELECTRON=true ;;
+        -f) BUILD_FRONTEND=true ;;
+        -b) BUILD_BACKEND=true ;;
+        -e) BUILD_ELECTRON=true ;;
+        -h) show_help; exit 0 ;;
+        *) print_error "未知参数: $arg"; exit 1 ;;
+    esac
+done
+
+# 主流程
+main() {
+    echo -e "${BOLD}${CYAN}"
+    echo "╔════════════════════════════════════╗"
+    echo "║     [[ package_name_capitalized]] - 一键打包脚本       ║"
+    echo "╚════════════════════════════════════╝"
+    echo -e "${NC}\n"
+    
+    # 清理
+    print_info "清理旧文件..."
+    [ "$BUILD_BACKEND" = true ] && rm -rf dist build
+    [ "$BUILD_FRONTEND" = true ] && rm -rf "$FRONTEND_DIR/dist" "$FRONTEND_DIR/build"
+    [ "$BUILD_ELECTRON" = true ] && find "$ELECTRON_DIR/dist" -type f ! -name "*.deb" -delete 2>/dev/null || true
+    
+    # 构建
+    [ "$BUILD_FRONTEND" = true ] && build_frontend
+    [ "$BUILD_BACKEND" = true ] && build_backend
+    [ "$BUILD_ELECTRON" = true ] && build_electron
+    
+    show_results
+    
+    echo -e "\n${GREEN}🎉 完成!${NC}\n"
+}
+
+# 错误处理
+trap 'print_error "构建失败"; exit 1' ERR
+trap 'print_warning "用户中断"; exit 130' INT
+
+main
