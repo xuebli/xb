@@ -35,7 +35,7 @@ class ColorfulXbGroup(XbGroup):
 
 
 @click.group(cls=ColorfulXbGroup)
-@click.version_option(version="0.1.0", prog_name="xb")
+@click.version_option(version="1.0.0", prog_name="xb")
 def main():
     """
     xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具
