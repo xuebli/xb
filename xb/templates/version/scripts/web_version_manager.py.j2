@@ -45,8 +45,7 @@ def build_html():
         ".type-opt{padding:1rem;border:2px solid #e4e7ed;border-radius:8px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:.75rem}\n"
         ".type-opt:hover{border-color:#409eff;background:#ecf5ff}\n"
         ".type-opt input{display:none}\n"
-        ".type-opt input:checked + label{border-color:#409eff;background:#ecf5ff}\n"
-        ".type-opt label{cursor:pointer;display:flex;align-items:center;gap:.75rem;width:100%}\n"
+        ".type-opt:has(input:checked){border-color:#409eff;background:#ecf5ff}\n"
         ".icon{font-size:1.3rem}\n"
         ".type-text{flex:1}\n"
         ".type-name{font-weight:600;color:#303133}\n"
@@ -75,9 +74,9 @@ def build_html():
         f'  <div class="version">[[ package_name ]] 版本: {current_version}</div>\n'
         '  <div class="label">选择版本类型:</div>\n'
         '  <div class="type-group">\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="patch" checked><label><div class="icon">🔧</div><div class="type-text"><div class="type-name">Patch (x.y.z+1)</div><div class="type-desc">Bug修复</div></div></label></label>\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="minor"><label><div class="icon">✨</div><div class="type-text"><div class="type-name">Minor (x.y+1.0)</div><div class="type-desc">新功能</div></div></label></label>\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="major"><label><div class="icon">🎉</div><div class="type-text"><div class="type-name">Major (x+1.0.0)</div><div class="type-desc">重大更新</div></div></label></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="patch" checked><div class="icon">🔧</div><div class="type-text"><div class="type-name">Patch (x.y.z+1)</div><div class="type-desc">Bug修复</div></div></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="minor"><div class="icon">✨</div><div class="type-text"><div class="type-name">Minor (x.y+1.0)</div><div class="type-desc">新功能</div></div></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="major"><div class="icon">🎉</div><div class="type-text"><div class="type-name">Major (x+1.0.0)</div><div class="type-desc">重大更新</div></div></label>\n'
         "  </div>\n"
         '  <div class="actions">\n'
         '    <button class="btn btn-primary" id="btn-update" onclick="doUpdate()">🚀 更新版本</button>\n'
