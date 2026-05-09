@@ -3,6 +3,8 @@ xb CLI 入口
 提供项目初始化、开发、构建等命令
 """
 
+from importlib.metadata import version as get_version
+
 import click
 from rich.console import Console
 
@@ -12,6 +14,8 @@ from .commands.init import XbGroup, init_command
 from .commands.version import version
 
 console = Console()
+
+__version__ = get_version("xb")
 
 
 class ColorfulXbGroup(XbGroup):
@@ -35,7 +39,7 @@ class ColorfulXbGroup(XbGroup):
 
 
 @click.group(cls=ColorfulXbGroup)
-@click.version_option(version="1.0.0", prog_name="xb")
+@click.version_option(version=__version__, prog_name="xb")
 def main():
     """
     xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具
