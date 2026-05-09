@@ -15,7 +15,7 @@ from .commands.version import version
 
 console = Console()
 
-__version__ = get_version("xb")
+__version__ = get_version("xiaomi-xb")
 
 
 class ColorfulXbGroup(XbGroup):

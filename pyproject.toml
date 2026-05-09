@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "xb"
+name = "xiaomi-xb"
 version = "1.0.2"
 description = "Project management tool for UV + FastAPI + Vue3 + Electron desktop applications"
 readme = "README.md"
