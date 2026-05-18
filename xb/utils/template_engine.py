@@ -123,11 +123,12 @@ class TemplateEngine:
             components_dir / "GitVersionBadge.vue",
             context,
         )
-        self._render_template(
-            "frontend/src/components/ConfigSetup.vue.j2",
-            components_dir / "ConfigSetup.vue",
-            context,
-        )
+        if context["enable_sudo"]:
+            self._render_template(
+                "frontend/src/components/ConfigSetup.vue.j2",
+                components_dir / "ConfigSetup.vue",
+                context,
+            )
         self._render_template(
             "frontend/src/components/FileManager.vue.j2",
             components_dir / "FileManager.vue",
