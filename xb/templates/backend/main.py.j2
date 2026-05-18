@@ -30,6 +30,14 @@ atexit.register(cleanup)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.opt(raw=True).info("=" * 80 + "\n")
+
+    try:
+        copied = path_manager.init_user_configs()
+        if copied:
+            logger.info(f"已初始化用户配置文件: {copied}")
+    except Exception as e:
+        logger.warning(f"初始化用户配置文件失败: {e}")
+
     logger.info("应用启动完成")
 
     yield

@@ -1,4 +1,5 @@
 import pathlib
+import shutil
 import sys
 import yaml
 from pathlib import Path
@@ -18,6 +19,7 @@ class PathManager:
             install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
             self.scripts_dir = install_root / "scripts"
             self.frontend_dir = install_root / "frontend"
+            self.bundled_configs_dir = install_root / "configs"
 
         else:
             self.data_dir = Path(__file__).parent.parent.parent.resolve()
@@ -26,6 +28,7 @@ class PathManager:
             self.reports_dir = self.data_dir / "datas" / "reports"
             self.scripts_dir = self.data_dir / "scripts"
             self.frontend_dir = None
+            self.bundled_configs_dir = None
 
     def get_config_path(self, filename: str) -> pathlib.Path:
         return self.config_dir / filename
@@ -81,6 +84,46 @@ class PathManager:
 
     def reload_config(self):
         self._config_cache = None
+
+    def init_user_configs(self) -> list:
+        """
+        首次启动时把打包内置的 configs 目录递归拷贝到用户家目录。
+
+        - 仅在打包态生效（开发态直接读项目目录的 configs/）
+        - 已存在的目标文件不覆盖（保留用户改动）
+        - 文件名以 .example 结尾的，拷贝时去掉该后缀
+
+        返回本次新拷贝的文件相对路径列表。
+        """
+        if not self.is_packaged:
+            return []
+
+        src_root = self.bundled_configs_dir
+        if src_root is None or not src_root.exists():
+            return []
+
+        dst_root = self.config_dir
+        dst_root.mkdir(parents=True, exist_ok=True)
+
+        copied = []
+        for src_path in src_root.rglob("*"):
+            if not src_path.is_file():
+                continue
+
+            rel = src_path.relative_to(src_root)
+            dst_name = rel.name
+            if dst_name.endswith(".example"):
+                dst_name = dst_name[: -len(".example")]
+            dst_path = dst_root / rel.parent / dst_name
+
+            if dst_path.exists():
+                continue
+
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+            copied.append(str(dst_path.relative_to(dst_root)))
+
+        return copied
 
 
 path_manager = PathManager("[[ package_name]]")
