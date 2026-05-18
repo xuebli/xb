@@ -27,10 +27,10 @@ xb --help
 
 ```bash
 # 初始化项目
-xb init --package myapp
+xb init myapp
 
 # 带 sudo 免密配置
-xb init --package myapp --sudoers
+xb init myapp --sudoers
 
 cd myapp
 
@@ -91,7 +91,7 @@ xb version
 
 ```bash
 # 启用 sudo 免密配置
-xb init --package myapp --sudoers
+xb init myapp --sudoers
 
 # 密码存储在 configs/global_config.yaml
 # 建议设置文件权限: chmod 600 configs/global_config.yaml

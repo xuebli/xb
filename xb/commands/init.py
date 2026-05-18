@@ -41,12 +41,7 @@ class XbGroup(click.Group):
 
 
 @click.command(cls=ParamSummaryCommand)
-@click.option(
-    "--package",
-    "-p",
-    required=True,
-    help="项目名称 (例如: demo, myapp)",
-)
+@click.argument("package")
 @click.option(
     "--sudoers",
     is_flag=True,
@@ -60,8 +55,8 @@ def init_command(package: str, sudoers: bool):
     在当前目录创建一个完整的 UV + FastAPI + Vue3 + Electron 项目
 
     示例:
-        xb init --package demo
-        xb init -p myapp --sudoers
+        xb init demo
+        xb init myapp --sudoers
     """
     # 验证包名
     if not validate_package_name(package):
