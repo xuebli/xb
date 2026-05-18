@@ -139,15 +139,25 @@ class TemplateEngine:
         electron_dir = target_dir / "electron"
         electron_dir.mkdir(exist_ok=True)
 
-        build_dir = electron_dir / "build"
-        build_dir.mkdir(exist_ok=True)
+        resources_dir = electron_dir / "resources"
+        resources_dir.mkdir(exist_ok=True)
 
         self._render_template("electron/main.js.j2", electron_dir / "main.js", context)
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
 
-        templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "build"
+        self._render_template(
+            "electron/resources/postinst.j2", resources_dir / "postinst", context
+        )
+        (resources_dir / "postinst").chmod(0o755)
+
+        self._render_template(
+            "electron/resources/postrm.j2", resources_dir / "postrm", context
+        )
+        (resources_dir / "postrm").chmod(0o755)
+
+        templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "resources"
         if (templates_dir / "icon.png").exists():
-            shutil.copy(templates_dir / "icon.png", build_dir / "icon.png")
+            shutil.copy(templates_dir / "icon.png", resources_dir / "icon.png")
 
     def _create_configs(self, target_dir: Path, context: Dict[str, Any]):
         configs_dir = target_dir / "configs"

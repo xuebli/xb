@@ -14,15 +14,17 @@
     "productName": "[[ package_name_capitalized]]",
     "files": [
       "main.js",
-      "build/icon.png"
+      "resources/icon.png"
     ],
     "linux": {
       "target": "deb",
-      "icon": "build/icon.png",
+      "icon": "resources/icon.png",
       "category": "Utility"
     },
     "deb": {
-      "maintainer": "[[ package_name]]@example.com"
+      "maintainer": "[[ package_name]]@example.com",
+      "afterInstall": "resources/postinst",
+      "afterRemove": "resources/postrm"
     },
     "extraResources": [
       {
