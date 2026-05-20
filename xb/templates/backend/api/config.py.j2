@@ -132,7 +132,7 @@ async def save_config(config_req: ConfigRequest):
         with open(config_file, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-        path_manager.reload_config()
+        path_manager.reload_config("global_config.yaml")
 
         if not sudoers_manager.setup():
             raise HTTPException(
@@ -237,7 +237,7 @@ async def write_config_file(req: FileContentRequest):
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(req.content)
 
-        path_manager.reload_config()
+        path_manager.reload_config(req.filename)
 
         logger.info(f"配置文件已更新: {req.filename}")
 
