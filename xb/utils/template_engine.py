@@ -218,6 +218,8 @@ class TemplateEngine:
         self._render_template("root/build.sh.j2", target_dir / "build.sh", context)
         self._render_template("root/README.md.j2", target_dir / "README.md", context)
         self._render_template("root/.gitignore.j2", target_dir / ".gitignore", context)
+        # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
+        self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
         (target_dir / "dev.sh").chmod(0o755)
         (target_dir / "build.sh").chmod(0o755)

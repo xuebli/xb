@@ -1,0 +1,329 @@
+# [[ package_name_capitalized]] PROJECT KNOWLEDGE BASE
+
+> 本文件由 `xb init` 自动生成，作为 AI 编码助手（opencode / Claude Code / Cursor 等）
+> 在本项目工作时的**事实参考与硬性约定**。
+
+## OVERVIEW
+
+跨平台桌面应用：FastAPI 后端 + Vue3 前端 + Electron 壳，PyInstaller 打 server，electron-builder 打 DEB。
+开发态/生产态路径靠 `path_manager.is_packaged` 切换（开发态读 `./configs/`，打包态读 `~/.config/<app>/`）。
+
+## STRUCTURE
+
+```
+[[ package_name]]/
+├── pyproject.toml      # uv + hatchling，packages=["backend"]
+├── dev.sh              # 启停脚本，写 PID 到 datas/pids/
+├── build.sh            # -a/-f/-b/-e 分别构建
+├── backend/            # FastAPI（包根，不要写 from backend.xxx）
+│   ├── main.py         # FastAPI 实例 + lifespan + SPA fallback
+│   ├── backend_build.py# PyInstaller 打包入口
+│   ├── api/            # 路由模块
+│   └── managers/       # path_manager / logger_manager[% if enable_sudo %] / sudoers_manager[% endif %]
+├── frontend/           # Vue3 + Vite SPA
+│   ├── vite.config.js  # 构建期注入 __APP_VERSION__ + __GIT_COMMITS__
+│   └── src/
+│       ├── App.vue
+│       └── components/
+├── electron/           # 壳 + DEB 打包（main.js 极简，复杂度在 package.json/postinst）
+├── version/            # Git pre-commit 版本管理（三模态：CLI/Tk/Web）
+├── configs/            # 配置文件（global_config.yaml 含密钥，gitignore；其他 yaml 直接提交）
+├── scripts/            # 占位脚本，打包时随 extraResources 进入 /opt/[[ package_name_capitalized]]/scripts/
+└── datas/              # 运行时产物（pids/logs/reports），全部 gitignore
+```
+
+## WHERE TO LOOK
+
+| 任务 | 位置 | 备注 |
+|------|------|------|
+| 加 API 路由 | `backend/api/<feature>.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api")` |
+| 改路径策略 | `backend/managers/path_manager.py` | 全局单例 `path_manager` |
+| 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 仿 path_manager 单例模式 |
+| 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
+| 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
+| 改 DEB 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
+| 改安装/卸载副作用 | `electron/resources/postinst` / `postrm` | DEB 钩子 |
+| 改 Electron 窗口尺寸/菜单 | `electron/main.js` | `BrowserWindow` 构造参数 |
+| 改前端注入版本/git日志 | `frontend/vite.config.js` 的 `define` | `__APP_VERSION__` 读 `electron/package.json` |
+| 改后端 base URL（前端） | `frontend/src/components/FileManager.vue` | `import.meta.env.VITE_API_BASE` |
+| 改 pre-commit 行为 | `version/hooks/pre-commit` | 改完跑 `bash version/scripts/install_hooks.sh` |
+| 加被 bump 的文件 | `version/scripts/version_manager.py` | 仿 `update_pyproject_version` |
+[% if enable_sudo %]| 加 sudo 免密命令 | `backend/managers/sudoers_manager.py` 的 `self.commands = []` | 加完启动应用自动写 `/etc/sudoers.d/` |
+[% endif %]
+## CODE MAP
+
+| 符号 | 位置 | 角色 |
+|------|------|------|
+| `path_manager` | `backend/managers/path_manager.py` 文件底部 | 单例，全局唯一入口；`is_packaged` 决定开发/生产分支 |
+| `get_logger(name)` | `backend/managers/logger_manager.py` | loguru 包装；首次调用初始化 stdout + 5MB 滚动文件 |
+| `app` (FastAPI) | `backend/main.py` | 含 `/api/*` API 与 `/{full_path:path}` SPA fallback |
+| `serve_frontend` | `backend/main.py` | 仅打包态服务 frontend dist；开发态返回提示 |
+| `VersionManager` | `version/scripts/version_manager.py` | 同步更新 `electron/package.json` + `pyproject.toml` 的 version |
+| `PathManager.init_user_configs` | `backend/managers/path_manager.py` | 仅打包态生效，把 `/opt/.../configs/*.example` 拷到 `~/.config/[[ package_name]]/`，已存在不覆盖 |
+[% if enable_sudo %]| `sudoers_manager` | `backend/managers/sudoers_manager.py` 文件底部 | 单例，把 `self.commands` 列表写入 `/etc/sudoers.d/[[ package_name_capitalized]]_nopasswd` |
+[% endif %]
+## COMMANDS
+
+```bash
+# 开发
+bash dev.sh start|stop|restart|status
+
+# 打包
+bash build.sh -a    # 全量
+bash build.sh -f    # 仅前端 → frontend/dist
+bash build.sh -b    # 仅后端 → dist/server
+bash build.sh -e    # 仅 Electron → electron/dist/*.deb
+
+# 版本（也可手动触发）
+.venv/bin/python version/scripts/version_manager.py {patch|minor|major}
+
+# Hook 安装
+bash version/scripts/install_hooks.sh
+```
+
+---
+
+# 跨模块约定（CONVENTIONS）
+
+- **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
+- **包名 `backend` 而非 `src`**：`pyproject.toml` 配置 `packages = ["backend"]`，导入用 `from managers import ...` / `from api.config import ...`（即 `backend` 内相对当前包根，**不要写 `from backend.managers import ...`**）。managers 包内部互相依赖时用相对导入（`from .path_manager import path_manager`）。
+- **路径硬编码必须经 `path_manager`**：`get_config_path` / `get_log_path` / `get_report_path` / `get_script_path` / `get_frontend_path`，不要直接拼 `Path.home()` 或 `Path(__file__).parent...`。
+- **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
+- **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
+- **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:8000')`。
+- **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
+- **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
+- **YAML 写入校验在前**：`yaml.safe_load(content)` 失败直接 400；写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
+- **Vue 用 `<script setup>` + 组合式 API**，API 调用直接 `fetch`（无 axios），失败统一 `alert + console.error`。组件名 PascalCase，文件名同步。
+- **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
+[% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。
+- **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password")`，密码明文存 `configs/global_config.yaml`，文件权限必须 `chmod 600`。
+- **sudo 配置流程**：用户首启（`ConfigSetup.vue`）→ 调 `/api/config/save` 写密码 → `sudoers_manager.setup()` 用密码以 `sudo -S` 安装 sudoers 文件 → 校验通过则永久免密。
+[% endif %]
+## 配置文件分级（关键约定）
+
+**核心原则**：**含密钥/密码 → `global_config.yaml`；不含密钥 → 独立 yaml 直接提交真值**。
+
+### 决策表
+
+| 参数性质 | 放哪里 | 是否进 git | 是否要 `.example` |
+|---|---|---|---|
+| **凭证 / 密钥 / 密码 / token** | `global_config.yaml`（用命名空间嵌套） | ❌ 已 gitignore | ✅ `global_config.yaml.example` 留空占位 |
+| **跨多模块的全局开关** | `global_config.yaml` 顶层 | ❌ 已 gitignore | ✅ 同上 |
+| **业务参数（无密钥）** | 独立 yaml：`configs/<module>_config.yaml` | ✅ **直接提交真值** | ❌ 不需要 |
+| **结构化数据 / 列表型（无密钥）** | 独立 yaml | ✅ **直接提交真值** | ❌ 不需要 |
+
+**铁律**：**唯一进 `.gitignore` 的配置文件就是 `configs/global_config.yaml`**。其他 yaml 一律直接提交，让配置变更跟着代码一起 PR review。
+
+### `global_config.yaml` 内部组织：按模块嵌套
+
+```yaml
+# global_config.yaml（git 排除，含真实凭证）
+[% if enable_sudo %]sudo_password: "REAL_PASSWORD"      # 历史扁平 key,保留
+[% endif %]
+mail:
+  smtp:
+    password: "REAL_MAIL_PASSWORD"
+
+aliyun:
+  access_key_id: "LTAI..."
+  access_key_secret: "..."
+```
+
+`global_config.yaml.example`（**提交 git**，密钥**留空**）：
+
+```yaml
+[% if enable_sudo %]sudo_password: ""
+[% endif %]
+mail:
+  smtp:
+    password: ""
+aliyun:
+  access_key_id: ""
+  access_key_secret: ""
+```
+
+### 标准流程 A：新模块需要密钥（用 `global_config.yaml`）
+
+模块同时有敏感参数（密码）和非敏感参数（host/port）：
+
+1. **密钥**写进 `global_config.yaml`（按模块嵌套）+ 同步在 `.example` 留空
+2. **非敏感参数**新建独立 yaml：`configs/mail_config.yaml`，**直接提交真值，无 `.example`**
+3. 写一个独立 manager 合并两处读取：
+
+```python
+# backend/managers/mail_manager.py
+from .path_manager import path_manager
+from .logger_manager import get_logger
+
+logger = get_logger(__name__)
+
+
+class MailManager:
+    BIZ_CONFIG = "mail_config.yaml"
+
+    @property
+    def smtp_host(self) -> str:
+        return path_manager.get_config_value(
+            "smtp.host", default="localhost", config_file=self.BIZ_CONFIG
+        )
+
+    @property
+    def smtp_port(self) -> int:
+        return int(path_manager.get_config_value(
+            "smtp.port", default=25, config_file=self.BIZ_CONFIG
+        ))
+
+    @property
+    def smtp_password(self) -> str:
+        return path_manager.get_config_value("mail.smtp.password", default="")
+
+    def reload(self):
+        path_manager.reload_config(self.BIZ_CONFIG)
+        path_manager.reload_config("global_config.yaml")
+
+
+mail_manager = MailManager()
+```
+
+4. `managers/__init__.py` 暴露：
+
+```python
+from .mail_manager import mail_manager
+__all__ = [..., "mail_manager"]
+```
+
+5. 业务代码：`from managers import mail_manager; mail_manager.smtp_password`
+
+### 标准流程 B：模块不需要密钥（只独立 yaml）
+
+更简单——只做上面 2~5 步，**跳过** `global_config.yaml` 改动。
+
+### path_manager 配置 API
+
+```python
+# 读整份 yaml（按文件名分别缓存）
+cfg = path_manager.load_config("mail_config.yaml")
+
+# 取单个值（点路径 + 默认值 + 指定文件）
+host = path_manager.get_config_value("smtp.host", default="localhost", config_file="mail_config.yaml")
+
+# 默认 config_file = "global_config.yaml"，读 global 的字段不用传
+mail_pwd = path_manager.get_config_value("mail.smtp.password", default="")
+
+# 失效缓存
+path_manager.reload_config("mail_config.yaml")  # 单文件
+path_manager.reload_config()                     # 全清
+```
+
+**禁止**：自己 `yaml.safe_load(open(...))` —— 失去缓存能力，且打包态会找错路径。
+
+---
+
+# UNIQUE STYLES（项目特有的硬耦合）
+
+> 这些是"读了代码才知道、改了就崩"的隐藏约定。
+
+- **Electron 启动序**：先 `spawn(server)`，监听 stdout 直到出现 `应用启动完成` 才创建 BrowserWindow。**这是 `electron/main.js` 与 `backend/main.py` lifespan 日志的字面字符串耦合，不能动**。
+- **Vite 注入 git 日志**：`frontend/vite.config.js` 在构建期 `execSync('git log -10 ...')` 把 commit 历史塞进 `__GIT_COMMITS__` 全局常量供 `GitVersionBadge.vue` 渲染；非 git 仓库降级为 `[]`。
+- **pre-commit 三模态**：远程 IDE → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。退出码契约：`0` = 完成或跳过（继续 commit），`1` = 用户取消（中断 commit），其他 = 异常（继续 commit + warning）。
+- **`electron/package.json` 是版本号 single source of truth**：`pyproject.toml` 的 version 跟着它走，**不是反过来**。
+- **DEB 用户感知安装**：`postinst` 通过 `$SUDO_USER` / `$PKEXEC_UID` 反查真实用户，把配置初始化到 *该用户* 的 `~/.config/`，而非 root。
+- **`LoggerManager` 是类级单次初始化**：`_initialized` 类变量；多次 `get_logger(name)` 只换 `bind(module=name)`，不会重复 `logger.add`。
+- **路由顺序敏感**：`backend/main.py` 里 `serve_frontend`（`/{full_path:path}`）必须放在所有 `/api/*` 之后，否则会吃掉所有 API。
+- **commit 解析层级靠缩进**：`GitVersionBadge.vue` 用 `leadingSpaces / 2` 算 level，渲染缩进列表。
+
+---
+
+# ANTI-PATTERNS（本项目禁止）
+
+- ❌ 不要 `from backend.managers import ...` —— pyproject 把 `backend/` 当包根，应 `from managers import ...`。开发态可能能跑，PyInstaller 打包后 hidden-import 不匹配，运行时崩溃。
+- ❌ 不要在 `path_manager` 之外直接读 `~/.config/[[ package_name]]/` —— 开发态根本不在那里（在 `./configs/`）。
+- ❌ 不要把 `configs/global_config.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
+- ❌ 不要把所有新模块参数都塞 `global_config.yaml` —— 见上"配置文件分级"决策表。
+- ❌ 不要绕过 `path_manager` 直接 `yaml.safe_load(open(...))` 读配置 —— 失去缓存能力，且打包态会找错路径。
+- ❌ 不要在写 yaml 配置后忘了 `path_manager.reload_config("xxx.yaml")` —— 缓存还指向旧值。
+- ❌ 不要用 `print()` 调试后端 —— 用 `get_logger(__name__)`，否则 PyInstaller 打包后 stdout 被 Electron 用作启动信号。
+- ❌ 不要改后端启动日志 `应用启动完成` 这一行字串 —— `electron/main.js` 用它作为 BrowserWindow 创建触发条件。
+- ❌ 不要去掉 `log_config=None`（`uvicorn.run(..., log_config=None)`）—— 否则 uvicorn 自带日志会盖掉 loguru 格式，Electron 监听字串失效。
+- ❌ 不要在 `main.py` lifespan 之外做 I/O 初始化 —— PyInstaller onefile 启动慢，必须挪进 lifespan 才能让 Electron 监听到 `应用启动完成`。
+- ❌ 不要在 `path_manager.__init__` 里读 yaml —— 必须 lazy load（已用 `_config_cache`）。
+- ❌ 不要把 `serve_frontend`（`/{full_path:path}`）放在 `/api/*` 之前 —— 会吃掉所有 API。
+- ❌ 不要 commit `electron/package.json` 的 version 字段 —— 由 pre-commit hook 自动 bump。
+- ❌ 不要在 `extraResources` 里漏 `filter: ["!global_config.yaml"]` —— 会把开发机的真实配置打进 DEB。
+- ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `bash build.sh -b`。
+- ❌ 不要硬编码用户路径如 `/home/xxx/...` —— 永远走 `getent passwd "$SUDO_USER" | cut -d: -f6`。
+- ❌ 不要假设 `__GIT_COMMITS__` 非空 —— 非 git 仓库或 CI 沙箱里它是 `[]`。
+- ❌ 不要写 `process.env.XXX` —— Vite 项目用 `import.meta.env.VITE_XXX`。
+- ❌ 不要直接编辑 `frontend/dist/` —— 打包产物，被 electron-builder 通过 `extraResources` 拉走。
+- ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.sh` 分发。
+- ❌ 不要在 hook 里硬退出非 0 码 —— 除非确实是用户取消。误退会卡住整个 commit 流程。
+- ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— [% if enable_sudo %]必须注册到 `sudoers_manager.commands`，配置完成后无密执行[% else %]当前项目未启用 sudo；如确需，请重新生成项目时加 `--sudoers`[% endif %]。
+
+---
+
+# AI 协作硬性约定
+
+> 以下规则与具体代码无关，但**必须遵守**。
+
+## A. 输出语言
+
+所有 AI 输出（思考过程、回复、新增的代码注释、文档）**必须使用简体中文**。即使用户用英文提问，也用中文回答。
+
+## B. 加依赖前先确认
+
+- **不要随意加依赖**。加之前先想：标准库 / 现有依赖能否满足？
+- 不确定时**先问用户**，不要擅自引入新库。
+- Python 用 `uv add <pkg>`（**禁止** `pip install`），Node 在对应子目录用 `npm install <pkg>`（**禁止** `yarn` / `pnpm`）。
+
+## C. 上手新功能前先清理脚手架
+
+`xb init` 生成的项目**带示例组件**，开发新功能前应**先清理**：
+
+| 文件 | 处置 |
+|---|---|
+| `frontend/src/components/HelloWorld.vue` | 通常先删除或替换 |
+| `frontend/src/App.vue` 的 `<HelloWorld />` import & 使用 | 同步移除 |
+| `frontend/src/components/RefreshButton.vue` | 视需要保留 |
+| `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
+| `frontend/src/components/FileManager.vue` | 视需要保留（配置文件管理 UI） |
+[% if enable_sudo %]| `frontend/src/components/ConfigSetup.vue` | **保留**（sudo 模式下的首启密码配置 UI） |
+[% endif %]
+清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
+
+## D. 启动 / 停止 / 状态:用 `dev.sh`
+
+| 场景 | 推荐方式 |
+|---|---|
+| **日常开发**(前后端同启) | `bash dev.sh start` |
+| **临时调试单后端** | `.venv/bin/python backend/main.py` |
+| **临时调试单前端** | `cd frontend && npm run dev` |
+| **停止 dev.sh 启动的服务** | `bash dev.sh stop`(**不要**用 `pkill -f uvicorn` —— 会留前端尾巴) |
+| **构建** | `bash build.sh -a/-f/-b/-e`(**不要**直接 `pyinstaller` / `electron-builder`) |
+
+`dev.sh` 内部处理:端口检查、PID 文件、日志重定向、前后端同步启动。日常开发优先用它,临时单跑某一边可直接命令。
+
+## E. 测试
+
+默认**不**主动写单元测试，除非用户明确要求。要写时用 `pytest`（已在 `pyproject.toml` 的 dev extras 里），文件放 `tests/` 镜像 `backend/` 结构，mock `path_manager` 用 `monkeypatch._config_cache`，不要真写 yaml。
+
+## F. 改动前先读现有代码
+
+- ❌ 不要为了"完整性"加一堆用不到的辅助函数 / 抽象层。
+- ❌ 不要把简单的 `if-else` 改成"设计模式"。
+- ❌ 不要在没读 `path_manager`[% if enable_sudo %] / `sudoers_manager`[% endif %] 源码的情况下"猜"它的接口。
+- ❌ 不要写"防御性"代码塞满 `try/except`，让真实错误被吞掉。
+- ✅ 改动前**先读现有代码**，找到模式再写。
+- ✅ 不确定时**问用户**，不要瞎写。
+- ✅ `xb init` 已默认 git init + 首个 commit;若发现项目不在 git 仓库(用户手动删了 `.git/`),**停下提醒用户**先 `git init && git add . && git commit -m "baseline"` 再改代码。
+
+---
+
+# 故障排查(项目特有,非显然)
+
+| 现象 | 第一步看哪 |
+|---|---|
+| DEB 安装后配置写到 `/root/.config/` 而非用户家目录 | `electron/resources/postinst` 是否用 `$SUDO_USER` 反查家目录 |
+| `git commit` 卡住没反应 | hook 三模态判错,GUI 弹窗可能在屏外;应急 `git commit --no-verify` |
+| `from managers import xxx` 开发态 OK 打包后 ImportError | `backend/backend_build.py` 加 `--hidden-import=managers.xxx` |
+| YAML 改了但应用读到旧值 | 调用方漏了 `path_manager.reload_config("xxx.yaml")` |
