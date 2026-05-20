@@ -4,6 +4,7 @@ xb init 命令实现
 """
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import click
@@ -15,6 +16,44 @@ from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
 
 console = Console()
+
+
+def init_git_repo(target_dir: Path, package: str) -> bool:
+    """在目标目录初始化 git 仓库并提交首个 commit。
+
+    成功返回 True；失败仅打印警告，不抛异常（不应阻塞项目创建）。
+    """
+    if shutil.which("git") is None:
+        console.print("[yellow]⚠[/yellow]  未检测到 git 命令，已跳过仓库初始化")
+        return False
+
+    def _run(cmd: list[str]) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(
+                cmd, cwd=target_dir, capture_output=True, text=True, timeout=15
+            )
+            return r.returncode == 0, (r.stderr or r.stdout).strip()
+        except Exception as e:
+            return False, str(e)
+
+    ok, msg = _run(["git", "init", "-q"])
+    if not ok:
+        console.print(f"[yellow]⚠[/yellow]  git init 失败: {msg}")
+        return False
+
+    _run(["git", "add", "."])
+
+    ok, msg = _run(
+        ["git", "commit", "-q", "-m", f"chore: xb init 初始化 {package} 项目"]
+    )
+    if not ok:
+        console.print(
+            f"[yellow]⚠[/yellow]  git commit 失败（可能未配置 user.name/user.email）: {msg}\n"
+            f"   稍后请手动: git -C {target_dir} commit -m 'chore: xb init 初始化项目'"
+        )
+        return False
+
+    return True
 
 
 class ParamSummaryCommand(click.Command):
@@ -110,15 +149,23 @@ def init_command(package: str, sudoers: bool):
             sudo_password=sudo_password,
         )
 
+        git_ok = init_git_repo(target_dir, package)
+        git_line = (
+            "[green]→[/green] 已初始化 git 仓库并完成首个 commit\n"
+            if git_ok
+            else "[yellow]⚠[/yellow]  git 仓库未初始化，请稍后手动 git init\n"
+        )
+
         console.print()
         console.print(
             Panel.fit(
                 f"[bold green]✓ 项目创建成功![/bold green]\n\n"
-                f"项目位置: [cyan]{target_dir}[/cyan]\n\n"
+                f"项目位置: [cyan]{target_dir}[/cyan]\n"
+                f"{git_line}\n"
                 f"[bold]下一步:[/bold]\n"
                 f"  cd {package}\n"
                 f"  bash dev.sh start    # 启动开发环境\n\n"
-                f"[dim]更多命令请查看 README.md[/dim]",
+                f"[dim]更多命令请查看 README.md 与 AGENTS.md[/dim]",
                 border_style="green",
             )
         )

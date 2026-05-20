@@ -8,6 +8,7 @@
 - UV + FastAPI + Vue3 + Electron 开箱即用
 - 可选 sudo 免密配置
 - 内置开发、构建、版本管理脚本
+- 自动初始化 git 仓库并提交首个 commit
 
 ## 安装
 
@@ -26,7 +27,7 @@ xb --help
 ## 快速开始
 
 ```bash
-# 初始化项目
+# 在当前目录创建 myapp/ 子目录,自动 git init + 首次 commit
 xb init myapp
 
 # 带 sudo 免密配置
@@ -43,6 +44,9 @@ xb dev --status
 # 停止
 xb dev --stop
 ```
+
+> **`xb init` 自动行为**：在目标目录执行 `git init` 并以 `chore: xb init 初始化 <package> 项目` 提交首个 commit。
+> 若系统未安装 git 或未配置 `user.name/user.email`，会打印警告但不阻塞项目创建，可稍后手动补提交。
 
 ## 构建
 
