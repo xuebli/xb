@@ -93,7 +93,8 @@ bash version/scripts/install_hooks.sh
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:8000')`。
 - **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
-- **YAML 写入校验在前**：`yaml.safe_load(content)` 失败直接 400；写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
+- **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
+- **写完配置必须精确 reload**：`path_manager.reload_config(<filename>)` 传具体文件名，**不要** `reload_config()` 全清——配置缓存是按文件名独立的，全清会无端废掉其他文件的缓存（详见 `path_manager.reload_config` docstring）。
 - **Vue 用 `<script setup>` + 组合式 API**，API 调用直接 `fetch`（无 axios），失败统一 `alert + console.error`。组件名 PascalCase，文件名同步。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
 [% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。

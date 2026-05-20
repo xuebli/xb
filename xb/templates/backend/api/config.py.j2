@@ -3,7 +3,6 @@ import re
 import pathlib
 [% endif %]
 import shutil
-import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from managers import path_manager, get_logger
@@ -71,6 +70,8 @@ async def check_config():
             "config_path": str(config_file),
             "is_packaged": path_manager.is_packaged,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {
             "valid": False,
@@ -172,6 +173,8 @@ async def list_config_files():
             "files": sorted(yaml_files, key=lambda x: x["name"]),
             "config_dir": str(config_dir),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取配置文件列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取文件列表失败: {str(e)}")
@@ -192,13 +195,7 @@ async def read_config_file(filename: str):
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        try:
-            yaml.safe_load(content)
-            is_valid = True
-            error_msg = None
-        except yaml.YAMLError as e:
-            is_valid = False
-            error_msg = str(e)
+        is_valid, error_msg = path_manager.validate_yaml(content)
 
         return {
             "filename": filename,
@@ -221,10 +218,9 @@ async def write_config_file(req: FileContentRequest):
         if not req.filename.endswith(".yaml"):
             raise HTTPException(status_code=400, detail="只支持 .yaml 文件")
 
-        try:
-            yaml.safe_load(req.content)
-        except yaml.YAMLError as e:
-            raise HTTPException(status_code=400, detail=f"YAML 格式错误: {str(e)}")
+        is_valid, error_msg = path_manager.validate_yaml(req.content)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"YAML 格式错误: {error_msg}")
 
         file_path = path_manager.get_config_path(req.filename)
         file_path.parent.mkdir(parents=True, exist_ok=True)

@@ -91,6 +91,23 @@ class PathManager:
         else:
             self._config_cache.pop(config_file, None)
 
+    @staticmethod
+    def validate_yaml(content: str) -> tuple[bool, str | None]:
+        """校验字符串是否为合法 YAML（仅语法，不返回解析结果）。
+
+        用于消除业务侧重复的 try/except yaml.YAMLError 模板代码。
+        如需读取配置取值，请使用 load_config / get_config_value（带缓存）。
+
+        Returns:
+            (True, None)  合法
+            (False, msg)  非法，msg 为 yaml.YAMLError 描述
+        """
+        try:
+            yaml.safe_load(content)
+            return True, None
+        except yaml.YAMLError as e:
+            return False, str(e)
+
     def init_user_configs(self) -> list:
         """
         首次启动时把打包内置的 configs 目录递归拷贝到用户家目录。
