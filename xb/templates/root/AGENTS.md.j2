@@ -219,6 +219,43 @@ path_manager.reload_config()                     # 全清
 
 **禁止**：自己 `yaml.safe_load(open(...))` —— 失去缓存能力，且打包态会找错路径。
 
+### 配置实时生效约定（重要）
+
+前端 FileManager 改完 yaml 保存（`POST /api/files/write`）会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
+
+要让这个目标真的成立，**必须遵守一条规则**：
+
+> ⛔ **不要在 `__init__` 里把 `path_manager.get_config_value(...)` 的值读到 `self.xxx`**
+
+```python
+# ❌ 错误：ctor 缓存配置，单例 manager 一旦实例化就锁定值，
+#         /files/write 调 reload_config 也清不到这个 self.xxx
+class FeishuBitableManager:
+    def __init__(self):
+        self.wiki_space_id = path_manager.get_config_value(
+            "feishu.bitable.wiki_space_id", ""
+        )
+
+# ✅ 正确：用 @property 让每次访问都现读 path_manager
+class FeishuBitableManager:
+    @property
+    def wiki_space_id(self) -> str:
+        return path_manager.get_config_value(
+            "feishu.bitable.wiki_space_id", ""
+        ) or ""
+```
+
+`@property` 对调用方透明（`mgr.wiki_space_id` 语法不变），但每次访问都重新走 path_manager → 拿到 reload 后的最新值。配合 `_config_cache` 已有 dict 缓存机制，性能可忽略。
+
+**例外情况——以下情况 ctor 缓存可接受**：
+
+| 情况 | 例子 | 理由 |
+|---|---|---|
+| 不可变标识（构造时通过参数传入，不从 yaml 读） | `FeishuClient.__init__(app_id, app_secret)` | 调用方决定值，不属于"配置" |
+| 业务运行态（不是 yaml 配置） | `self.app_token`、`self.table_id` | 运行时由 `use_app()` 切换 |
+
+只要 ctor 里出现 `self.xxx = path_manager.xxx`，就**有问题**。
+
 ---
 
 # UNIQUE STYLES（项目特有的硬耦合）
@@ -244,6 +281,7 @@ path_manager.reload_config()                     # 全清
 - ❌ 不要把所有新模块参数都塞 `global_config.yaml` —— 见上"配置文件分级"决策表。
 - ❌ 不要绕过 `path_manager` 直接 `yaml.safe_load(open(...))` 读配置 —— 失去缓存能力，且打包态会找错路径。
 - ❌ 不要在写 yaml 配置后忘了 `path_manager.reload_config("xxx.yaml")` —— 缓存还指向旧值。
+- ❌ 不要在 manager 的 `__init__` 里把 `path_manager.get_config_value(...)` 读到 `self.xxx` —— manager 是单例，ctor 缓存让前端改 yaml 后业务还吃旧值。改用 `@property` 现读，详见上文「配置实时生效约定」。
 - ❌ 不要用 `print()` 调试后端 —— 用 `get_logger(__name__)`，否则 PyInstaller 打包后 stdout 被 Electron 用作启动信号。
 - ❌ 不要改后端启动日志 `应用启动完成` 这一行字串 —— `electron/main.js` 用它作为 BrowserWindow 创建触发条件。
 - ❌ 不要去掉 `log_config=None`（`uvicorn.run(..., log_config=None)`）—— 否则 uvicorn 自带日志会盖掉 loguru 格式，Electron 监听字串失效。
