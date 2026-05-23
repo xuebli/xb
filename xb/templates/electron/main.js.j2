@@ -28,6 +28,17 @@ app.whenReady().then(() => {
                 height: 800
             });
 
+            // F12 / Ctrl+Shift+I 切换 DevTools(因为上面 setApplicationMenu(null) 把菜单和默认快捷键都清掉了)
+            win.webContents.on('before-input-event', (event, input) => {
+                if (input.type !== 'keyDown' || !input.key) return;
+                const isF12 = input.key === 'F12';
+                const isCtrlShiftI = input.control && input.shift && input.key.toLowerCase() === 'i';
+                if (isF12 || isCtrlShiftI) {
+                    win.webContents.toggleDevTools();
+                    event.preventDefault();
+                }
+            });
+
             win.loadURL('http://localhost:8000');
         }
     });
