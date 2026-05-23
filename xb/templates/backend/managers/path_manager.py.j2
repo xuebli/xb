@@ -11,15 +11,32 @@ class PathManager:
         self.is_packaged = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
         if self.is_packaged:
-            self.config_dir = pathlib.Path.home() / ".config" / app_name
-            self.data_dir = pathlib.Path.home() / ".local" / "share" / app_name
-            self.logs_dir = self.data_dir / "logs"
-            self.reports_dir = self.data_dir / "reports"
+            # PyInstaller 二进制有两种部署形态：
+            #   形式 2  /opt/Logging_tool/resources/server     deb 安装，资源/数据走 /opt + ~
+            #   形式 3  <repo>/dist/server                      项目目录 dev，资源/数据全在 repo
+            # 通过 sys.executable 实际路径判断；形式 3 完全独立于用户家目录，
+            # 让形式 3 的运行时数据（configs/datas/logs）不会污染装好的 deb 用户配置
+            exe_path = Path(sys.executable).resolve()
+            in_project_dist = exe_path.parent.name == "dist"
 
-            install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
-            self.scripts_dir = install_root / "scripts"
-            self.frontend_dir = install_root / "frontend"
-            self.bundled_configs_dir = install_root / "configs"
+            if in_project_dist:
+                project_root = exe_path.parent.parent
+                self.config_dir = project_root / "configs"
+                self.data_dir = project_root / "datas"
+                self.logs_dir = self.data_dir / "logs"
+                self.reports_dir = self.data_dir / "reports"
+                self.scripts_dir = project_root / "scripts"
+                self.frontend_dir = project_root / "frontend" / "dist"
+                self.bundled_configs_dir = project_root / "configs"
+            else:
+                self.config_dir = pathlib.Path.home() / ".config" / app_name
+                self.data_dir = pathlib.Path.home() / ".local" / "share" / app_name
+                self.logs_dir = self.data_dir / "logs"
+                self.reports_dir = self.data_dir / "reports"
+                install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
+                self.scripts_dir = install_root / "scripts"
+                self.frontend_dir = install_root / "frontend"
+                self.bundled_configs_dir = install_root / "configs"
 
         else:
             project_root = Path(__file__).parent.parent.parent.resolve()
@@ -126,6 +143,15 @@ class PathManager:
             return []
 
         dst_root = self.config_dir
+
+        # 项目目录跑 PyInstaller 二进制(形式 3)时,bundled 与用户 config 是同一个目录,
+        # 不需要也不应该拷贝(否则 .example 会被去后缀拷到自己旁边)。
+        try:
+            if src_root.resolve() == dst_root.resolve():
+                return []
+        except OSError:
+            pass
+
         dst_root.mkdir(parents=True, exist_ok=True)
 
         copied = []
