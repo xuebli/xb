@@ -3,19 +3,19 @@ xb CLI 入口
 提供项目初始化、开发、构建等命令
 """
 
-from importlib.metadata import version as get_version
-
 import click
 from rich.console import Console
+
+from . import __version__
 
 from .commands.build import build
 from .commands.dev import dev
 from .commands.init import XbGroup, init_command
+from .commands.upgrade import upgrade
 from .commands.version import version
+from .utils.version_check import get_pending_upgrade_hint, kick_off_check_if_stale
 
 console = Console()
-
-__version__ = get_version("xiaomi-xb")
 
 
 class ColorfulXbGroup(XbGroup):
@@ -46,13 +46,17 @@ def main():
 
     类似 uv，专为 Electron 桌面应用设计。
     """
-    pass
+    kick_off_check_if_stale(__version__)
+    hint = get_pending_upgrade_hint(__version__)
+    if hint:
+        console.print(f"[yellow]{hint}[/yellow]\n")
 
 
 main.add_command(init_command, name="init")
 main.add_command(dev, name="dev")
 main.add_command(build, name="build")
 main.add_command(version, name="version")
+main.add_command(upgrade, name="upgrade")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ def is_project_root(path: Path) -> bool:
     return (path / "pyproject.toml").exists() and (path / "build.sh").exists()
 
 
-def find_project_root() -> Path:
+def find_project_root() -> Path | None:
     cwd = Path.cwd()
     for path in [cwd] + list(cwd.parents):
         if is_project_root(path):
