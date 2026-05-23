@@ -289,6 +289,7 @@ class FeishuBitableManager:
 - ❌ 不要在 `path_manager.__init__` 里读 yaml —— 必须 lazy load（已用 `_config_cache`）。
 - ❌ 不要把 `serve_frontend`（`/{full_path:path}`）放在 `/api/*` 之前 —— 会吃掉所有 API。
 - ❌ 不要 commit `electron/package.json` 的 version 字段 —— 由 pre-commit hook 自动 bump。
+- ❌ **不要用 `git commit --no-verify` / `-n`** —— 会跳过 `version/hooks/pre-commit`，导致 `electron/package.json` 与 `pyproject.toml` 的 version 字段漏 bump、`版本迭代日志.md` 不更新。即使 hook 弹窗"看似阻塞"，正确做法是**在屏幕上完成弹窗操作**或排查 hook 三模态判断（DISPLAY / SSH_CLIENT / VSCODE_IPC_HOOK_CLI），**不是**绕过它。
 - ❌ 不要在 `extraResources` 里漏 `filter: ["!global_config.yaml"]` —— 会把开发机的真实配置打进 DEB。
 - ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `bash build.sh -b`。
 - ❌ 不要硬编码用户路径如 `/home/xxx/...` —— 永远走 `getent passwd "$SUDO_USER" | cut -d: -f6`。
@@ -356,6 +357,31 @@ class FeishuBitableManager:
 - ✅ 不确定时**问用户**，不要瞎写。
 - ✅ `xb init` 已默认 git init + 首个 commit;若发现项目不在 git 仓库(用户手动删了 `.git/`),**停下提醒用户**先 `git init && git add . && git commit -m "baseline"` 再改代码。
 
+## G. 永远不跳过 git pre-commit hook
+
+**这是项目硬约束，AI 助手必须遵守，无任何例外条件**：
+
+- ❌ **禁止**使用 `git commit --no-verify` 或 `-n` 短选项
+- ❌ **禁止**使用 `git -c core.hooksPath=/dev/null commit` 这种侧门绕开
+- ❌ **禁止**临时 `chmod -x .git/hooks/pre-commit` 然后再 commit
+- ❌ **禁止**误把"跳过 hook"当作"hook 卡住时的应急手段"——它**不是**应急方案
+
+**为什么**：项目的 `version/hooks/pre-commit` 负责：
+1. 自动 bump `electron/package.json` 与 `pyproject.toml` 的 version 字段（同步两端）
+2. 更新 `版本迭代日志.md`
+3. 触发 GUI/Web 三模态版本号选择弹窗，让人类对当次 commit 命名版本
+
+跳过 hook = 这三件事都不做 = 版本号失同步、日志缺记录、提交语义模糊。
+
+**如果 hook 看起来"卡住"**，正确做法（按优先级）：
+1. **检查环境变量**：`echo "DISPLAY=$DISPLAY SSH_CLIENT=$SSH_CLIENT VSCODE_IPC_HOOK_CLI=$VSCODE_IPC_HOOK_CLI"`，确认 hook 走的是哪条三模态分支（参考 `.git/hooks/pre-commit` 末段）
+2. **本地图形环境**（DISPLAY 非空、非 SSH）：弹窗在你的物理屏幕上，**到屏幕上完成它**
+3. **远程 IDE**（VSCODE_IPC_HOOK_CLI 非空）：浏览器开 localhost 页面完成它
+4. **纯终端 + 无 X11**：hook 自动 `exit 0` 静默跳过（不影响 commit），不需要任何操作
+5. **真的解决不了**：**问用户**，不要自作主张 `--no-verify`
+
+**AI 在 OpenCode/Claude Code 等环境里跑 `git commit`**：bash 工具会等 hook 弹窗结束才返回。如果用户没及时点弹窗，可能超时——这种情况下应**告诉用户去操作弹窗**，**不是**用 `--no-verify` 绕过。
+
 ---
 
 # 故障排查(项目特有,非显然)
@@ -363,6 +389,6 @@ class FeishuBitableManager:
 | 现象 | 第一步看哪 |
 |---|---|
 | DEB 安装后配置写到 `/root/.config/` 而非用户家目录 | `electron/resources/postinst` 是否用 `$SUDO_USER` 反查家目录 |
-| `git commit` 卡住没反应 | hook 三模态判错,GUI 弹窗可能在屏外;应急 `git commit --no-verify` |
+| `git commit` 卡住没反应 | hook 三模态判错,GUI 弹窗可能在屏外;在屏幕上完成弹窗,**不要** `--no-verify`(见 §G) |
 | `from managers import xxx` 开发态 OK 打包后 ImportError | `backend/backend_build.py` 加 `--hidden-import=managers.xxx` |
 | YAML 改了但应用读到旧值 | 调用方漏了 `path_manager.reload_config("xxx.yaml")` |
