@@ -15,14 +15,14 @@
           <div v-else class="files">
             <div
               v-for="file in files"
-              :key="file.name"
+              :key="file.filename"
               class="file-item"
-              :class="{ active: selectedFile?.name === file.name }"
-              @click="loadFile(file.name)"
+              :class="{ active: selectedFile?.filename === file.filename }"
+              @click="loadFile(file.filename)"
             >
               <div class="file-icon">📄</div>
               <div class="file-info">
-                <div class="file-name">{{ file.name }}</div>
+                <div class="file-name">{{ file.filename }}</div>
                 <div class="file-meta">{{ formatSize(file.size) }} · {{ formatTime(file.modified) }}</div>
               </div>
             </div>
@@ -35,7 +35,7 @@
           </div>
           <div v-else class="editor-content">
             <div class="editor-header">
-              <h3>{{ selectedFile.name }}</h3>
+              <h3>{{ selectedFile.filename }}</h3>
               <div class="editor-actions">
                 <button @click="saveFile" :disabled="saving || !hasChanges">
                   {{ saving ? '保存中...' : '💾 保存' }}
@@ -48,6 +48,7 @@
             </div>
             
             <textarea
+              :key="selectedFile.filename"
               v-model="fileContent"
               class="code-editor"
               spellcheck="false"
@@ -173,9 +174,14 @@ const saveFile = async () => {
       throw new Error(data.detail || '保存失败')
     }
     
-    originalContent.value = fileContent.value
-    alert('保存成功!')
+    // 重新拉一次 read 接口刷新 selectedFile / fileContent / originalContent，
+    // 与磁盘对齐——之前是"前端自己 originalContent = fileContent"假定一致，
+    // 但 path_manager.reload_config 后磁盘内容可能被规整化（YAML round-trip），
+    // 不重读会让"再次点同一文件"出现微妙的状态分裂
+    const savedFilename = selectedFile.value.filename
     await loadFileList()
+    await loadFile(savedFilename)
+    alert('保存成功!')
   } catch (e) {
     console.error('Save error:', e)
     alert(`保存失败: ${e.message}`)

@@ -163,6 +163,7 @@ async def list_config_files():
             yaml_files.append(
                 {
                     "name": file_path.name,
+                    "filename": file_path.name,
                     "path": str(file_path),
                     "size": file_path.stat().st_size,
                     "modified": file_path.stat().st_mtime,
@@ -170,7 +171,7 @@ async def list_config_files():
             )
 
         return {
-            "files": sorted(yaml_files, key=lambda x: x["name"]),
+            "files": sorted(yaml_files, key=lambda x: x["filename"]),
             "config_dir": str(config_dir),
         }
     except HTTPException:
