@@ -59,10 +59,12 @@ bash dev.sh stop    # 停止
 bash dev.sh status  # 查看状态
 ```
 
-**访问地址:**
+**访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 修改）:**
 - 前端: http://localhost:5173
 - 后端 API: http://localhost:8000
 - API 文档: http://localhost:8000/docs
+
+> 改完端口后重启 `bash dev.sh restart`（或 Electron）即可生效，三端（backend / vite / electron）会同步读取 yaml。
 
 ### 打包构建
 
@@ -140,7 +142,7 @@ cd electron && npm start
 **后端启动失败**
 ```bash
 cat datas/logs/backend.log
-lsof -i :8000
+lsof -i :8000   # 默认端口；改过 configs/global_config.yaml 后换成实际端口
 ```
 
 **前端构建失败**

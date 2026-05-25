@@ -90,7 +90,8 @@ bash version/scripts/install_hooks.sh
 - **路径硬编码必须经 `path_manager`**：`get_config_path` / `get_log_path` / `get_report_path` / `get_script_path` / `get_frontend_path`，不要直接拼 `Path.home()` 或 `Path(__file__).parent...`。
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
-- **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:8000')`。
+- **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
+- **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 dev.sh 注入的 `VITE_API_BASE` / `VITE_DEV_PORT` 环境变量拿到，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。**不要再硬编码 8000 / 5173 字面量到代码里**——改 yaml 后重启 dev.sh / Electron 立即生效。
 - **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
 - **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
@@ -293,6 +294,7 @@ class FeishuBitableManager:
 - ❌ 不要在 `extraResources` 里漏 `filter: ["!global_config.yaml"]` —— 会把开发机的真实配置打进 DEB。
 - ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `bash build.sh -b`。
 - ❌ 不要硬编码用户路径如 `/home/xxx/...` —— 永远走 `getent passwd "$SUDO_USER" | cut -d: -f6`。
+- ❌ 不要把端口 8000 / 5173 硬编码进 backend / frontend / electron 代码或脚本 —— 永远从 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 读，三端各自的入口已经搭好（path_manager / dev.sh / electron main.js），新增模块复用即可。
 - ❌ 不要假设 `__GIT_COMMITS__` 非空 —— 非 git 仓库或 CI 沙箱里它是 `[]`。
 - ❌ 不要写 `process.env.XXX` —— Vite 项目用 `import.meta.env.VITE_XXX`。
 - ❌ 不要直接编辑 `frontend/dist/` —— 打包产物，被 electron-builder 通过 `extraResources` 拉走。

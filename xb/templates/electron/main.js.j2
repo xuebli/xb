@@ -1,10 +1,44 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const yaml = require('js-yaml');
 
 app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
 app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
+
+// 复刻 backend/managers/path_manager.py 的配置目录选择逻辑：
+//   - 开发态(electron 跑源码)：<repo>/configs
+//   - 项目目录跑打包二进制(<repo>/dist/server)：<repo>/configs
+//   - DEB 安装态：~/.config/<package_name>
+function resolveConfigDir() {
+    const appName = '[[ package_name]]';
+    if (!app.isPackaged) {
+        return path.join(__dirname, '..', 'configs');
+    }
+    // app.isPackaged 时 process.resourcesPath = .../resources
+    // 形式 3：<repo>/dist/server，对应 electron 是 <repo> 下直接跑（这条分支 isPackaged 为 false，落到上面）
+    // 这里只处理 DEB 安装态
+    return path.join(os.homedir(), '.config', appName);
+}
+
+// 端口读取，与 path_manager.get_config_value 行为对齐：缺失/异常 fallback 默认值
+function readPort(key, defaultPort) {
+    try {
+        const configPath = path.join(resolveConfigDir(), 'global_config.yaml');
+        if (!fs.existsSync(configPath)) return defaultPort;
+        const cfg = yaml.load(fs.readFileSync(configPath, 'utf-8')) || {};
+        const val = cfg && cfg.ports && cfg.ports[key];
+        const port = Number(val);
+        return Number.isInteger(port) && port > 0 && port < 65536 ? port : defaultPort;
+    } catch (e) {
+        console.warn('[Ports] 读取 global_config.yaml 失败，回退默认端口:', e.message);
+        return defaultPort;
+    }
+}
+
+const BACKEND_PORT = readPort('backend', 8000);
 
 let win;
 let backend;
@@ -39,7 +73,7 @@ app.whenReady().then(() => {
                 }
             });
 
-            win.loadURL('http://localhost:8000');
+            win.loadURL(`http://localhost:${BACKEND_PORT}`);
         }
     });
 });

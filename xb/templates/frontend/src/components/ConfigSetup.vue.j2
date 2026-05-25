@@ -50,9 +50,13 @@ const configMessage = ref('检测到配置文件需要设置，请输入你的 s
 const configPath = ref('')
 const isPackaged = ref(null)
 
+// 后端基地址：开发态走 dev.sh 注入的 VITE_API_BASE；
+// 打包态由 backend 直接当静态服务器返回页面，同源访问用相对路径即可
+const API_BASE = import.meta.env.VITE_API_BASE || ''
+
 const checkConfig = async () => {
   try {
-    const response = await fetch('http://localhost:8000/api/config/check')
+    const response = await fetch(`${API_BASE}/api/config/check`)
     const result = await response.json()
     console.log('[ConfigSetup] 响应体完整内容:', JSON.stringify(result, null, 2))
     configPath.value = result.config_path || ''
@@ -79,7 +83,7 @@ const saveConfig = async () => {
   error.value = ''
   
   try {
-    const response = await fetch('http://localhost:8000/api/config/save', {
+    const response = await fetch(`${API_BASE}/api/config/save`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

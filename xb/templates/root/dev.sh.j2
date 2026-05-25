@@ -7,6 +7,28 @@ mkdir -p "$PROJECT_ROOT/datas/pids"
 mkdir -p "$PROJECT_ROOT/datas/logs"
 touch "$BACKEND_PID" "$FRONTEND_PID"
 
+# 从 configs/global_config.yaml 读端口，缺失/格式异常 fallback 默认值
+# 不依赖 python/yaml，只用 awk 解析受控 yaml
+read_port() {
+    local key=$1 default=$2
+    local config="$PROJECT_ROOT/configs/global_config.yaml"
+    [ -f "$config" ] || { echo "$default"; return; }
+    local val
+    val=$(awk -v k="$key" '
+        /^[ \t]*ports:[ \t]*$/ { in_ports=1; next }
+        in_ports && /^[^ \t#]/ { in_ports=0 }
+        in_ports && $1 == k":" { print $2; exit }
+    ' "$config" | tr -d '"' | tr -d "'" | tr -d ' \t\n\r')
+    case "$val" in
+        ''|*[!0-9]*) echo "$default" ;;
+        *)           echo "$val" ;;
+    esac
+}
+BACKEND_PORT=$(read_port backend 8000)
+FRONTEND_PORT=$(read_port frontend 5173)
+export VITE_API_BASE="http://localhost:${BACKEND_PORT}"
+export VITE_DEV_PORT="${FRONTEND_PORT}"
+
 is_running() {
     [ -f "$1" ] || return 1
     local pid=$(cat "$1" 2>/dev/null)
@@ -46,7 +68,7 @@ start_backend() {
     sleep 2
     
     if is_running "$BACKEND_PID"; then
-        echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:8000)"
+        echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:${BACKEND_PORT})"
     else
         echo "✗ 后端启动失败,查看日志: datas/logs/backend.log"
         return 1
@@ -84,7 +106,7 @@ start_frontend() {
         nohup npm run dev > ../datas/logs/frontend.log 2>&1 &
         echo $! > "$FRONTEND_PID"
         sleep 3
-        echo "✓ 前端已启动 (PID: $(cat $FRONTEND_PID), http://localhost:5173)"
+        echo "✓ 前端已启动 (PID: $(cat $FRONTEND_PID), http://localhost:${FRONTEND_PORT})"
     fi
 }
 

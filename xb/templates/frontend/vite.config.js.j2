@@ -4,9 +4,17 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+// 端口由 dev.sh 启动时从 configs/global_config.yaml 读出后通过环境变量注入
+// 直接 `vite` / `npm run dev` 启动时回退到默认 5173，保证脱离 dev.sh 也能跑
+const VITE_DEV_PORT = Number(process.env.VITE_DEV_PORT) || 5173
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  server: {
+    port: VITE_DEV_PORT,
+    strictPort: true,
+  },
   define: {
     __APP_VERSION__: JSON.stringify((() => {
       try {

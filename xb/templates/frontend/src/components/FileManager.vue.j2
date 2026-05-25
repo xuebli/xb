@@ -67,7 +67,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+// 后端基地址：开发态走 dev.sh 注入的 VITE_API_BASE；
+// 打包态由 backend 直接当静态服务器返回页面，同源访问用相对路径即可
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const showManager = ref(false)
 const loading = ref(false)
