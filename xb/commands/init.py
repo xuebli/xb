@@ -3,8 +3,10 @@ xb init 命令实现
 功能: 在当前目录初始化项目结构
 """
 
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -12,10 +14,61 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
+from .. import __version__
 from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
+from ..utils.version_check import get_latest_if_newer
 
 console = Console()
+
+
+def _prompt_upgrade_before_init() -> None:
+    """检测到新版 xb 时询问是否先升级；同意则升级后用 execvp 重跑 init 替换当前进程。
+
+    execvp 而非新起 subprocess：
+    - 升级后的 xb 入口才能加载新版依赖；当前进程已经 import 了旧模板代码
+    - 用户原始 sys.argv 直接转交，不丢任何参数（--sudoers 等）
+    """
+    latest = get_latest_if_newer(__version__)
+    if not latest:
+        return
+
+    if not Confirm.ask(
+        f"[yellow]检测到 xb {latest} 可用[/yellow]，是否先升级再创建项目？",
+        default=True,
+    ):
+        console.print("[dim]跳过升级，使用当前版本继续。[/dim]\n")
+        return
+
+    if not shutil.which("uv"):
+        console.print(
+            "[red]✗[/red] 未找到 uv 命令，无法升级。"
+            "请手动 [cyan]xb upgrade[/cyan] 或继续创建项目。"
+        )
+        if not Confirm.ask("继续用当前版本创建项目？", default=False):
+            raise click.Abort()
+        return
+
+    console.print(f"[cyan]→[/cyan] 升级到 xiaomi-xb {latest} ...")
+    result = subprocess.run(
+        ["uv", "tool", "install", "xiaomi-xb@latest", "--reinstall"],
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[red]✗[/red] 升级失败 (exit {result.returncode})")
+        if not Confirm.ask("继续用当前版本创建项目？", default=False):
+            raise click.Abort()
+        return
+
+    console.print("[green]✓[/green] 升级完成，正在用新版本重新执行 init...\n")
+    xb_entry = shutil.which("xb")
+    if not xb_entry:
+        console.print(
+            "[yellow]⚠[/yellow]  升级后未找到 xb 命令，请手动重新执行：\n"
+            f"  [cyan]{' '.join(sys.argv)}[/cyan]"
+        )
+        raise click.Abort()
+    os.execvp(xb_entry, [xb_entry, *sys.argv[1:]])
 
 
 def init_git_repo(target_dir: Path, package: str) -> bool:
@@ -97,6 +150,9 @@ def init_command(package: str, sudoers: bool):
         xb init demo
         xb init myapp --sudoers
     """
+    # 检测到 PyPI 有新版 xb 时，先询问是否升级再创建项目，避免用旧模板生成项目
+    _prompt_upgrade_before_init()
+
     # 验证包名
     if not validate_package_name(package):
         console.print(

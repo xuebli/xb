@@ -13,7 +13,7 @@ from .commands.dev import dev
 from .commands.init import XbGroup, init_command
 from .commands.upgrade import upgrade
 from .commands.version import version
-from .utils.version_check import get_pending_upgrade_hint, kick_off_check_if_stale
+from .utils.version_check import ensure_check, get_pending_upgrade_hint
 
 console = Console()
 
@@ -46,7 +46,7 @@ def main():
 
     类似 uv，专为 Electron 桌面应用设计。
     """
-    kick_off_check_if_stale(__version__)
+    ensure_check(__version__)
     hint = get_pending_upgrade_hint(__version__)
     if hint:
         console.print(f"[yellow]{hint}[/yellow]\n")
