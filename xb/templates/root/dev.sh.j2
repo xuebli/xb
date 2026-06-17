@@ -36,13 +36,122 @@ is_running() {
     ps -p "$pid" > /dev/null 2>&1
 }
 
-kill_all_processes() {
-    echo "清理旧进程..."
-    pkill -f "python.*main.py" 2>/dev/null
-    pkill -f "npm run dev" 2>/dev/null
-    pkill -f "vite" 2>/dev/null
-    rm -f "$BACKEND_PID" "$FRONTEND_PID"
-    sleep 1
+terminate_pid_file() {
+    local pid_file=$1
+    [ -f "$pid_file" ] || return 0
+    local pid=$(cat "$pid_file" 2>/dev/null)
+    if [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1; then
+        echo "停止进程 ${pid}"
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo "进程 ${pid} 未退出,强制结束"
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    fi
+    rm -f "$pid_file"
+}
+
+pids_for_port() {
+    local port=$1
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -ti tcp:"$port" 2>/dev/null
+    elif command -v fuser >/dev/null 2>&1; then
+        fuser "${port}/tcp" 2>/dev/null
+    fi
+}
+
+process_cwd() {
+    local pid=$1
+    readlink "/proc/${pid}/cwd" 2>/dev/null || echo "未知"
+}
+
+process_command() {
+    local pid=$1
+    if [ -r "/proc/${pid}/cmdline" ]; then
+        tr '\0' ' ' < "/proc/${pid}/cmdline" | sed 's/[[:space:]]*$//'
+    else
+        ps -p "$pid" -o args= 2>/dev/null || echo "未知"
+    fi
+}
+
+print_port_owners() {
+    local port=$1
+    local pids=$(pids_for_port "$port" | tr '\n' ' ')
+    [ -n "$pids" ] || return 1
+
+    echo "端口 ${port} 已被占用:"
+    for pid in $pids; do
+        local name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "未知")
+        local cwd=$(process_cwd "$pid")
+        local command=$(process_command "$pid")
+        echo "  PID: ${pid}"
+        echo "  应用: ${name}"
+        echo "  目录: ${cwd}"
+        echo "  命令: ${command}"
+    done
+    return 0
+}
+
+ensure_port_available() {
+    local label=$1 port=$2
+    if print_port_owners "$port"; then
+        echo "${label} 未启动。请先执行 xb dev --stop 停止占用端口的进程，或修改 configs/global_config.yaml 中的端口号。"
+        return 1
+    fi
+    return 0
+}
+
+kill_port_processes() {
+    for port in "$@"; do
+        [ -n "$port" ] || continue
+        local pids=$(pids_for_port "$port" | tr '\n' ' ')
+        if [ -z "$pids" ]; then
+            echo "检查端口 ${port}: 未发现占用进程"
+            continue
+        fi
+        echo "清理占用端口 ${port} 的进程: ${pids}"
+        kill $pids 2>/dev/null || true
+        sleep 1
+        local alive=$(pids_for_port "$port" | tr '\n' ' ')
+        if [ -n "$alive" ]; then
+            echo "端口 ${port} 仍被占用,强制结束进程: ${alive}"
+            kill -9 $alive 2>/dev/null || true
+        fi
+    done
+}
+
+cleanup_runtime() {
+    echo "清理旧进程和端口占用..."
+    terminate_pid_file "$BACKEND_PID"
+    terminate_pid_file "$FRONTEND_PID"
+    kill_port_processes "$BACKEND_PORT" "$FRONTEND_PORT"
+}
+
+wait_for_frontend() {
+    local url="http://localhost:${FRONTEND_PORT}"
+    local i
+    for i in $(seq 1 20); do
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsS "$url" >/dev/null 2>&1 && return 0
+        elif command -v wget >/dev/null 2>&1; then
+            wget -q --spider "$url" >/dev/null 2>&1 && return 0
+        else
+            is_running "$FRONTEND_PID" && return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+open_frontend() {
+    local url="http://localhost:${FRONTEND_PORT}"
+    if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url" >/dev/null 2>&1 &
+        echo "✓ 已打开浏览器: ${url}"
+    else
+        echo "浏览器未自动打开，请访问: ${url}"
+    fi
 }
 
 start_backend() {
@@ -57,16 +166,19 @@ start_backend() {
         echo "后端已运行 (PID: $(cat $BACKEND_PID))"
         return
     fi
+
+    ensure_port_available "后端" "$BACKEND_PORT" || return 1
+
     echo "启动后端..."
-    
+
     cd "$PROJECT_ROOT"
-    
+
     uv sync --extra dev
-    
+
     nohup .venv/bin/python backend/main.py > /dev/null 2>&1 &
     echo $! > "$BACKEND_PID"
     sleep 2
-    
+
     if is_running "$BACKEND_PID"; then
         echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:${BACKEND_PORT})"
     else
@@ -77,8 +189,8 @@ start_backend() {
 
 stop_backend() {
     echo "停止后端..."
-    pkill -f "python.*main.py" 2>/dev/null
-    rm -f "$BACKEND_PID"
+    terminate_pid_file "$BACKEND_PID"
+    kill_port_processes "$BACKEND_PORT"
     echo "✓ 后端已停止"
 }
 
@@ -87,34 +199,43 @@ start_frontend() {
         echo "前端已运行 (PID: $(cat $FRONTEND_PID))"
         return
     fi
-    
+
+    ensure_port_available "前端" "$FRONTEND_PORT" || return 1
+
     if [ ! -d "$PROJECT_ROOT/frontend" ]; then
         echo "无前端目录,跳过"
         return
     fi
-    
+
     cd "$PROJECT_ROOT/frontend"
-    
+
     if [ -f "package.json" ]; then
         echo "启动前端..."
-        
+
         if [ ! -d "node_modules" ]; then
             echo "安装前端依赖..."
             npm install
         fi
-        
+
         nohup npm run dev > ../datas/logs/frontend.log 2>&1 &
         echo $! > "$FRONTEND_PID"
-        sleep 3
-        echo "✓ 前端已启动 (PID: $(cat $FRONTEND_PID), http://localhost:${FRONTEND_PORT})"
+
+        if wait_for_frontend; then
+            local actual_pids=$(pids_for_port "$FRONTEND_PORT" | tr '\n' ' ')
+            echo "✓ 前端已启动 (PID: ${actual_pids:-$(cat $FRONTEND_PID)}, http://localhost:${FRONTEND_PORT})"
+            open_frontend
+        else
+            echo "✗ 前端启动失败,查看日志: datas/logs/frontend.log"
+            tail -n 30 ../datas/logs/frontend.log 2>/dev/null || true
+            return 1
+        fi
     fi
 }
 
 stop_frontend() {
     echo "停止前端..."
-    pkill -f "npm run dev" 2>/dev/null
-    pkill -f "vite" 2>/dev/null
-    rm -f "$FRONTEND_PID"
+    terminate_pid_file "$FRONTEND_PID"
+    kill_port_processes "$FRONTEND_PORT"
     echo "✓ 前端已停止"
 }
 
@@ -122,25 +243,24 @@ status() {
     echo "========================================="
     echo "  服务状态"
     echo "========================================="
-    
+
     if is_running "$BACKEND_PID"; then
         echo "✓ 后端: 运行中 (PID: $(cat $BACKEND_PID))"
     else
         echo "✗ 后端: 未运行"
     fi
-    
+
     if is_running "$FRONTEND_PID"; then
         echo "✓ 前端: 运行中 (PID: $(cat $FRONTEND_PID))"
     else
         echo "✗ 前端: 未运行"
     fi
-    
+
     echo "========================================="
 }
 
 case "$1" in
     start)
-        kill_all_processes
         start_backend && start_frontend
         echo ""
         status
