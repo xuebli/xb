@@ -18,8 +18,10 @@
 ├── backend/            # FastAPI（包根，不要写 from backend.xxx）
 │   ├── main.py         # FastAPI 实例 + lifespan + SPA fallback
 │   ├── backend_build.py# PyInstaller 打包入口
-│   ├── api/            # 路由模块
-│   └── managers/       # path_manager / logger_manager[% if enable_sudo %] / sudoers_manager[% endif %]
+│   ├── api/            # API 路由层；按业务域拆子目录，不要把所有路由堆在一层
+│   ├── services/       # 业务编排层；每个业务域一个子目录/模块
+│   ├── schemas/        # Pydantic 请求/响应模型；按业务域拆分
+│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_sudo %] / sudoers_manager[% endif %]；不要堆业务代码
 ├── frontend/           # Vue3 + Vite SPA
 │   ├── vite.config.js  # 构建期注入 __APP_VERSION__ + __GIT_COMMITS__
 │   └── src/
@@ -36,9 +38,11 @@
 
 | 任务 | 位置 | 备注 |
 |------|------|------|
-| 加 API 路由 | `backend/api/<feature>.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api")` |
+| 加 API 路由 | `backend/api/<feature>/routes.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api/<feature>")`；小功能可用 `backend/api/<feature>.py`，但禁止一个文件塞多个业务域 |
+| 加业务逻辑 | `backend/services/<feature>/` | API 只做参数校验/HTTP 映射，业务编排放 service |
+| 加请求/响应模型 | `backend/schemas/<feature>.py` 或 `backend/schemas/<feature>/` | Pydantic 模型不要写进 routes 大文件 |
 | 改路径策略 | `backend/managers/path_manager.py` | 全局单例 `path_manager` |
-| 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 仿 path_manager 单例模式 |
+| 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
 | 改 DEB 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
@@ -87,6 +91,8 @@ bash version/scripts/install_hooks.sh
 
 - **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
 - **包名 `backend` 而非 `src`**：`pyproject.toml` 配置 `packages = ["backend"]`，导入用 `from managers import ...` / `from api.config import ...`（即 `backend` 内相对当前包根，**不要写 `from backend.managers import ...`**）。managers 包内部互相依赖时用相对导入（`from .path_manager import path_manager`）。
+- **新增代码必须模块化**：按业务域拆目录和文件，优先采用 `api/<feature>/routes.py` + `services/<feature>/...` + `schemas/<feature>.py`。`api` 只放 HTTP 路由，`services` 放业务编排，`schemas` 放 Pydantic 模型，`managers` 只放跨模块基础设施单例。不要把所有 API 都堆进 `backend/api/*.py`，也不要把普通业务类都塞进 `backend/managers/`。
+- **单文件单职责**：一个文件只承载一个明确模块/角色。文件开始变大、同时包含路由/模型/业务/工具函数/外部接口时，必须拆分；不要写几千行的"万能文件"。经验阈值：超过约 400 行或出现 2 个以上业务域时，先拆模块再继续加代码。
 - **路径硬编码必须经 `path_manager`**：`get_config_path` / `get_log_path` / `get_report_path` / `get_script_path` / `get_frontend_path`，不要直接拼 `Path.home()` 或 `Path(__file__).parent...`。
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
@@ -277,6 +283,9 @@ class FeishuBitableManager:
 # ANTI-PATTERNS（本项目禁止）
 
 - ❌ 不要 `from backend.managers import ...` —— pyproject 把 `backend/` 当包根，应 `from managers import ...`。开发态可能能跑，PyInstaller 打包后 hidden-import 不匹配，运行时崩溃。
+- ❌ 不要把所有 API 都塞进 `backend/api/config.py`、`backend/api/main.py` 或单个 `<feature>.py` —— 按业务域拆 `api/<feature>/routes.py`，复杂域继续拆 `validators.py` / `dependencies.py` / 子 routes。
+- ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、sudo、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。
+- ❌ 不要写几千行大文件 —— 一个文件如果同时包含 API、Pydantic schema、业务逻辑、文件读写、第三方接口封装，说明职责已经混乱，必须拆到对应目录。
 - ❌ 不要在 `path_manager` 之外直接读 `~/.config/[[ package_name]]/` —— 开发态根本不在那里（在 `./configs/`）。
 - ❌ 不要把 `configs/global_config.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
 - ❌ 不要把所有新模块参数都塞 `global_config.yaml` —— 见上"配置文件分级"决策表。
