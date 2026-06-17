@@ -42,7 +42,7 @@ const openSettings = () => {
 
     <header class="topbar">
       <div class="brand-block">
-        <div class="brand-mark">
+        <div class="brand-mark" :class="{ 'has-icon': !showIconFallback }">
           <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ package_name_capitalized]]" @error="showIconFallback = true" />
           <span v-else>[[ package_name_capitalized | first ]]</span>
         </div>
