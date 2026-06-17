@@ -42,6 +42,23 @@ const BACKEND_PORT = readPort('backend', 8000);
 
 let win;
 let backend;
+let zoomFactor = 1;
+
+function clampZoom(value) {
+    return Math.min(3, Math.max(0.3, value));
+}
+
+function applyZoom(delta) {
+    if (!win) return;
+    zoomFactor = clampZoom(Number((zoomFactor + delta).toFixed(2)));
+    win.webContents.setZoomFactor(zoomFactor);
+}
+
+function resetZoom() {
+    if (!win) return;
+    zoomFactor = 1;
+    win.webContents.setZoomFactor(zoomFactor);
+}
 
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
@@ -62,15 +79,54 @@ app.whenReady().then(() => {
                 height: 800
             });
 
-            // F12 / Ctrl+Shift+I 切换 DevTools(因为上面 setApplicationMenu(null) 把菜单和默认快捷键都清掉了)
+            // 自定义常用桌面快捷键：隐藏菜单后，显式保留调试、全屏与缩放能力。
             win.webContents.on('before-input-event', (event, input) => {
                 if (input.type !== 'keyDown' || !input.key) return;
+
+                const key = input.key.toLowerCase();
+                const ctrlOrCmd = input.control || input.meta;
                 const isF12 = input.key === 'F12';
-                const isCtrlShiftI = input.control && input.shift && input.key.toLowerCase() === 'i';
+                const isCtrlShiftI = ctrlOrCmd && input.shift && key === 'i';
+                const isF11 = input.key === 'F11';
+
                 if (isF12 || isCtrlShiftI) {
                     win.webContents.toggleDevTools();
                     event.preventDefault();
+                    return;
                 }
+
+                if (isF11) {
+                    win.setFullScreen(!win.isFullScreen());
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && (input.key === '+' || input.key === '=')) {
+                    applyZoom(0.1);
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && input.key === '-') {
+                    applyZoom(-0.1);
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && input.key === '0') {
+                    resetZoom();
+                    event.preventDefault();
+                }
+            });
+
+            win.webContents.on('did-finish-load', () => {
+                win.webContents.setZoomFactor(zoomFactor);
+            });
+
+            // Ctrl/Cmd + 鼠标滚轮触发 Chromium zoom-changed，这里接管缩放幅度。
+            win.webContents.on('zoom-changed', (event, zoomDirection) => {
+                event.preventDefault();
+                applyZoom(zoomDirection === 'in' ? 0.1 : -0.1);
             });
 
             win.loadURL(`http://localhost:${BACKEND_PORT}`);
