@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import HelloWorld from './components/HelloWorld.vue'
+import DashboardHome from './components/DashboardHome.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
 [% if enable_sudo %]
@@ -11,7 +11,6 @@ import FileManager from './components/FileManager.vue'
 const fileManager = ref(null)
 
 const handleRefresh = () => {
-  console.log('刷新页面')
   window.location.reload()
 }
 
@@ -21,23 +20,45 @@ const openSettings = () => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app-shell">
+    <div class="ambient-bg" aria-hidden="true">
+      <span class="node node-a"></span>
+      <span class="node node-b"></span>
+      <span class="node node-c"></span>
+      <span class="node node-d"></span>
+      <span class="node node-e"></span>
+      <span class="node node-f"></span>
+      <span class="link link-a"></span>
+      <span class="link link-b"></span>
+      <span class="link link-c"></span>
+      <span class="link link-d"></span>
+      <span class="link link-e"></span>
+    </div>
     [% if enable_sudo %]
     <ConfigSetup />
     [% endif %]
     <FileManager ref="fileManager" />
-    <header class="header">
-      <div class="header-left">
-        <h1>🎯 [[ package_name_capitalized]]</h1>
-        <GitVersionBadge />
+
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark">[[ package_name_capitalized | first ]]</div>
+        <div>
+          <h1>[[ package_name_capitalized]]</h1>
+          <p>AI Native · FastAPI · Electron</p>
+        </div>
       </div>
-      <div class="header-right">
+
+      <div class="toolbar">
+        <GitVersionBadge />
         <RefreshButton @refresh="handleRefresh" />
-        <button class="settings-btn" @click="openSettings" title="配置文件管理">
-          ⚙️
+        <button class="icon-button" @click="openSettings" title="配置中心" aria-label="配置中心">
+          <span>⚙</span>
         </button>
       </div>
     </header>
-    <HelloWorld />
+
+    <main class="workspace">
+      <DashboardHome @open-settings="openSettings" />
+    </main>
   </div>
 </template>

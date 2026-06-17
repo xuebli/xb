@@ -80,27 +80,26 @@ const handleRefresh = async () => {
 
 <style scoped>
 .refresh-button {
+  height: 40px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
-  border-radius: 6px;
-  border: 2px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: #0f172a;
   font-family: var(--sans);
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 0.92rem;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
   user-select: none;
 }
 
 .refresh-button:hover:not(.is-disabled) {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-soft);
   transform: translateY(-1px);
 }
 
@@ -110,7 +109,7 @@ const handleRefresh = async () => {
 }
 
 .refresh-button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 3px solid rgba(15, 118, 110, 0.18);
   outline-offset: 2px;
 }
 
@@ -120,8 +119,8 @@ const handleRefresh = async () => {
 }
 
 .refresh-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   transition: transform 0.6s ease;
 }
 
@@ -129,29 +128,15 @@ const handleRefresh = async () => {
   animation: spin 1s linear infinite;
 }
 
-.refresh-text {
-  line-height: 1;
-}
+.refresh-text { line-height: 1; }
 
 @keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-/* 响应式设计 */
-@media (max-width: 1024px) {
-  .refresh-button {
-    padding: 8px 16px;
-    font-size: 14px;
-  }
-  
-  .refresh-icon {
-    width: 16px;
-    height: 16px;
-  }
+@media (max-width: 640px) {
+  .refresh-text { display: none; }
+  .refresh-button { width: 40px; padding: 0; justify-content: center; }
 }
 </style>

@@ -111,7 +111,7 @@ class TemplateEngine:
         self._render_template("frontend/src/style.css.j2", src_dir / "style.css", context)
 
         self._render_template(
-            "frontend/src/components/HelloWorld.vue.j2", components_dir / "HelloWorld.vue", context
+            "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
         )
         self._render_template(
             "frontend/src/components/RefreshButton.vue.j2",
