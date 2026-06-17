@@ -71,6 +71,35 @@ def _prompt_upgrade_before_init() -> None:
     os.execvp(xb_entry, [xb_entry, *sys.argv[1:]])
 
 
+def resolve_icon_path(explicit_icon: str | None, package: str) -> Path | None:
+    """解析应用图标路径：显式 --icon 优先，其次查找约定路径。"""
+    candidates: list[Path] = []
+
+    if explicit_icon:
+        icon_path = Path(explicit_icon).expanduser()
+        if not icon_path.is_absolute():
+            icon_path = Path.cwd() / icon_path
+        if not icon_path.exists():
+            raise click.BadParameter(f"图标文件不存在: {icon_path}", param_hint="--icon")
+        return icon_path.resolve()
+
+    for name in (
+        "app-icon.png",
+        "icon.png",
+        f"{package}.png",
+        "assets/app-icon.png",
+        "assets/icon.png",
+        "resources/icon.png",
+    ):
+        candidates.append(Path.cwd() / name)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
 def init_git_repo(target_dir: Path, package: str) -> bool:
     """在目标目录初始化 git 仓库并提交首个 commit。
 
@@ -140,7 +169,14 @@ class XbGroup(click.Group):
     default=False,
     help="启用 sudo 免密配置 (需要输入密码)",
 )
-def init_command(package: str, sudoers: bool):
+@click.option(
+    "--icon",
+    "icon",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    default=None,
+    help="应用图标 PNG 路径；不传时自动查找 ./app-icon.png、./icon.png、./assets/icon.png 等约定路径",
+)
+def init_command(package: str, sudoers: bool, icon: str | None):
     """
     初始化项目结构
 
@@ -173,6 +209,10 @@ def init_command(package: str, sudoers: bool):
             raise click.Abort()
         shutil.rmtree(target_dir)
 
+    icon_path = resolve_icon_path(icon, package)
+    if icon_path:
+        console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
+
     # sudo 免密配置
     enable_sudo = False
     sudo_password = ""
@@ -203,6 +243,7 @@ def init_command(package: str, sudoers: bool):
             package_name=package,
             enable_sudo=enable_sudo,
             sudo_password=sudo_password,
+            icon_path=icon_path,
         )
 
         git_ok = init_git_repo(target_dir, package)

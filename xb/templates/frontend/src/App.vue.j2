@@ -9,6 +9,7 @@ import ConfigSetup from './components/ConfigSetup.vue'
 import FileManager from './components/FileManager.vue'
 
 const fileManager = ref(null)
+const showIconFallback = ref(false)
 
 const handleRefresh = () => {
   window.location.reload()
@@ -41,7 +42,10 @@ const openSettings = () => {
 
     <header class="topbar">
       <div class="brand-block">
-        <div class="brand-mark">[[ package_name_capitalized | first ]]</div>
+        <div class="brand-mark">
+          <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ package_name_capitalized]]" @error="showIconFallback = true" />
+          <span v-else>[[ package_name_capitalized | first ]]</span>
+        </div>
         <div>
           <h1>[[ package_name_capitalized]]</h1>
           <p>AI Native · FastAPI · Electron</p>

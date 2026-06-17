@@ -31,6 +31,7 @@ class TemplateEngine:
         package_name: str,
         enable_sudo: bool = False,
         sudo_password: str = "",
+        icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -40,6 +41,7 @@ class TemplateEngine:
             "package_name_capitalized": package_name.capitalize(),
             "enable_sudo": enable_sudo,
             "sudo_password": sudo_password,
+            "icon_path": icon_path,
         }
 
         self._create_backend(target_dir, context)
@@ -106,6 +108,10 @@ class TemplateEngine:
         )
         self._render_template("frontend/index.html.j2", frontend_dir / "index.html", context)
 
+        public_dir = frontend_dir / "public"
+        public_dir.mkdir(exist_ok=True)
+        self._copy_app_icon(public_dir / "app-icon.png", context)
+
         self._render_template("frontend/src/main.js.j2", src_dir / "main.js", context)
         self._render_template("frontend/src/App.vue.j2", src_dir / "App.vue", context)
         self._render_template("frontend/src/style.css.j2", src_dir / "style.css", context)
@@ -155,9 +161,22 @@ class TemplateEngine:
         )
         (resources_dir / "postrm").chmod(0o755)
 
+        self._copy_app_icon(resources_dir / "icon.png", context)
+
+
+    def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
+        icon_path = context.get("icon_path")
+        if icon_path:
+            icon_path = Path(icon_path).expanduser().resolve()
+            if not icon_path.exists():
+                raise FileNotFoundError(f"图标文件不存在: {icon_path}")
+            shutil.copy(icon_path, output_path)
+            return
+
         templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "resources"
-        if (templates_dir / "icon.png").exists():
-            shutil.copy(templates_dir / "icon.png", resources_dir / "icon.png")
+        default_icon = templates_dir / "icon.png"
+        if default_icon.exists():
+            shutil.copy(default_icon, output_path)
 
     def _create_configs(self, target_dir: Path, context: Dict[str, Any]):
         configs_dir = target_dir / "configs"
