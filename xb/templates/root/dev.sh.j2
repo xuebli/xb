@@ -69,7 +69,7 @@ process_cwd() {
 process_command() {
     local pid=$1
     if [ -r "/proc/${pid}/cmdline" ]; then
-        tr '\0' ' ' < "/proc/${pid}/cmdline" | sed 's/[[:space:]]*$//'
+        tr '\0' ' ' < "/proc/${pid}/cmdline" | xargs
     else
         ps -p "$pid" -o args= 2>/dev/null || echo "未知"
     fi

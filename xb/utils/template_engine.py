@@ -70,6 +70,9 @@ class TemplateEngine:
         self._render_template(
             "backend/api/config.py.j2", backend_dir / "api" / "config.py", context
         )
+        self._render_template(
+            "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
+        )
 
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
@@ -149,6 +152,10 @@ class TemplateEngine:
         resources_dir.mkdir(exist_ok=True)
 
         self._render_template("electron/main.js.j2", electron_dir / "main.js", context)
+        self._render_template("electron/launcher.js.j2", electron_dir / "launcher.js", context)
+        self._render_template(
+            "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context
+        )
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
 
         self._render_template(

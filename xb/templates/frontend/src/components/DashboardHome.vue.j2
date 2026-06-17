@@ -2,66 +2,39 @@
 const emit = defineEmits(['open-settings'])
 
 const stackItems = [
-  { label: 'API Core', value: 'FastAPI', tone: 'green' },
-  { label: 'Neural UI', value: 'Vue3 + Vite', tone: 'blue' },
-  { label: 'Desktop Shell', value: 'Electron', tone: 'violet' },
-  { label: 'Release Flow', value: 'PyInstaller / DEB', tone: 'pink' }
+  { name: 'FastAPI', detail: '后端 API 服务与静态资源入口' },
+  { name: 'Vue 3 + Vite', detail: '前端界面与开发热更新' },
+  { name: 'Electron', detail: '桌面窗口、打包和本机集成' },
+  { name: 'uv', detail: 'Python 依赖与虚拟环境管理' }
 ]
 
-const commands = [
-  { name: '启动开发环境', command: 'bash dev.sh start' },
-  { name: '停止服务', command: 'bash dev.sh stop' },
-  { name: '全量构建', command: 'bash build.sh -a' }
-]
 </script>
 
 <template>
-  <section class="hero-panel">
-    <div class="hero-copy">
-      <div class="eyebrow">AI Native Workspace</div>
-      <h2>把想法推进成桌面应用的发射台</h2>
+  <section class="intro-shell">
+    <div class="intro-copy">
+      <div class="eyebrow">[[ package_name_capitalized]]</div>
+      <h2>桌面应用项目骨架</h2>
       <p>
-        FastAPI、Vue3、Electron 和构建链路已经接入同一条高速轨道。替换业务页面，
-        接入 AI 流程，或者先进入配置中心调好运行参数。
+        这是一个基于 FastAPI、Vue 3、Vite 和 Electron 的桌面应用模板，
+        已包含后端服务、前端界面、配置文件、开发脚本和打包流程。
       </p>
-      <div class="hero-actions">
-        <button class="primary-action" @click="emit('open-settings')">启动配置中心</button>
-        <code>bash dev.sh start</code>
+      <div class="intro-actions">
+        <button class="primary-action" @click="emit('open-settings')">打开配置中心</button>
       </div>
     </div>
 
-    <div class="status-board" aria-label="项目状态概览">
-      <div v-for="item in stackItems" :key="item.label" class="status-card" :class="item.tone">
-        <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
-      </div>
-    </div>
-  </section>
-
-  <section class="content-grid">
-    <article class="panel command-panel">
+    <div class="intro-panel">
       <div class="panel-heading">
-        <span class="panel-kicker">Launchpad</span>
-        <h3>常用命令</h3>
+        <span class="panel-kicker">Stack</span>
+        <h3>技术栈</h3>
       </div>
-      <div class="command-list">
-        <div v-for="item in commands" :key="item.command" class="command-row">
-          <span>{{ item.name }}</span>
-          <code>{{ item.command }}</code>
+      <div class="stack-list">
+        <div v-for="item in stackItems" :key="item.name" class="stack-row">
+          <strong>{{ item.name }}</strong>
+          <span>{{ item.detail }}</span>
         </div>
       </div>
-    </article>
-
-    <article class="panel checklist-panel">
-      <div class="panel-heading">
-        <span class="panel-kicker">Velocity</span>
-        <h3>保持高速迭代</h3>
-      </div>
-      <ul>
-        <li>删除或替换示例业务区块，保留顶部工具栏和配置中心。</li>
-        <li>新增配置时先补表单 UI，再写 YAML 字段。</li>
-        <li>后端新增 API 按业务域拆分，避免堆到单个文件。</li>
-      </ul>
-    </article>
+    </div>
   </section>
 </template>

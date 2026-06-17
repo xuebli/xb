@@ -282,26 +282,31 @@ code {
 
 .workspace {
   width: min(1180px, calc(100% - 40px));
+  min-height: calc(100vh - 108px);
   margin: 0 auto;
   padding: 34px 0 56px;
+  display: grid;
+  place-items: center;
 }
 
-.hero-panel {
+.intro-shell {
+  width: min(940px, 100%);
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
   gap: 24px;
   align-items: stretch;
 }
 
-.hero-copy, .panel, .status-board {
+.intro-copy, .panel, .intro-panel {
   border: 1px solid rgba(124, 58, 237, 0.16);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.66);
+  background: rgba(255, 255, 255, 0.72);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(18px);
 }
 
-.hero-copy {
+.intro-copy {
   padding: 34px;
 }
 
@@ -313,121 +318,73 @@ code {
   text-transform: uppercase;
 }
 
-.hero-copy h2 {
+.intro-copy h2 {
   margin: 12px 0 14px;
-  color: transparent;
-  background: linear-gradient(100deg, #101828 0%, #7c3aed 42%, #06b6d4 74%, #10b981 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  font-size: clamp(2.2rem, 4.8vw, 4.8rem);
-  line-height: 1.02;
-  letter-spacing: 0;
+  color: var(--text-h);
+  font-size: 2.2rem;
+  line-height: 1.12;
 }
 
-.hero-copy p {
-  max-width: 760px;
+.intro-copy p {
+  max-width: 720px;
   margin: 0;
   color: #526070;
-  font-size: 1rem;
 }
 
-.hero-actions {
+.intro-actions {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 28px;
+  margin-top: 26px;
 }
 
 .primary-action {
-  min-height: 42px;
-  padding: 0 18px;
+  min-height: 40px;
+  padding: 0 16px;
   border-radius: 8px;
   background: linear-gradient(135deg, #7c3aed, #06b6d4);
   color: #fff;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 16px 34px rgba(124, 58, 237, 0.24), 0 8px 20px rgba(34, 211, 238, 0.18);
+  box-shadow: 0 14px 28px rgba(124, 58, 237, 0.2), 0 6px 16px rgba(34, 211, 238, 0.14);
 }
 
-.primary-action:hover { filter: saturate(1.12) brightness(1.02); }
+.primary-action:hover { filter: saturate(1.08) brightness(1.02); }
 
-.status-board {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding: 18px;
+.intro-panel, .panel {
+  padding: 24px;
 }
 
-.status-card {
-  min-height: 112px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-soft);
-}
-
-.status-card span {
-  color: #64748b;
-  font-size: 0.82rem;
-}
-
-.status-card strong {
-  color: #0f172a;
-  font-size: 1.05rem;
-}
-
-.status-card.green { background: var(--green-soft); }
-.status-card.blue { background: var(--blue-soft); }
-.status-card.amber { background: var(--amber-soft); }
-.status-card.violet { background: rgba(168, 85, 247, 0.14); }
-.status-card.pink { background: rgba(236, 72, 153, 0.13); }
-.status-card.dark { background: rgba(148, 163, 184, 0.16); }
-
-.content-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin-top: 24px;
-}
-
-.panel { padding: 24px; }
 .panel-heading h3 {
   margin: 6px 0 18px;
   color: var(--text-h);
   font-size: 1.2rem;
 }
 
-.command-list { display: grid; gap: 10px; }
-.command-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.stack-list {
+  display: grid;
+  gap: 10px;
+}
+
+.stack-row {
+  display: grid;
+  gap: 5px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
-.command-row:last-child { border-bottom: 0; }
-.command-row span { color: #334155; font-weight: 650; }
 
-.checklist-panel ul {
-  margin: 0;
-  padding-left: 20px;
-  color: #475569;
-}
-.checklist-panel li + li { margin-top: 10px; }
+.stack-row:last-child { border-bottom: 0; }
+.stack-row strong { color: #111827; }
+.stack-row span { color: #64748b; }
+
+
 
 @media (max-width: 860px) {
   .topbar { align-items: flex-start; flex-direction: column; padding: 16px 20px; }
   .toolbar { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .workspace { width: min(100% - 28px, 1180px); padding-top: 22px; }
-  .hero-panel, .content-grid { grid-template-columns: 1fr; }
-  .hero-copy { padding: 24px; }
-  .status-board { grid-template-columns: 1fr; }
-  .command-row { align-items: flex-start; flex-direction: column; }
+  .intro-shell { width: 100%; grid-template-columns: 1fr; }
+  .intro-copy { padding: 24px; }
 }
 
 
