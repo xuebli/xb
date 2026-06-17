@@ -27,13 +27,7 @@ console = Console()
 PACKAGE_NAME = "xiaomi-xb"
 
 
-@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="无视 pin 强制装 PyPI 最新版（已是默认行为，保留兼容）",
-)
-def upgrade(force: bool) -> None:
+def run_upgrade() -> None:
     """升级 xb 到 PyPI 最新版本"""
     if not shutil.which("uv"):
         console.print(
@@ -56,3 +50,14 @@ def upgrade(force: bool) -> None:
     else:
         console.print(f"[red]❌ 升级失败 (exit {result.returncode})[/red]")
         sys.exit(result.returncode)
+
+
+@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="无视 pin 强制装 PyPI 最新版（已是默认行为，保留兼容）",
+)
+def upgrade(force: bool) -> None:
+    """升级 xb 到 PyPI 最新版本"""
+    run_upgrade()

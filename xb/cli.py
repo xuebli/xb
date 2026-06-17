@@ -12,16 +12,25 @@ from .commands.build import build
 from .commands.dev import dev
 from .commands.doctor import doctor
 from .commands.init import XbGroup, init_command
-from .commands.upgrade import upgrade
+from .commands.upgrade import run_upgrade
 from .commands.version import version
 from .utils.version_check import ensure_check, get_pending_upgrade_hint
 
 console = Console()
+COMMAND_ORDER = ["doctor", "init", "dev", "build", "version"]
 
 
 def _format_command_options(cmd: click.Command) -> str:
-    options = []
+    params = []
     for param in cmd.params:
+        if isinstance(param, click.Argument):
+            if isinstance(param.type, click.Choice):
+                choices = "|".join(param.type.choices)
+                params.append(f"{param.name}: {choices}")
+            else:
+                params.append(param.name)
+            continue
+
         if not isinstance(param, click.Option):
             continue
         if param.name == "help":
@@ -31,12 +40,18 @@ def _format_command_options(cmd: click.Command) -> str:
         if not param.is_flag:
             metavar = param.metavar or param.name.upper()
             option = f"{option} {metavar}"
-        options.append(option)
+        params.append(option)
 
-    return ", ".join(options)
+    return ", ".join(params)
 
 
 class ColorfulXbGroup(XbGroup):
+    def list_commands(self, ctx):
+        existing = set(super().list_commands(ctx))
+        ordered = [name for name in COMMAND_ORDER if name in existing]
+        ordered.extend(name for name in super().list_commands(ctx) if name not in ordered)
+        return ordered
+
     def format_help(self, ctx, formatter):
         console.print(
             "\n[bold green]Usage:[/bold green] [cyan]xb [OPTIONS] COMMAND [ARGS]...[/cyan]\n"
@@ -45,6 +60,7 @@ class ColorfulXbGroup(XbGroup):
         console.print("[dim]类似 uv，专为 Electron 桌面应用设计。[/dim]\n")
         console.print("[bold green]Options:[/bold green]")
         console.print("  [cyan]--version[/cyan]  显示 xb 工具版本号并退出。")
+        console.print("  [cyan]--upgrade[/cyan]  升级 xb 到 PyPI 最新版本并退出。")
         console.print("  [cyan]-h, --help[/cyan] 显示帮助信息并退出。\n")
         console.print("[bold green]Commands:[/bold green]")
         for subcommand in self.list_commands(ctx):
@@ -61,24 +77,28 @@ class ColorfulXbGroup(XbGroup):
 
 @click.group(cls=ColorfulXbGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(version=__version__, prog_name="xb")
-def main():
+@click.option("--upgrade", "upgrade_requested", is_flag=True, is_eager=True, help="升级 xb 到 PyPI 最新版本并退出。")
+def main(upgrade_requested: bool):
     """
     xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具
 
     类似 uv，专为 Electron 桌面应用设计。
     """
+    if upgrade_requested:
+        run_upgrade()
+        raise click.exceptions.Exit()
+
     ensure_check(__version__)
     hint = get_pending_upgrade_hint(__version__)
     if hint:
         console.print(f"[yellow]{hint}[/yellow]\n")
 
 
+main.add_command(doctor, name="doctor")
 main.add_command(init_command, name="init")
 main.add_command(dev, name="dev")
-main.add_command(doctor, name="doctor")
 main.add_command(build, name="build")
 main.add_command(version, name="version")
-main.add_command(upgrade, name="upgrade")
 
 
 if __name__ == "__main__":

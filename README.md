@@ -39,10 +39,10 @@ cd myapp
 xb dev
 
 # 查看状态
-xb dev --status
+xb dev status
 
 # 停止
-xb dev --stop
+xb dev stop
 ```
 
 > **`xb init` 自动行为**：在目标目录执行 `git init` 并以 `chore: xb init 初始化 <package> 项目` 提交首个 commit。
@@ -55,9 +55,9 @@ xb dev --stop
 xb build
 
 # 单独构建
-xb build -f    # 前端
-xb build -b    # 后端
-xb build -e    # Electron DEB
+xb build frontend    # 或 xb build -f
+xb build backend     # 或 xb build -b
+xb build electron    # 或 xb build -e
 ```
 
 ## 项目结构

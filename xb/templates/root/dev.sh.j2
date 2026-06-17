@@ -96,7 +96,7 @@ print_port_owners() {
 ensure_port_available() {
     local label=$1 port=$2
     if print_port_owners "$port"; then
-        echo "${label} 未启动。请先执行 xb dev --stop 停止占用端口的进程，或修改 configs/global_config.yaml 中的端口号。"
+        echo "${label} 未启动。请先执行 xb dev stop 停止占用端口的进程，或修改 configs/global_config.yaml 中的端口号。"
         return 1
     fi
     return 0

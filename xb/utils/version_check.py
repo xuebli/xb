@@ -15,7 +15,7 @@ xb 自动更新检查
 
 为什么后台刷新用独立进程而不是 daemon 线程：
 - daemon 线程在主进程 sys.exit()/click.Abort 时会被强制终止
-- 短命令（如 xb dev --status 因找不到项目 abort）耗时 < 0.1s，
+- 短命令（如 xb dev status 因找不到项目 abort）耗时 < 0.1s，
   线程的 PyPI HTTP 请求（>=0.5s）从来跑不完 → 缓存永远不写
 - subprocess.Popen + start_new_session=True 可让子进程脱离父会话独立存活
 
