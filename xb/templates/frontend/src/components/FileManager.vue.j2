@@ -8,6 +8,11 @@
 
       <div class="dialog-body">
         <div class="file-list">
+          <div class="mode-tabs">
+            <button :class="{ active: activeMode === 'form' }" @click="activeMode = 'form'">表单配置</button>
+            <button :class="{ active: activeMode === 'yaml' }" @click="activeMode = 'yaml'">原始 YAML</button>
+          </div>
+          <template v-if="activeMode === 'yaml'">
           <h3>配置文件列表</h3>
           <div v-if="loading" class="loading">加载中...</div>
           <div v-else-if="error" class="error">{{ error }}</div>
@@ -27,10 +32,62 @@
               </div>
             </div>
           </div>
+          </template>
         </div>
 
         <div class="file-editor">
-          <div v-if="!selectedFile" class="editor-placeholder">
+          <div v-if="activeMode === 'form'" class="settings-panel">
+            <div class="editor-header">
+              <h3>应用配置</h3>
+              <div class="editor-actions">
+                <button @click="saveSettings" :disabled="settingsSaving || settingsLoading">
+                  {{ settingsSaving ? '保存中...' : '保存配置' }}
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-content">
+              <div v-if="settingsLoading" class="loading">加载中...</div>
+              <div v-else-if="settingsError" class="validation-error">{{ settingsError }}</div>
+              <template v-else>
+                [% if enable_sudo %]
+                <section class="settings-section">
+                  <h4>Sudo 密码</h4>
+                  <p class="section-hint">留空表示不修改当前密码；填写后会立即更新 sudo 免密配置。</p>
+                  <label class="field-row">
+                    <span>密码</span>
+                    <input
+                      v-model="settingsForm.sudo_password"
+                      type="password"
+                      placeholder="不修改请留空"
+                      autocomplete="current-password"
+                    />
+                  </label>
+                </section>
+                [% endif %]
+
+                <section class="settings-section">
+                  <h4>服务端口</h4>
+                  <p class="section-hint">端口会写入 global_config.yaml；保存后已刷新配置缓存，但 dev.sh / Electron 端口变更需要重启进程才会接管。</p>
+                  <label class="field-row">
+                    <span>后端端口</span>
+                    <input v-model.number="settingsForm.ports.backend" type="number" min="1" max="65535" />
+                  </label>
+                  <label class="field-row">
+                    <span>前端端口</span>
+                    <input v-model.number="settingsForm.ports.frontend" type="number" min="1" max="65535" />
+                  </label>
+                </section>
+
+                <div v-if="settingsMessage" class="settings-message">{{ settingsMessage }}</div>
+                <div v-if="settingsPath" class="editor-footer">
+                  <span class="file-path">{{ settingsPath }}</span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div v-else-if="!selectedFile" class="editor-placeholder">
             <p>👈 选择一个文件开始编辑</p>
           </div>
           <div v-else class="editor-content">
@@ -73,6 +130,7 @@ import { ref, computed, onMounted } from 'vue'
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const showManager = ref(false)
+const activeMode = ref('form')
 const loading = ref(false)
 const error = ref('')
 const files = ref([])
@@ -81,11 +139,27 @@ const fileContent = ref('')
 const originalContent = ref('')
 const saving = ref(false)
 const fileError = ref('')
+const settingsLoading = ref(false)
+const settingsSaving = ref(false)
+const settingsError = ref('')
+const settingsMessage = ref('')
+const settingsPath = ref('')
+const settingsForm = ref({
+  [% if enable_sudo %]
+  sudo_password: '',
+  [% endif %]
+  ports: {
+    backend: 8000,
+    frontend: 5173
+  }
+})
 
 const hasChanges = computed(() => fileContent.value !== originalContent.value)
 
 const open = () => {
   showManager.value = true
+  activeMode.value = 'form'
+  loadSettings()
   loadFileList()
 }
 
@@ -104,6 +178,60 @@ const close = () => {
 const closeIfOutside = (e) => {
   if (e.target.classList.contains('file-overlay')) {
     close()
+  }
+}
+
+
+const loadSettings = async () => {
+  settingsLoading.value = true
+  settingsError.value = ''
+  settingsMessage.value = ''
+
+  try {
+    const response = await fetch(`${API_BASE}/api/settings`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '读取应用配置失败')
+
+    settingsPath.value = data.config_path || ''
+    settingsForm.value = {
+      [% if enable_sudo %]
+      sudo_password: '',
+      [% endif %]
+      ports: {
+        backend: data.ports?.backend || 8000,
+        frontend: data.ports?.frontend || 5173
+      }
+    }
+  } catch (e) {
+    settingsError.value = e.message
+    console.error('读取应用配置失败:', e)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+const saveSettings = async () => {
+  settingsSaving.value = true
+  settingsError.value = ''
+  settingsMessage.value = ''
+
+  try {
+    const response = await fetch(`${API_BASE}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settingsForm.value)
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '保存应用配置失败')
+
+    settingsMessage.value = '配置已保存。可热重载配置已立即生效；端口变更需重启 dev.sh 或 Electron。'
+    await loadFileList()
+    await loadSettings()
+  } catch (e) {
+    settingsError.value = e.message
+    console.error('保存应用配置失败:', e)
+  } finally {
+    settingsSaving.value = false
   }
 }
 
@@ -276,6 +404,95 @@ defineExpose({ open })
   border-right: 1px solid #e5e7eb;
   overflow-y: auto;
   padding: 16px;
+}
+
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.mode-tabs button {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.mode-tabs button.active {
+  background: #1f2937;
+  border-color: #1f2937;
+  color: #fff;
+}
+
+.settings-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-content {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #fff;
+}
+
+.settings-section h4 {
+  margin: 0 0 6px 0;
+  color: #111827;
+  font-size: 1rem;
+}
+
+.section-hint {
+  margin: 0 0 14px 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.field-row input {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.field-row input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.settings-message {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
 }
 
 .file-list h3 {

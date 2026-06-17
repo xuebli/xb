@@ -41,6 +41,7 @@
 | 加 API 路由 | `backend/api/<feature>/routes.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api/<feature>")`；小功能可用 `backend/api/<feature>.py`，但禁止一个文件塞多个业务域 |
 | 加业务逻辑 | `backend/services/<feature>/` | API 只做参数校验/HTTP 映射，业务编排放 service |
 | 加请求/响应模型 | `backend/schemas/<feature>.py` 或 `backend/schemas/<feature>/` | Pydantic 模型不要写进 routes 大文件 |
+| 加配置项 | 后端 `backend/api/config.py` 的结构化接口 + 前端配置 UI | 不允许只加 yaml 字段；必须有表单 UI 可配置 |
 | 改路径策略 | `backend/managers/path_manager.py` | 全局单例 `path_manager` |
 | 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
@@ -97,7 +98,9 @@ bash version/scripts/install_hooks.sh
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
-- **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 dev.sh 注入的 `VITE_API_BASE` / `VITE_DEV_PORT` 环境变量拿到，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。**不要再硬编码 8000 / 5173 字面量到代码里**——改 yaml 后重启 dev.sh / Electron 立即生效。
+- **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 dev.sh 注入的 `VITE_API_BASE` / `VITE_DEV_PORT` 环境变量拿到，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.sh / Electron 才能换监听端口。
+- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
+- **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
 - **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
 - **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
@@ -289,6 +292,8 @@ class FeishuBitableManager:
 - ❌ 不要在 `path_manager` 之外直接读 `~/.config/[[ package_name]]/` —— 开发态根本不在那里（在 `./configs/`）。
 - ❌ 不要把 `configs/global_config.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
 - ❌ 不要把所有新模块参数都塞 `global_config.yaml` —— 见上"配置文件分级"决策表。
+- ❌ 不要新增只有 yaml、没有 UI 的配置项 —— 用户必须能在界面里配置；原始 YAML 编辑器只能做高级兜底。
+- ❌ 不要保存配置后还要求用户手动刷新业务状态 —— 除明确标注必须重启的启动期配置外，保存接口必须 reload 对应配置缓存，让下次业务读取立即生效。
 - ❌ 不要绕过 `path_manager` 直接 `yaml.safe_load(open(...))` 读配置 —— 失去缓存能力，且打包态会找错路径。
 - ❌ 不要在写 yaml 配置后忘了 `path_manager.reload_config("xxx.yaml")` —— 缓存还指向旧值。
 - ❌ 不要在 manager 的 `__init__` 里把 `path_manager.get_config_value(...)` 读到 `self.xxx` —— manager 是单例，ctor 缓存让前端改 yaml 后业务还吃旧值。改用 `@property` 现读，详见上文「配置实时生效约定」。
@@ -337,7 +342,7 @@ class FeishuBitableManager:
 | `frontend/src/App.vue` 的 `<HelloWorld />` import & 使用 | 同步移除 |
 | `frontend/src/components/RefreshButton.vue` | 视需要保留 |
 | `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
-| `frontend/src/components/FileManager.vue` | 视需要保留（配置文件管理 UI） |
+| `frontend/src/components/FileManager.vue` | **保留**（结构化配置 UI + 原始 YAML 高级编辑） |
 [% if enable_sudo %]| `frontend/src/components/ConfigSetup.vue` | **保留**（sudo 模式下的首启密码配置 UI） |
 [% endif %]
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
