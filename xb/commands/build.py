@@ -8,6 +8,8 @@ from pathlib import Path
 
 import click
 
+from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
+
 
 def is_project_root(path: Path) -> bool:
     return (path / "pyproject.toml").exists() and (path / "build.sh").exists()
@@ -21,7 +23,7 @@ def find_project_root() -> Path | None:
     return None
 
 
-@click.command()
+@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
 @click.option(
     "-f",
     "--frontend",

@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from .. import __version__
+from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
 from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
 from ..utils.version_check import get_latest_if_newer
@@ -138,7 +139,7 @@ def init_git_repo(target_dir: Path, package: str) -> bool:
     return True
 
 
-class ParamSummaryCommand(click.Command):
+class ParamSummaryCommand(ChineseHelpCommand):
     pass
 
 
@@ -161,7 +162,7 @@ class XbGroup(click.Group):
                 formatter.write_dl(rows)
 
 
-@click.command(cls=ParamSummaryCommand)
+@click.command(cls=ParamSummaryCommand, context_settings=HELP_CONTEXT)
 @click.argument("package")
 @click.option(
     "--sudoers",

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import click
 
+from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
+
 
 def is_project_root(path: Path) -> bool:
     return (path / "pyproject.toml").exists() and (path / "version").exists()
@@ -31,14 +33,14 @@ def get_package_name(project_root: Path) -> str:
     return match.group(1) if match else "unknown"
 
 
-@click.command()
+@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
 @click.argument(
     "bump_type",
     type=click.Choice(["patch", "minor", "major"]),
     required=False,
 )
 def version(bump_type: str):
-    """读取或更新项目版本"""
+    """读取或更新当前项目版本号"""
     project_root = find_project_root()
     if not project_root:
         click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 version/）")

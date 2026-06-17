@@ -18,6 +18,8 @@ import subprocess
 import sys
 
 import click
+
+from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
 from rich.console import Console
 
 console = Console()
@@ -25,7 +27,7 @@ console = Console()
 PACKAGE_NAME = "xiaomi-xb"
 
 
-@click.command()
+@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
 @click.option(
     "--force",
     is_flag=True,
