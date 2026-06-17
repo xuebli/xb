@@ -113,7 +113,7 @@ xb init myapp --sudoers
 
 ## 环境要求
 
-- **Python**: 3.10+
+- **Python**: 3.12+
 - **Node.js**: 16+
 - **npm**: 8+
 - **OS**: Linux

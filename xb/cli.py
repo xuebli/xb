@@ -10,6 +10,7 @@ from . import __version__
 
 from .commands.build import build
 from .commands.dev import dev
+from .commands.doctor import doctor
 from .commands.init import XbGroup, init_command
 from .commands.upgrade import upgrade
 from .commands.version import version
@@ -74,6 +75,7 @@ def main():
 
 main.add_command(init_command, name="init")
 main.add_command(dev, name="dev")
+main.add_command(doctor, name="doctor")
 main.add_command(build, name="build")
 main.add_command(version, name="version")
 main.add_command(upgrade, name="upgrade")
