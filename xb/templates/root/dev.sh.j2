@@ -3,6 +3,8 @@
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_PID="$PROJECT_ROOT/datas/pids/[[ package_name ]]_backend.pid"
 FRONTEND_PID="$PROJECT_ROOT/datas/pids/[[ package_name ]]_frontend.pid"
+BACKEND_SCREEN="[[ package_name ]]_backend_service"
+FRONTEND_SCREEN="[[ package_name ]]_frontend_service"
 mkdir -p "$PROJECT_ROOT/datas/pids"
 mkdir -p "$PROJECT_ROOT/datas/logs"
 touch "$BACKEND_PID" "$FRONTEND_PID"
@@ -36,6 +38,21 @@ is_running() {
     ps -p "$pid" > /dev/null 2>&1
 }
 
+screen_running() {
+    local session=$1
+    command -v screen >/dev/null 2>&1 && screen -list | grep -q "[.]${session}[[:space:]]"
+}
+
+stop_screen_session() {
+    local session=$1
+    if screen_running "$session"; then
+        screen -S "$session" -X stuff $'\003' 2>/dev/null || true
+        sleep 1
+        screen -S "$session" -X quit 2>/dev/null || true
+    fi
+    pkill -f "SCREEN.*${session}" 2>/dev/null || true
+}
+
 terminate_pid_file() {
     local pid_file=$1
     [ -f "$pid_file" ] || return 0
@@ -55,7 +72,7 @@ terminate_pid_file() {
 pids_for_port() {
     local port=$1
     if command -v lsof >/dev/null 2>&1; then
-        lsof -ti tcp:"$port" 2>/dev/null
+        lsof -ti TCP:"$port" -sTCP:LISTEN 2>/dev/null
     elif command -v fuser >/dev/null 2>&1; then
         fuser "${port}/tcp" 2>/dev/null
     fi
@@ -144,14 +161,8 @@ wait_for_frontend() {
     return 1
 }
 
-open_frontend() {
-    local url="http://localhost:${FRONTEND_PORT}"
-    if command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "$url" >/dev/null 2>&1 &
-        echo "✓ 已打开浏览器: ${url}"
-    else
-        echo "浏览器未自动打开，请访问: ${url}"
-    fi
+print_frontend_url() {
+    echo "浏览器未自动打开，请访问: http://localhost:${FRONTEND_PORT}"
 }
 
 start_backend() {
@@ -160,6 +171,11 @@ start_backend() {
         echo "检测到版本管理系统,安装 Git Hooks..."
         bash "$PROJECT_ROOT/version/scripts/install_hooks.sh" > /dev/null 2>&1
         echo "✓ Git Hooks 已安装"
+    fi
+
+    if screen_running "$BACKEND_SCREEN"; then
+        echo "后端已运行 (screen会话: ${BACKEND_SCREEN})"
+        return
     fi
 
     if is_running "$BACKEND_PID"; then
@@ -175,28 +191,51 @@ start_backend() {
 
     uv sync --extra dev
 
-    nohup .venv/bin/python backend/main.py > /dev/null 2>&1 &
-    echo $! > "$BACKEND_PID"
-    sleep 2
+    if command -v screen >/dev/null 2>&1; then
+        stop_screen_session "$BACKEND_SCREEN"
+        screen -dmS "$BACKEND_SCREEN" bash -c "cd '$PROJECT_ROOT' && exec .venv/bin/python backend/main.py 2>&1 | tee '$PROJECT_ROOT/datas/logs/backend.log'"
+        rm -f "$BACKEND_PID"
+        sleep 2
 
-    if is_running "$BACKEND_PID"; then
-        echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:${BACKEND_PORT})"
+        if screen_running "$BACKEND_SCREEN" || pids_for_port "$BACKEND_PORT" >/dev/null 2>&1; then
+            echo "✓ 后端已在screen会话中启动 (会话名: ${BACKEND_SCREEN}, http://localhost:${BACKEND_PORT})"
+            echo "  查看后端: screen -r ${BACKEND_SCREEN}"
+        else
+            echo "✗ 后端启动失败,查看screen会话或 datas/logs/backend.log"
+            return 1
+        fi
     else
-        echo "✗ 后端启动失败,查看日志: datas/logs/backend.log"
-        return 1
+        nohup .venv/bin/python backend/main.py > /dev/null 2>&1 &
+        echo $! > "$BACKEND_PID"
+        sleep 2
+
+        if is_running "$BACKEND_PID"; then
+            echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:${BACKEND_PORT})"
+        else
+            echo "✗ 后端启动失败,查看日志: datas/logs/backend.log"
+            return 1
+        fi
     fi
 }
 
 stop_backend() {
     echo "停止后端..."
+    stop_screen_session "$BACKEND_SCREEN"
     terminate_pid_file "$BACKEND_PID"
     kill_port_processes "$BACKEND_PORT"
     echo "✓ 后端已停止"
 }
 
 start_frontend() {
+    if screen_running "$FRONTEND_SCREEN"; then
+        echo "前端已运行 (screen会话: ${FRONTEND_SCREEN})"
+        print_frontend_url
+        return
+    fi
+
     if is_running "$FRONTEND_PID"; then
         echo "前端已运行 (PID: $(cat $FRONTEND_PID))"
+        print_frontend_url
         return
     fi
 
@@ -217,15 +256,26 @@ start_frontend() {
             npm install
         fi
 
-        nohup npm run dev > ../datas/logs/frontend.log 2>&1 &
-        echo $! > "$FRONTEND_PID"
+        if command -v screen >/dev/null 2>&1; then
+            stop_screen_session "$FRONTEND_SCREEN"
+            screen -dmS "$FRONTEND_SCREEN" bash -c "cd '$PROJECT_ROOT/frontend' && exec npm run dev 2>&1 | tee '$PROJECT_ROOT/datas/logs/frontend.log'"
+            rm -f "$FRONTEND_PID"
+        else
+            nohup npm run dev > ../datas/logs/frontend.log 2>&1 &
+            echo $! > "$FRONTEND_PID"
+        fi
 
         if wait_for_frontend; then
             local actual_pids=$(pids_for_port "$FRONTEND_PORT" | tr '\n' ' ')
-            echo "✓ 前端已启动 (PID: ${actual_pids:-$(cat $FRONTEND_PID)}, http://localhost:${FRONTEND_PORT})"
-            open_frontend
+            if screen_running "$FRONTEND_SCREEN"; then
+                echo "✓ 前端已在screen会话中启动 (会话名: ${FRONTEND_SCREEN}, http://localhost:${FRONTEND_PORT})"
+                echo "  查看前端: screen -r ${FRONTEND_SCREEN}"
+            else
+                echo "✓ 前端已启动 (PID: ${actual_pids:-$(cat $FRONTEND_PID)}, http://localhost:${FRONTEND_PORT})"
+            fi
+            print_frontend_url
         else
-            echo "✗ 前端启动失败,查看日志: datas/logs/frontend.log"
+            echo "✗ 前端启动失败,查看日志: datas/logs/frontend.log 或 screen -r ${FRONTEND_SCREEN}"
             tail -n 30 ../datas/logs/frontend.log 2>/dev/null || true
             return 1
         fi
@@ -234,6 +284,7 @@ start_frontend() {
 
 stop_frontend() {
     echo "停止前端..."
+    stop_screen_session "$FRONTEND_SCREEN"
     terminate_pid_file "$FRONTEND_PID"
     kill_port_processes "$FRONTEND_PORT"
     echo "✓ 前端已停止"
@@ -244,13 +295,24 @@ status() {
     echo "  服务状态"
     echo "========================================="
 
-    if is_running "$BACKEND_PID"; then
+    local backend_listen_pids=$(pids_for_port "$BACKEND_PORT" | xargs)
+    local frontend_listen_pids=$(pids_for_port "$FRONTEND_PORT" | xargs)
+
+    if [ -n "$backend_listen_pids" ]; then
+        echo "✓ 后端: 运行中 (监听PID: ${backend_listen_pids})"
+    elif screen_running "$BACKEND_SCREEN"; then
+        echo "✓ 后端: 运行中 (screen会话: ${BACKEND_SCREEN})"
+    elif is_running "$BACKEND_PID"; then
         echo "✓ 后端: 运行中 (PID: $(cat $BACKEND_PID))"
     else
         echo "✗ 后端: 未运行"
     fi
 
-    if is_running "$FRONTEND_PID"; then
+    if [ -n "$frontend_listen_pids" ]; then
+        echo "✓ 前端: 运行中 (监听PID: ${frontend_listen_pids})"
+    elif screen_running "$FRONTEND_SCREEN"; then
+        echo "✓ 前端: 运行中 (screen会话: ${FRONTEND_SCREEN})"
+    elif is_running "$FRONTEND_PID"; then
         echo "✓ 前端: 运行中 (PID: $(cat $FRONTEND_PID))"
     else
         echo "✗ 前端: 未运行"
