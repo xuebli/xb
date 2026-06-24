@@ -40,7 +40,7 @@ is_running() {
 
 screen_running() {
     local session=$1
-    command -v screen >/dev/null 2>&1 && screen -list | grep -q "[.]${session}[[:space:]]"
+    command -v screen >/dev/null 2>&1 && screen -list | grep -q "[.]${session}[% raw %][[:space:]][% endraw %]"
 }
 
 stop_screen_session() {
