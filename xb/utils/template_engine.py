@@ -177,13 +177,23 @@ class TemplateEngine:
             icon_path = Path(icon_path).expanduser().resolve()
             if not icon_path.exists():
                 raise FileNotFoundError(f"图标文件不存在: {icon_path}")
-            shutil.copy(icon_path, output_path)
+            self._resize_icon(icon_path, output_path)
             return
 
         templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "resources"
         default_icon = templates_dir / "icon.png"
         if default_icon.exists():
             shutil.copy(default_icon, output_path)
+
+    @staticmethod
+    def _resize_icon(src: Path, dst: Path, size: int = 256):
+        """将任意图片转换为 size x size 的 PNG 图标。"""
+        from PIL import Image
+
+        with Image.open(src) as img:
+            img = img.convert("RGBA")
+            img = img.resize((size, size), Image.LANCZOS)
+            img.save(dst, "PNG")
 
     def _create_configs(self, target_dir: Path, context: Dict[str, Any]):
         configs_dir = target_dir / "configs"
