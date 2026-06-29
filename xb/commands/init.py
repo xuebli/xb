@@ -224,7 +224,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             Panel.fit(
                 "[bold cyan]Sudo 免密配置[/bold cyan]\n\n"
                 "启用 sudo 免密执行特定命令。\n"
-                "密码将以明文存储在 configs/global_config.yaml 中,\n"
+                "密码将以明文存储在 configs/secrets.yaml 中,\n"
                 "请确保该文件权限设置为 600 (仅所有者可读写)。",
                 border_style="cyan",
             )

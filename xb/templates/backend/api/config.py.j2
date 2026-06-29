@@ -46,12 +46,9 @@ def _ensure_global_config_file():
     if config_file.exists():
         return config_file
 
-    example_file = path_manager.get_config_path("global_config.yaml.example")
-    if not example_file.exists():
-        raise HTTPException(status_code=500, detail=f"找不到配置模板文件: {example_file}")
-
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(example_file, config_file)
+    with open(config_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump({"ports": {"backend": 8000, "frontend": 5173}}, f, allow_unicode=True, sort_keys=False)
     return config_file
 
 
@@ -80,6 +77,27 @@ def _write_global_config(config: dict, config_file: pathlib.Path) -> None:
     path_manager.reload_config("global_config.yaml")
 
 
+def _save_secret(key: str, value: str) -> None:
+    """将敏感字段写入 secrets.yaml。"""
+    secrets_file = path_manager.get_config_path("secrets.yaml")
+    secrets_file.parent.mkdir(parents=True, exist_ok=True)
+
+    secrets = {}
+    if secrets_file.exists():
+        with open(secrets_file, "r", encoding="utf-8") as f:
+            secrets = yaml.safe_load(f) or {}
+
+    backup_path = secrets_file.with_suffix(".yaml.bak")
+    if secrets_file.exists():
+        shutil.copy2(secrets_file, backup_path)
+
+    secrets[key] = value
+    with open(secrets_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(secrets, f, allow_unicode=True, sort_keys=False)
+
+    path_manager.reload_config("secrets.yaml")
+
+
 @router.get("/settings")
 async def get_settings():
     """读取可通过 UI 配置的应用设置。"""
@@ -94,7 +112,7 @@ async def get_settings():
             "config_path": str(config_file),
             "is_packaged": path_manager.is_packaged,
 [% if enable_sudo %]
-            "sudo_password_configured": bool(config.get("sudo_password")) if isinstance(config, dict) else False,
+            "sudo_password_configured": bool(path_manager.get_config_value("sudo_password", config_file="secrets.yaml")),
 [% endif %]
             "ports": {
                 "backend": int(ports.get("backend") or 8000),
@@ -122,7 +140,7 @@ async def save_settings(req: AppSettingsRequest):
 [% if enable_sudo %]
         password = (req.sudo_password or "").strip()
         if password:
-            config["sudo_password"] = password
+            _save_secret("sudo_password", password)
 [% endif %]
 
         _write_global_config(config, config_file)
@@ -152,27 +170,26 @@ async def save_settings(req: AppSettingsRequest):
 [% if enable_sudo %]
 @router.get("/config/check")
 async def check_config():
-    config_file = path_manager.get_config_path("global_config.yaml")
+    secrets_file = path_manager.get_config_path("secrets.yaml")
 
-    if not config_file.exists():
+    if not secrets_file.exists():
         return {
             "valid": False,
             "reason": "config_not_found",
-            "message": "配置文件不存在",
-            "config_path": str(config_file),
+            "message": "密钥配置文件不存在",
+            "config_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
         }
 
     try:
-        config = path_manager.load_config("global_config.yaml")
-        password = config.get("sudo_password", "")
+        password = path_manager.get_config_value("sudo_password", config_file="secrets.yaml") or ""
 
         if not password:
             return {
                 "valid": False,
                 "reason": "password_empty",
                 "message": "密码未设置",
-                "config_path": str(config_file),
+                "config_path": str(secrets_file),
                 "is_packaged": path_manager.is_packaged,
             }
 
@@ -181,7 +198,7 @@ async def check_config():
                 "valid": False,
                 "reason": "password_incorrect",
                 "message": "密码不正确",
-                "config_path": str(config_file),
+                "config_path": str(secrets_file),
                 "is_packaged": path_manager.is_packaged,
             }
 
@@ -190,7 +207,7 @@ async def check_config():
         return {
             "valid": True,
             "message": "配置正常",
-            "config_path": str(config_file),
+            "config_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
         }
     except HTTPException:
@@ -200,7 +217,7 @@ async def check_config():
             "valid": False,
             "reason": "config_error",
             "message": f"配置文件错误: {str(e)}",
-            "config_path": str(config_file),
+            "config_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
         }
 
@@ -216,27 +233,7 @@ async def save_config(config_req: ConfigRequest):
         if not password:
             raise HTTPException(status_code=400, detail="密码不能为空")
 
-        config_file = _ensure_global_config_file()
-        logger.info(f"配置文件路径: {config_file}")
-
-        with open(config_file, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        new_content = re.sub(
-            r"^sudo_password\s*:.*$",
-            f'sudo_password: "{password}"',
-            content,
-            flags=re.MULTILINE,
-        )
-
-        if new_content == content:
-            logger.warning("配置文件中未找到 sudo_password 行，将追加")
-            new_content = content.rstrip() + f'\n\nsudo_password: "{password}"\n'
-
-        with open(config_file, "w", encoding="utf-8") as f:
-            f.write(new_content)
-
-        path_manager.reload_config("global_config.yaml")
+        _save_secret("sudo_password", password)
 
         if not sudoers_manager.setup():
             raise HTTPException(
@@ -252,6 +249,27 @@ async def save_config(config_req: ConfigRequest):
 
 
 [% endif %]
+class SecretUpdateRequest(BaseModel):
+    key: str
+    value: str
+
+
+@router.post("/secrets/save")
+async def save_secret(req: SecretUpdateRequest):
+    """通用密钥保存接口，写入 secrets.yaml。"""
+    try:
+        if not req.key.strip() or not req.value.strip():
+            raise HTTPException(status_code=400, detail="密钥名和值不能为空")
+
+        _save_secret(req.key.strip(), req.value.strip())
+        return {"success": True, "message": f"密钥 {req.key} 已保存"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存密钥失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存密钥失败: {str(e)}")
+
+
 @router.get("/files/list")
 async def list_config_files():
     """获取所有配置文件列表"""

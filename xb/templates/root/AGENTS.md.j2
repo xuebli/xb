@@ -33,7 +33,7 @@
 │       └── utils/      # 纯工具函数
 ├── electron/           # 壳 + DEB 打包（main.js 极简，复杂度在 package.json/postinst）
 ├── version/            # Git pre-commit 版本管理（三模态：CLI/Tk/Web）
-├── configs/            # 配置文件（global_config.yaml 含密钥，gitignore；其他 yaml 直接提交）
+├── configs/            # 配置文件（secrets.yaml 含密钥，gitignore；其他 yaml 直接提交）
 ├── scripts/            # 占位脚本，打包时随 extraResources 进入 /opt/[[ package_name_capitalized]]/scripts/
 └── datas/              # 运行时产物（pids/logs/reports），全部 gitignore
 ```
@@ -107,7 +107,7 @@ bash version/scripts/install_hooks.sh
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
 - **Electron 快捷键必须保留**：`electron/main.js` 隐藏菜单后要显式支持 `F12` / `Ctrl+Shift+I` 打开 DevTools、`F11` 全屏、`Ctrl/Cmd + +/-/0` 缩放/重置、`Ctrl/Cmd + 鼠标滚轮` 缩放。改窗口或菜单逻辑时不要破坏这些桌面基础能力。
 - **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 dev.sh 注入的 `VITE_API_BASE` / `VITE_DEV_PORT` 环境变量拿到，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.sh / Electron 才能换监听端口。
-- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
+- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。密钥类配置在"🔐 密钥管理"面板（调 `POST /api/secrets/save`），普通配置在"🌐 应用配置"面板。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
 - **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
@@ -118,29 +118,29 @@ bash version/scripts/install_hooks.sh
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
 [% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。
-- **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password")`，密码明文存 `configs/global_config.yaml`，文件权限必须 `chmod 600`。
+- **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password", config_file="secrets.yaml")`，密码明文存 `configs/secrets.yaml`，文件权限必须 `chmod 600`。
 - **sudo 配置流程**：用户首启（`ConfigSetup.vue`）→ 调 `/api/config/save` 写密码 → `sudoers_manager.setup()` 用密码以 `sudo -S` 安装 sudoers 文件 → 校验通过则永久免密。
 [% endif %]
 ## 配置文件分级（关键约定）
 
-**核心原则**：**含密钥/密码 → `global_config.yaml`；不含密钥 → 独立 yaml 直接提交真值**。
+**核心原则**：**含密钥/密码 → `secrets.yaml`；不含密钥 → `global_config.yaml` 或独立 yaml 直接提交真值**。
 
 ### 决策表
 
 | 参数性质 | 放哪里 | 是否进 git | 是否要 `.example` |
 |---|---|---|---|
-| **凭证 / 密钥 / 密码 / token** | `global_config.yaml`（用命名空间嵌套） | ❌ 已 gitignore | ✅ `global_config.yaml.example` 留空占位 |
-| **跨多模块的全局开关** | `global_config.yaml` 顶层 | ❌ 已 gitignore | ✅ 同上 |
+| **凭证 / 密钥 / 密码 / token** | `secrets.yaml`（用命名空间嵌套） | ❌ 已 gitignore | ✅ `secrets.yaml.example` 留空占位 |
+| **跨多模块的全局开关** | `global_config.yaml` 顶层 | ✅ 直接提交 | ❌ 不需要 |
 | **业务参数（无密钥）** | 独立 yaml：`configs/<module>_config.yaml` | ✅ **直接提交真值** | ❌ 不需要 |
 | **结构化数据 / 列表型（无密钥）** | 独立 yaml | ✅ **直接提交真值** | ❌ 不需要 |
 
-**铁律**：**唯一进 `.gitignore` 的配置文件就是 `configs/global_config.yaml`**。其他 yaml 一律直接提交，让配置变更跟着代码一起 PR review。
+**铁律**：**唯一进 `.gitignore` 的配置文件就是 `configs/secrets.yaml`**。其他 yaml（含 `global_config.yaml`）一律直接提交，让配置变更跟着代码一起 PR review。
 
-### `global_config.yaml` 内部组织：按模块嵌套
+### `secrets.yaml` 内部组织：按模块嵌套
 
 ```yaml
-# global_config.yaml（git 排除，含真实凭证）
-[% if enable_sudo %]sudo_password: "REAL_PASSWORD"      # 历史扁平 key,保留
+# secrets.yaml（git 排除，含真实凭证）
+[% if enable_sudo %]sudo_password: "REAL_PASSWORD"
 [% endif %]
 mail:
   smtp:
@@ -151,7 +151,7 @@ aliyun:
   access_key_secret: "..."
 ```
 
-`global_config.yaml.example`（**提交 git**，密钥**留空**）：
+`secrets.yaml.example`（**提交 git**，密钥**留空**）：
 
 ```yaml
 [% if enable_sudo %]sudo_password: ""
@@ -164,11 +164,11 @@ aliyun:
   access_key_secret: ""
 ```
 
-### 标准流程 A：新模块需要密钥（用 `global_config.yaml`）
+### 标准流程 A：新模块需要密钥（用 `secrets.yaml`）
 
 模块同时有敏感参数（密码）和非敏感参数（host/port）：
 
-1. **密钥**写进 `global_config.yaml`（按模块嵌套）+ 同步在 `.example` 留空
+1. **密钥**写进 `secrets.yaml`（按模块嵌套）+ 同步在 `.example` 留空 + 在 `FileManager.vue` 密钥管理面板加 UI 字段（调 `POST /api/secrets/save`）
 2. **非敏感参数**新建独立 yaml：`configs/mail_config.yaml`，**直接提交真值，无 `.example`**
 3. 写一个独立 manager 合并两处读取：
 
@@ -197,11 +197,13 @@ class MailManager:
 
     @property
     def smtp_password(self) -> str:
-        return path_manager.get_config_value("mail.smtp.password", default="")
+        return path_manager.get_config_value(
+            "mail.smtp.password", default="", config_file="secrets.yaml"
+        )
 
     def reload(self):
         path_manager.reload_config(self.BIZ_CONFIG)
-        path_manager.reload_config("global_config.yaml")
+        path_manager.reload_config("secrets.yaml")
 
 
 mail_manager = MailManager()
@@ -218,7 +220,7 @@ __all__ = [..., "mail_manager"]
 
 ### 标准流程 B：模块不需要密钥（只独立 yaml）
 
-更简单——只做上面 2~5 步，**跳过** `global_config.yaml` 改动。
+更简单——只做上面 2~5 步，**跳过** `secrets.yaml` 改动。
 
 ### path_manager 配置 API
 
@@ -229,8 +231,8 @@ cfg = path_manager.load_config("mail_config.yaml")
 # 取单个值（点路径 + 默认值 + 指定文件）
 host = path_manager.get_config_value("smtp.host", default="localhost", config_file="mail_config.yaml")
 
-# 默认 config_file = "global_config.yaml"，读 global 的字段不用传
-mail_pwd = path_manager.get_config_value("mail.smtp.password", default="")
+# 默认 config_file = "global_config.yaml"，读 secrets 的字段需指定
+mail_pwd = path_manager.get_config_value("mail.smtp.password", default="", config_file="secrets.yaml")
 
 # 失效缓存
 path_manager.reload_config("mail_config.yaml")  # 单文件
@@ -302,8 +304,8 @@ class FeishuBitableManager:
 - ❌ 不要在单个 `.vue` 里堆几百上千行，把表单、弹窗、列表、API 请求、格式化函数和状态管理全写一起 —— 拆子组件、`composables/useXxx.js`、`services/xxxApi.js`。
 - ❌ 不要写几千行大文件 —— 一个文件如果同时包含 API、Pydantic schema、业务逻辑、文件读写、第三方接口封装，或一个前端组件同时包含多个页面/弹窗/数据流程，说明职责已经混乱，必须拆到对应目录。
 - ❌ 不要在 `path_manager` 之外直接读 `~/.config/[[ package_name]]/` —— 开发态根本不在那里（在 `./configs/`）。
-- ❌ 不要把 `configs/global_config.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
-- ❌ 不要把所有新模块参数都塞 `global_config.yaml` —— 见上"配置文件分级"决策表。
+- ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
+- ❌ 不要把密钥/密码塞进 `global_config.yaml` —— 敏感信息只放 `secrets.yaml`，见上"配置文件分级"决策表。
 - ❌ 不要新增只有 yaml、没有 UI 的配置项 —— 用户必须能在界面里配置；原始 YAML 编辑器只能做高级兜底。
 - ❌ 不要保存配置后还要求用户手动刷新业务状态 —— 除明确标注必须重启的启动期配置外，保存接口必须 reload 对应配置缓存，让下次业务读取立即生效。
 - ❌ 不要绕过 `path_manager` 直接 `yaml.safe_load(open(...))` 读配置 —— 失去缓存能力，且打包态会找错路径。
@@ -317,7 +319,7 @@ class FeishuBitableManager:
 - ❌ 不要把 `serve_frontend`（`/{full_path:path}`）放在 `/api/*` 之前 —— 会吃掉所有 API。
 - ❌ 不要 commit `electron/package.json` 的 version 字段 —— 由 pre-commit hook 自动 bump。
 - ❌ **不要用 `git commit --no-verify` / `-n`** —— 会跳过 `version/hooks/pre-commit`，导致 `electron/package.json` 与 `pyproject.toml` 的 version 字段漏 bump、`版本迭代日志.md` 不更新。即使 hook 弹窗"看似阻塞"，正确做法是**在屏幕上完成弹窗操作**或排查 hook 三模态判断（DISPLAY / SSH_CLIENT / VSCODE_IPC_HOOK_CLI），**不是**绕过它。
-- ❌ 不要在 `extraResources` 里漏 `filter: ["!global_config.yaml"]` —— 会把开发机的真实配置打进 DEB。
+- ❌ 不要在 `extraResources` 里漏 `filter: ["!secrets.yaml"]` —— 会把开发机的真实密钥打进 DEB。
 - ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `bash build.sh -b`。
 - ❌ 不要硬编码用户路径如 `/home/xxx/...` —— 永远走 `getent passwd "$SUDO_USER" | cut -d: -f6`。
 - ❌ 不要把端口 8000 / 5173 硬编码进 backend / frontend / electron 代码或脚本 —— 永远从 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 读，三端各自的入口已经搭好（path_manager / dev.sh / electron main.js），新增模块复用即可。
@@ -354,7 +356,7 @@ class FeishuBitableManager:
 | `frontend/src/App.vue` 的 `<DashboardHome />` import & 使用 | 替换首页时同步修改 |
 | `frontend/src/components/RefreshButton.vue` | 视需要保留 |
 | `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
-| `frontend/src/components/FileManager.vue` | **保留**（结构化配置 UI + 原始 YAML 高级编辑） |
+| `frontend/src/components/FileManager.vue` | **保留**（配置中心：应用配置 / 密钥管理 / 原始 YAML 高级编辑） |
 [% if enable_sudo %]| `frontend/src/components/ConfigSetup.vue` | **保留**（sudo 模式下的首启密码配置 UI） |
 [% endif %]
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。

@@ -190,14 +190,14 @@ class TemplateEngine:
         configs_dir.mkdir(exist_ok=True)
 
         self._render_template(
-            "configs/global_config.yaml.example.j2",
-            configs_dir / "global_config.yaml.example",
-            context,
+            "configs/global_config.yaml.j2", configs_dir / "global_config.yaml", context
         )
-
+        self._render_template(
+            "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
+        )
         if context["enable_sudo"] and context["sudo_password"]:
             self._render_template(
-                "configs/global_config.yaml.j2", configs_dir / "global_config.yaml", context
+                "configs/secrets.yaml.j2", configs_dir / "secrets.yaml", context
             )
 
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):

@@ -97,8 +97,8 @@ xb version
 # 启用 sudo 免密配置
 xb init myapp --sudoers
 
-# 密码存储在 configs/global_config.yaml
-# 建议设置文件权限: chmod 600 configs/global_config.yaml
+# 密码存储在 configs/secrets.yaml
+# 建议设置文件权限: chmod 600 configs/secrets.yaml
 ```
 
 ## 技术栈

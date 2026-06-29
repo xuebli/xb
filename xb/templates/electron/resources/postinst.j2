@@ -163,10 +163,11 @@ if [ -n "$REAL_USER" ] && [ -d "$REAL_HOME" ]; then
 [% if enable_sudo %]
 
     # ----------------------------------------------------------------------------
-    # 11. 收紧 global_config.yaml 权限 (含 sudo 密码明文，仅用户本人可读写)
     # ----------------------------------------------------------------------------
-    if [ -f "$USER_CONFIG_DIR/global_config.yaml" ]; then
-        sudo -u "$REAL_USER" chmod 600 "$USER_CONFIG_DIR/global_config.yaml" || true
+    # 11. 收紧 secrets.yaml 权限 (含 sudo 密码明文，仅用户本人可读写)
+    # ----------------------------------------------------------------------------
+    if [ -f "$USER_CONFIG_DIR/secrets.yaml" ]; then
+        sudo -u "$REAL_USER" chmod 600 "$USER_CONFIG_DIR/secrets.yaml" || true
     fi
 [% endif %]
 
