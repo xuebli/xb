@@ -47,13 +47,12 @@ const openSettings = () => {
           <span v-else>[[ package_name_capitalized | first ]]</span>
         </div>
         <div>
-          <h1>[[ package_name_capitalized]]</h1>
+          <h1>[[ package_name_capitalized]] <GitVersionBadge /></h1>
           <p>AI Native · FastAPI · Electron</p>
         </div>
       </div>
 
       <div class="toolbar">
-        <GitVersionBadge />
         <RefreshButton @refresh="handleRefresh" />
         <button class="icon-button" @click="openSettings" title="配置中心" aria-label="配置中心">
           <span>⚙</span>

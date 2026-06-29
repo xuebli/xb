@@ -27,8 +27,8 @@ export default defineConfig({
     __GIT_COMMITS__: JSON.stringify((() => {
       try {
         const output = execSync(
-          'git log -10 --format="%H%n%an%n%ai%n%B%n====END===="',
-          { cwd: resolve(__dirname, '..'), encoding: 'utf-8', maxBuffer: 1024 * 1024 }
+          'git log --format="%H%n%an%n%ai%n%B%n====END===="',
+          { cwd: resolve(__dirname, '..'), encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
         ).trim()
         
         return output.split('====END====').filter(Boolean).map(block => {
