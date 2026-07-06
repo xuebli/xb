@@ -31,6 +31,7 @@ class TemplateEngine:
         package_name: str,
         enable_sudo: bool = False,
         sudo_password: str = "",
+        icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -40,6 +41,7 @@ class TemplateEngine:
             "package_name_capitalized": package_name.capitalize(),
             "enable_sudo": enable_sudo,
             "sudo_password": sudo_password,
+            "icon_path": icon_path,
         }
 
         self._create_backend(target_dir, context)
@@ -67,6 +69,9 @@ class TemplateEngine:
         )
         self._render_template(
             "backend/api/config.py.j2", backend_dir / "api" / "config.py", context
+        )
+        self._render_template(
+            "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
         )
 
         self._render_template(
@@ -106,12 +111,16 @@ class TemplateEngine:
         )
         self._render_template("frontend/index.html.j2", frontend_dir / "index.html", context)
 
+        public_dir = frontend_dir / "public"
+        public_dir.mkdir(exist_ok=True)
+        self._copy_app_icon(public_dir / "app-icon.png", context)
+
         self._render_template("frontend/src/main.js.j2", src_dir / "main.js", context)
         self._render_template("frontend/src/App.vue.j2", src_dir / "App.vue", context)
         self._render_template("frontend/src/style.css.j2", src_dir / "style.css", context)
 
         self._render_template(
-            "frontend/src/components/HelloWorld.vue.j2", components_dir / "HelloWorld.vue", context
+            "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
         )
         self._render_template(
             "frontend/src/components/RefreshButton.vue.j2",
@@ -123,11 +132,12 @@ class TemplateEngine:
             components_dir / "GitVersionBadge.vue",
             context,
         )
-        self._render_template(
-            "frontend/src/components/ConfigSetup.vue.j2",
-            components_dir / "ConfigSetup.vue",
-            context,
-        )
+        if context["enable_sudo"]:
+            self._render_template(
+                "frontend/src/components/ConfigSetup.vue.j2",
+                components_dir / "ConfigSetup.vue",
+                context,
+            )
         self._render_template(
             "frontend/src/components/FileManager.vue.j2",
             components_dir / "FileManager.vue",
@@ -138,29 +148,66 @@ class TemplateEngine:
         electron_dir = target_dir / "electron"
         electron_dir.mkdir(exist_ok=True)
 
-        build_dir = electron_dir / "build"
-        build_dir.mkdir(exist_ok=True)
+        resources_dir = electron_dir / "resources"
+        resources_dir.mkdir(exist_ok=True)
 
         self._render_template("electron/main.js.j2", electron_dir / "main.js", context)
+        self._render_template("electron/launcher.js.j2", electron_dir / "launcher.js", context)
+        self._render_template(
+            "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context
+        )
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
 
-        templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "build"
-        if (templates_dir / "icon.png").exists():
-            shutil.copy(templates_dir / "icon.png", build_dir / "icon.png")
+        self._render_template(
+            "electron/resources/postinst.j2", resources_dir / "postinst", context
+        )
+        (resources_dir / "postinst").chmod(0o755)
+
+        self._render_template(
+            "electron/resources/postrm.j2", resources_dir / "postrm", context
+        )
+        (resources_dir / "postrm").chmod(0o755)
+
+        self._copy_app_icon(resources_dir / "icon.png", context)
+
+
+    def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
+        icon_path = context.get("icon_path")
+        if icon_path:
+            icon_path = Path(icon_path).expanduser().resolve()
+            if not icon_path.exists():
+                raise FileNotFoundError(f"图标文件不存在: {icon_path}")
+            self._resize_icon(icon_path, output_path)
+            return
+
+        templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "resources"
+        default_icon = templates_dir / "icon.png"
+        if default_icon.exists():
+            shutil.copy(default_icon, output_path)
+
+    @staticmethod
+    def _resize_icon(src: Path, dst: Path, size: int = 256):
+        """将任意图片转换为 size x size 的 PNG 图标。"""
+        from PIL import Image
+
+        with Image.open(src) as img:
+            img = img.convert("RGBA")
+            img = img.resize((size, size), Image.LANCZOS)
+            img.save(dst, "PNG")
 
     def _create_configs(self, target_dir: Path, context: Dict[str, Any]):
         configs_dir = target_dir / "configs"
         configs_dir.mkdir(exist_ok=True)
 
         self._render_template(
-            "configs/global_config.yaml.example.j2",
-            configs_dir / "global_config.yaml.example",
-            context,
+            "configs/global_config.yaml.j2", configs_dir / "global_config.yaml", context
         )
-
+        self._render_template(
+            "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
+        )
         if context["enable_sudo"] and context["sudo_password"]:
             self._render_template(
-                "configs/global_config.yaml.j2", configs_dir / "global_config.yaml", context
+                "configs/secrets.yaml.j2", configs_dir / "secrets.yaml", context
             )
 
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):
@@ -207,6 +254,8 @@ class TemplateEngine:
         self._render_template("root/build.sh.j2", target_dir / "build.sh", context)
         self._render_template("root/README.md.j2", target_dir / "README.md", context)
         self._render_template("root/.gitignore.j2", target_dir / ".gitignore", context)
+        # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
+        self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
         (target_dir / "dev.sh").chmod(0o755)
         (target_dir / "build.sh").chmod(0o755)

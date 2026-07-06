@@ -1,0 +1,153 @@
+const { app } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const yaml = require('js-yaml');
+const {
+    portOwners,
+    setupPortDiagnosticsHandlers,
+    showPortConflictWindow
+} = require('./port_diagnostics');
+
+app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
+app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
+
+let diagnosticsWindow = null;
+let mainLoaded = false;
+
+function resolveConfigDir() {
+    if (!app.isPackaged) {
+        return path.join(__dirname, '..', 'configs');
+    }
+    return path.join(os.homedir(), '.config', '[[ package_name]]');
+}
+
+function configPath() {
+    return path.join(resolveConfigDir(), 'global_config.yaml');
+}
+
+function readConfig() {
+    const file = configPath();
+    if (!fs.existsSync(file)) return {};
+    return yaml.load(fs.readFileSync(file, 'utf-8')) || {};
+}
+
+function writeConfig(config) {
+    const file = configPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, yaml.dump(config, { lineWidth: 120, noRefs: true }), 'utf-8');
+}
+
+function readPort(key, defaultPort) {
+    try {
+        const cfg = readConfig();
+        const port = Number(cfg && cfg.ports && cfg.ports[key]);
+        return Number.isInteger(port) && port > 0 && port < 65536 ? port : defaultPort;
+    } catch (e) {
+        return defaultPort;
+    }
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isPidRunning(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function waitForBackendPortFree(timeoutMs = 2500) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const backendPort = readPort('backend', 8000);
+        const owners = portOwners(backendPort).filter((owner) => Number(owner.pid) !== process.pid);
+        if (owners.length === 0) return true;
+        await sleep(150);
+    }
+    return false;
+}
+
+async function killProcesses(pids) {
+    const values = (Array.isArray(pids) ? pids : [])
+        .map((rawPid) => Number(rawPid))
+        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+
+    for (const pid of values) {
+        try {
+            process.kill(pid, 'SIGTERM');
+        } catch (_) {
+            // Process may already be gone.
+        }
+    }
+
+    if (await waitForBackendPortFree()) {
+        return { ok: true, message: '占用进程已停止，正在重新启动应用...' };
+    }
+
+    for (const pid of values) {
+        if (!isPidRunning(pid)) continue;
+        try {
+            process.kill(pid, 'SIGKILL');
+        } catch (_) {
+            // Process may already be gone.
+        }
+    }
+
+    if (await waitForBackendPortFree(1500)) {
+        return { ok: true, message: '占用进程已强制结束，正在重新启动应用...' };
+    }
+
+    return { ok: false, message: '端口仍被占用，请检查进程权限或手动关闭占用应用。' };
+}
+
+function saveBackendPort(port) {
+    const value = Number(port);
+    if (!Number.isInteger(value) || value < 1 || value > 65535) {
+        return { ok: false, message: '端口号必须是 1-65535 的整数' };
+    }
+    const cfg = readConfig();
+    cfg.ports = cfg.ports && typeof cfg.ports === 'object' ? cfg.ports : {};
+    cfg.ports.backend = value;
+    writeConfig(cfg);
+    return { ok: true, message: `已保存后端端口 ${value}，正在重新检查...` };
+}
+
+function loadMain() {
+    if (mainLoaded) return { ok: true, message: '应用已经在重启中' };
+    mainLoaded = true;
+    require('./main');
+    if (diagnosticsWindow && !diagnosticsWindow.isDestroyed()) {
+        diagnosticsWindow.webContents.send('port-diagnostics:launching');
+        setTimeout(() => {
+            if (diagnosticsWindow && !diagnosticsWindow.isDestroyed()) {
+                diagnosticsWindow.close();
+            }
+        }, 1800);
+    }
+    return { ok: true, message: '端口可用，正在直接重启应用...' };
+}
+
+function checkAndLaunch() {
+    const backendPort = readPort('backend', 8000);
+    const owners = portOwners(backendPort).filter((owner) => Number(owner.pid) !== process.pid);
+    if (owners.length > 0) {
+        diagnosticsWindow = showPortConflictWindow(backendPort, owners, configPath());
+        return { ok: false, message: `后端端口 ${backendPort} 仍被占用` };
+    }
+    return loadMain();
+}
+
+setupPortDiagnosticsHandlers({
+    killProcesses,
+    saveBackendPort,
+    retryLaunch: checkAndLaunch
+});
+
+app.whenReady().then(() => {
+    checkAndLaunch();
+});

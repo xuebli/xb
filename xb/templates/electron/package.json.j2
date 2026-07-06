@@ -2,7 +2,7 @@
   "name": "[[ package_name]]",
   "version": "1.0.0",
   "description": "[[ package_name_capitalized]] App",
-  "main": "main.js",
+  "main": "launcher.js",
   "author": "[[ package_name]]@example.com",
   "homepage": "https://example.com",
   "scripts": {
@@ -13,16 +13,20 @@
     "appId": "com.[[ package_name]].app",
     "productName": "[[ package_name_capitalized]]",
     "files": [
+      "launcher.js",
       "main.js",
-      "build/icon.png"
+      "port_diagnostics.js",
+      "resources/icon.png"
     ],
     "linux": {
       "target": "deb",
-      "icon": "build/icon.png",
+      "icon": "resources/icon.png",
       "category": "Utility"
     },
     "deb": {
-      "maintainer": "[[ package_name]]@example.com"
+      "maintainer": "[[ package_name]]@example.com",
+      "afterInstall": "resources/postinst",
+      "afterRemove": "resources/postrm"
     },
     "extraResources": [
       {
@@ -37,7 +41,7 @@
         "from": "../configs",
         "to": "configs",
         "filter": [
-          "!global_config.yaml"
+          "!secrets.yaml"
         ]
       },
       {
@@ -48,6 +52,9 @@
         ]
       }
     ]
+  },
+  "dependencies": {
+    "js-yaml": "4.1.0"
   },
   "devDependencies": {
     "electron": "39.2.4",

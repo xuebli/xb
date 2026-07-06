@@ -1,0 +1,187 @@
+const { BrowserWindow, ipcMain } = require('electron');
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+
+function pidsForPort(port) {
+    try {
+        const output = execFileSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf-8' });
+        return output.split(/\s+/).filter(Boolean);
+    } catch (e) {
+        try {
+            const output = execFileSync('fuser', [`${port}/tcp`], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+            return output.split(/\s+/).filter(Boolean);
+        } catch (_) {
+            return [];
+        }
+    }
+}
+
+function processCwd(pid) {
+    try {
+        return fs.readlinkSync(`/proc/${pid}/cwd`);
+    } catch (e) {
+        return '未知';
+    }
+}
+
+function processCommand(pid) {
+    try {
+        return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf-8').replace(/\0/g, ' ').trim() || '未知';
+    } catch (e) {
+        try {
+            return execFileSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf-8' }).trim() || '未知';
+        } catch (_) {
+            return '未知';
+        }
+    }
+}
+
+function processName(pid) {
+    try {
+        return execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf-8' }).trim() || '未知';
+    } catch (e) {
+        return '未知';
+    }
+}
+
+function portOwners(port) {
+    return pidsForPort(port).map((pid) => ({
+        pid,
+        name: processName(pid),
+        cwd: processCwd(pid),
+        command: processCommand(pid)
+    }));
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function setupPortDiagnosticsHandlers(actions) {
+    ipcMain.handle('port-diagnostics:kill', async (_event, pids) => {
+        return actions.killProcesses(pids);
+    });
+    ipcMain.handle('port-diagnostics:save-port', async (_event, port) => {
+        return actions.saveBackendPort(port);
+    });
+    ipcMain.handle('port-diagnostics:retry', async () => {
+        return actions.retryLaunch();
+    });
+}
+
+function showPortConflictWindow(port, owners, configPath) {
+    const win = new BrowserWindow({
+        width: 980,
+        height: 720,
+        title: '端口占用诊断',
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+    const rows = owners.map((owner) => `
+        <section class="owner">
+            <div><span>PID</span><strong>${escapeHtml(owner.pid)}</strong></div>
+            <div><span>应用</span><strong>${escapeHtml(owner.name)}</strong></div>
+            <div><span>目录</span><code>${escapeHtml(owner.cwd)}</code></div>
+            <div><span>命令</span><code>${escapeHtml(owner.command)}</code></div>
+        </section>
+    `).join('');
+    const pidList = JSON.stringify(owners.map((owner) => owner.pid));
+
+    const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>端口占用诊断</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f6f8fb; }
+main { max-width: 900px; margin: 0 auto; padding: 36px 28px; }
+h1 { margin: 0 0 10px; font-size: 28px; color: #111827; }
+p { margin: 0 0 20px; color: #5b6474; }
+.notice { padding: 14px 16px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #991b1b; }
+.owner { margin-top: 14px; padding: 16px; border: 1px solid #d8e0eb; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08); }
+.owner div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px; padding: 7px 0; border-bottom: 1px solid #edf1f6; }
+.owner div:last-child { border-bottom: 0; }
+span { color: #697386; }
+strong { color: #111827; }
+code { min-width: 0; padding: 3px 6px; border-radius: 6px; background: #eef2f7; color: #172033; overflow-wrap: anywhere; }
+.actions { margin-top: 20px; display: grid; gap: 14px; }
+.action-card { padding: 16px; border: 1px solid #d8e0eb; border-radius: 8px; background: #fff; }
+.action-card h2 { margin: 0 0 8px; font-size: 16px; color: #111827; }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+button { height: 36px; padding: 0 14px; border: 0; border-radius: 8px; background: #111827; color: #fff; font-weight: 700; cursor: pointer; }
+button.secondary { background: #2563eb; }
+button.danger { background: #dc2626; }
+input { height: 36px; width: 140px; padding: 0 10px; border: 1px solid #cfd8e3; border-radius: 8px; }
+#message { margin-top: 14px; min-height: 22px; color: #1e3a8a; }
+</style>
+</head>
+<body>
+<main>
+    <h1>后端端口 ${escapeHtml(port)} 已被占用</h1>
+    <p>DEB 安装后的应用无法启动后端服务。可以直接结束占用进程，或修改后端端口后继续启动。</p>
+    <div class="notice">检测到以下进程正在占用端口 ${escapeHtml(port)}。</div>
+    ${rows}
+    <section class="actions">
+        <div class="action-card">
+            <h2>结束占用进程</h2>
+            <p>只在确认这些进程属于本应用旧实例时使用。</p>
+            <button class="danger" id="killBtn">结束占用进程并重试</button>
+        </div>
+        <div class="action-card">
+            <h2>修改后端端口</h2>
+            <p>配置文件：<code>${escapeHtml(configPath)}</code></p>
+            <div class="action-row">
+                <input id="portInput" type="number" min="1" max="65535" value="${escapeHtml(port)}" />
+                <button class="secondary" id="savePortBtn">保存端口并重试</button>
+                <button id="retryBtn">重新检查</button>
+            </div>
+        </div>
+    </section>
+    <div id="message"></div>
+</main>
+<script>
+const { ipcRenderer } = require('electron');
+const pids = ${pidList};
+const message = document.getElementById('message');
+function setMessage(text) { message.textContent = text || ''; }
+async function run(action) {
+  try {
+    setMessage('处理中...');
+    const result = await action();
+    setMessage(result && result.message ? result.message : '操作完成');
+  } catch (err) {
+    setMessage(err && err.message ? err.message : '操作失败');
+  }
+}
+document.getElementById('killBtn').addEventListener('click', () => run(async () => {
+  const killed = await ipcRenderer.invoke('port-diagnostics:kill', pids);
+  if (!killed.ok) return killed;
+  return ipcRenderer.invoke('port-diagnostics:retry');
+}));
+document.getElementById('savePortBtn').addEventListener('click', () => run(async () => {
+  const port = Number(document.getElementById('portInput').value);
+  const saved = await ipcRenderer.invoke('port-diagnostics:save-port', port);
+  if (!saved.ok) return saved;
+  return ipcRenderer.invoke('port-diagnostics:retry');
+}));
+document.getElementById('retryBtn').addEventListener('click', () => run(() => ipcRenderer.invoke('port-diagnostics:retry')));
+ipcRenderer.on('port-diagnostics:launching', () => {
+  setMessage('端口已释放，正在启动应用窗口...');
+});
+</script>
+</body>
+</html>`;
+    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    return win;
+}
+
+module.exports = { portOwners, setupPortDiagnosticsHandlers, showPortConflictWindow };

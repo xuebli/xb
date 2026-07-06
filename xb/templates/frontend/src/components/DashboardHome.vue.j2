@@ -1,0 +1,40 @@
+<script setup>
+const emit = defineEmits(['open-settings'])
+
+const stackItems = [
+  { name: 'FastAPI', detail: '后端 API 服务与静态资源入口' },
+  { name: 'Vue 3 + Vite', detail: '前端界面与开发热更新' },
+  { name: 'Electron', detail: '桌面窗口、打包和本机集成' },
+  { name: 'uv', detail: 'Python 依赖与虚拟环境管理' }
+]
+
+</script>
+
+<template>
+  <section class="intro-shell">
+    <div class="intro-copy">
+      <div class="eyebrow">[[ package_name_capitalized]]</div>
+      <h2>桌面应用项目骨架</h2>
+      <p>
+        这是一个基于 FastAPI、Vue 3、Vite 和 Electron 的桌面应用模板，
+        已包含后端服务、前端界面、配置文件、开发脚本和打包流程。
+      </p>
+      <div class="intro-actions">
+        <button class="primary-action" @click="emit('open-settings')">打开配置中心</button>
+      </div>
+    </div>
+
+    <div class="intro-panel">
+      <div class="panel-heading">
+        <span class="panel-kicker">Stack</span>
+        <h3>技术栈</h3>
+      </div>
+      <div class="stack-list">
+        <div v-for="item in stackItems" :key="item.name" class="stack-row">
+          <strong>{{ item.name }}</strong>
+          <span>{{ item.detail }}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>

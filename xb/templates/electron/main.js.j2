@@ -1,13 +1,64 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const yaml = require('js-yaml');
 
 app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
 app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
 
+// 复刻 backend/managers/path_manager.py 的配置目录选择逻辑：
+//   - 开发态(electron 跑源码)：<repo>/configs
+//   - 项目目录跑打包二进制(<repo>/dist/server)：<repo>/configs
+//   - DEB 安装态：~/.config/<package_name>
+function resolveConfigDir() {
+    const appName = '[[ package_name]]';
+    if (!app.isPackaged) {
+        return path.join(__dirname, '..', 'configs');
+    }
+    // app.isPackaged 时 process.resourcesPath = .../resources
+    // 形式 3：<repo>/dist/server，对应 electron 是 <repo> 下直接跑（这条分支 isPackaged 为 false，落到上面）
+    // 这里只处理 DEB 安装态
+    return path.join(os.homedir(), '.config', appName);
+}
+
+// 端口读取，与 path_manager.get_config_value 行为对齐：缺失/异常 fallback 默认值
+function readPort(key, defaultPort) {
+    try {
+        const configPath = path.join(resolveConfigDir(), 'global_config.yaml');
+        if (!fs.existsSync(configPath)) return defaultPort;
+        const cfg = yaml.load(fs.readFileSync(configPath, 'utf-8')) || {};
+        const val = cfg && cfg.ports && cfg.ports[key];
+        const port = Number(val);
+        return Number.isInteger(port) && port > 0 && port < 65536 ? port : defaultPort;
+    } catch (e) {
+        console.warn('[Ports] 读取 global_config.yaml 失败，回退默认端口:', e.message);
+        return defaultPort;
+    }
+}
+
+const BACKEND_PORT = readPort('backend', 8000);
+
 let win;
 let backend;
+let zoomFactor = 1;
+
+function clampZoom(value) {
+    return Math.min(3, Math.max(0.3, value));
+}
+
+function applyZoom(delta) {
+    if (!win) return;
+    zoomFactor = clampZoom(Number((zoomFactor + delta).toFixed(2)));
+    win.webContents.setZoomFactor(zoomFactor);
+}
+
+function resetZoom() {
+    if (!win) return;
+    zoomFactor = 1;
+    win.webContents.setZoomFactor(zoomFactor);
+}
 
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
@@ -28,7 +79,57 @@ app.whenReady().then(() => {
                 height: 800
             });
 
-            win.loadURL('http://localhost:8000');
+            // 自定义常用桌面快捷键：隐藏菜单后，显式保留调试、全屏与缩放能力。
+            win.webContents.on('before-input-event', (event, input) => {
+                if (input.type !== 'keyDown' || !input.key) return;
+
+                const key = input.key.toLowerCase();
+                const ctrlOrCmd = input.control || input.meta;
+                const isF12 = input.key === 'F12';
+                const isCtrlShiftI = ctrlOrCmd && input.shift && key === 'i';
+                const isF11 = input.key === 'F11';
+
+                if (isF12 || isCtrlShiftI) {
+                    win.webContents.toggleDevTools();
+                    event.preventDefault();
+                    return;
+                }
+
+                if (isF11) {
+                    win.setFullScreen(!win.isFullScreen());
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && (input.key === '+' || input.key === '=')) {
+                    applyZoom(0.1);
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && input.key === '-') {
+                    applyZoom(-0.1);
+                    event.preventDefault();
+                    return;
+                }
+
+                if (ctrlOrCmd && input.key === '0') {
+                    resetZoom();
+                    event.preventDefault();
+                }
+            });
+
+            win.webContents.on('did-finish-load', () => {
+                win.webContents.setZoomFactor(zoomFactor);
+            });
+
+            // Ctrl/Cmd + 鼠标滚轮触发 Chromium zoom-changed，这里接管缩放幅度。
+            win.webContents.on('zoom-changed', (event, zoomDirection) => {
+                event.preventDefault();
+                applyZoom(zoomDirection === 'in' ? 0.1 : -0.1);
+            });
+
+            win.loadURL(`http://localhost:${BACKEND_PORT}`);
         }
     });
 });

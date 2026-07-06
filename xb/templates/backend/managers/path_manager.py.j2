@@ -1,4 +1,5 @@
 import pathlib
+import shutil
 import sys
 import yaml
 from pathlib import Path
@@ -10,28 +11,53 @@ class PathManager:
         self.is_packaged = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
         if self.is_packaged:
-            self.config_dir = pathlib.Path.home() / ".config" / app_name
-            self.data_dir = pathlib.Path.home() / ".local" / "share" / app_name
-            self.logs_dir = self.data_dir / "logs"
-            self.reports_dir = self.data_dir / "reports"
+            # PyInstaller 二进制有两种部署形态：
+            #   形式 2  /opt/Logging_tool/resources/server     deb 安装，资源/数据走 /opt + ~
+            #   形式 3  <repo>/dist/server                      项目目录 dev，资源/数据全在 repo
+            # 通过 sys.executable 实际路径判断；形式 3 完全独立于用户家目录，
+            # 让形式 3 的运行时数据（configs/datas/logs）不会污染装好的 deb 用户配置
+            exe_path = Path(sys.executable).resolve()
+            in_project_dist = exe_path.parent.name == "dist"
 
-            install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
-            self.scripts_dir = install_root / "scripts"
-            self.frontend_dir = install_root / "frontend"
+            if in_project_dist:
+                project_root = exe_path.parent.parent
+                self.config_dir = project_root / "configs"
+                self.data_dir = project_root / "datas"
+                self.logs_dir = self.data_dir / "logs"
+                self.reports_dir = self.data_dir / "reports"
+                self.scripts_dir = project_root / "scripts"
+                self.frontend_dir = project_root / "frontend" / "dist"
+                self.bundled_configs_dir = project_root / "configs"
+            else:
+                self.config_dir = pathlib.Path.home() / ".config" / app_name
+                self.data_dir = pathlib.Path.home() / ".local" / "share" / app_name
+                self.logs_dir = self.data_dir / "logs"
+                self.reports_dir = self.data_dir / "reports"
+                install_root = Path("/opt/[[ package_name_capitalized]]/resources/")
+                self.scripts_dir = install_root / "scripts"
+                self.frontend_dir = install_root / "frontend"
+                self.bundled_configs_dir = install_root / "configs"
 
         else:
-            self.data_dir = Path(__file__).parent.parent.parent.resolve()
-            self.config_dir = self.data_dir / "configs"
-            self.logs_dir = self.data_dir / "datas" / "logs"
-            self.reports_dir = self.data_dir / "datas" / "reports"
-            self.scripts_dir = self.data_dir / "scripts"
+            project_root = Path(__file__).parent.parent.parent.resolve()
+            self.config_dir = project_root / "configs"
+            self.data_dir = project_root / "datas"
+            self.logs_dir = self.data_dir / "logs"
+            self.reports_dir = self.data_dir / "reports"
+            self.scripts_dir = project_root / "scripts"
             self.frontend_dir = None
+            self.bundled_configs_dir = None
+
+        self._config_cache: dict[str, dict] = {}
 
     def get_config_path(self, filename: str) -> pathlib.Path:
         return self.config_dir / filename
 
     def get_config_dir(self) -> pathlib.Path:
         return self.config_dir
+
+    def get_data_path(self, filename: str) -> pathlib.Path:
+        return self.data_dir / filename
 
     def get_log_path(self, filename: str) -> pathlib.Path:
         return self.logs_dir / filename
@@ -46,28 +72,25 @@ class PathManager:
         return self.frontend_dir
 
     def load_config(self, config_file: str = "global_config.yaml") -> dict:
-        if not hasattr(self, "_config_cache"):
-            self._config_cache = None
-
-        if self._config_cache is not None:
-            return self._config_cache
+        if config_file in self._config_cache:
+            return self._config_cache[config_file]
 
         config_path = self.get_config_path(config_file)
 
         try:
             if config_path.exists():
                 with open(config_path, "r", encoding="utf-8") as f:
-                    self._config_cache = yaml.safe_load(f) or {}
+                    self._config_cache[config_file] = yaml.safe_load(f) or {}
             else:
-                self._config_cache = {}
-            return self._config_cache
+                self._config_cache[config_file] = {}
+            return self._config_cache[config_file]
         except Exception as e:
-            print(f"加载配置失败: {e}")
-            self._config_cache = {}
-            return self._config_cache
+            print(f"加载配置失败 ({config_file}): {e}")
+            self._config_cache[config_file] = {}
+            return self._config_cache[config_file]
 
-    def get_config_value(self, key: str, default=None) -> str:
-        config = self.load_config()
+    def get_config_value(self, key: str, default=None, config_file: str = "global_config.yaml"):
+        config = self.load_config(config_file)
 
         for k in key.split("."):
             if isinstance(config, dict):
@@ -79,8 +102,77 @@ class PathManager:
 
         return config
 
-    def reload_config(self):
-        self._config_cache = None
+    def reload_config(self, config_file: str | None = None) -> None:
+        if config_file is None:
+            self._config_cache.clear()
+        else:
+            self._config_cache.pop(config_file, None)
+
+    @staticmethod
+    def validate_yaml(content: str) -> tuple[bool, str | None]:
+        """校验字符串是否为合法 YAML（仅语法，不返回解析结果）。
+
+        用于消除业务侧重复的 try/except yaml.YAMLError 模板代码。
+        如需读取配置取值，请使用 load_config / get_config_value（带缓存）。
+
+        Returns:
+            (True, None)  合法
+            (False, msg)  非法，msg 为 yaml.YAMLError 描述
+        """
+        try:
+            yaml.safe_load(content)
+            return True, None
+        except yaml.YAMLError as e:
+            return False, str(e)
+
+    def init_user_configs(self) -> list:
+        """
+        首次启动时把打包内置的 configs 目录递归拷贝到用户家目录。
+
+        - 仅在打包态生效（开发态直接读项目目录的 configs/）
+        - 已存在的目标文件不覆盖（保留用户改动）
+        - 文件名以 .example 结尾的，拷贝时去掉该后缀
+
+        返回本次新拷贝的文件相对路径列表。
+        """
+        if not self.is_packaged:
+            return []
+
+        src_root = self.bundled_configs_dir
+        if src_root is None or not src_root.exists():
+            return []
+
+        dst_root = self.config_dir
+
+        # 项目目录跑 PyInstaller 二进制(形式 3)时,bundled 与用户 config 是同一个目录,
+        # 不需要也不应该拷贝(否则 .example 会被去后缀拷到自己旁边)。
+        try:
+            if src_root.resolve() == dst_root.resolve():
+                return []
+        except OSError:
+            pass
+
+        dst_root.mkdir(parents=True, exist_ok=True)
+
+        copied = []
+        for src_path in src_root.rglob("*"):
+            if not src_path.is_file():
+                continue
+
+            rel = src_path.relative_to(src_root)
+            dst_name = rel.name
+            if dst_name.endswith(".example"):
+                dst_name = dst_name[: -len(".example")]
+            dst_path = dst_root / rel.parent / dst_name
+
+            if dst_path.exists():
+                continue
+
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+            copied.append(str(dst_path.relative_to(dst_root)))
+
+        return copied
 
 
 path_manager = PathManager("[[ package_name]]")

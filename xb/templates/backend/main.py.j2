@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from managers import get_logger[% if enable_sudo %], sudoers_manager[% endif %], path_manager
 from api.config import router as config_router
+from api.ports import router as ports_router
 
 logger = get_logger(__name__)
 _cleanup_done = False
@@ -30,6 +31,14 @@ atexit.register(cleanup)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.opt(raw=True).info("=" * 80 + "\n")
+
+    try:
+        copied = path_manager.init_user_configs()
+        if copied:
+            logger.info(f"已初始化用户配置文件: {copied}")
+    except Exception as e:
+        logger.warning(f"初始化用户配置文件失败: {e}")
+
     logger.info("应用启动完成")
 
     yield
@@ -55,6 +64,7 @@ if path_manager.is_packaged:
 
 
 app.include_router(config_router, prefix="/api")
+app.include_router(ports_router, prefix="/api")
 
 
 @app.get("/api")
@@ -70,9 +80,10 @@ async def health():
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
     if not path_manager.is_packaged:
+        frontend_port = path_manager.get_config_value("ports.frontend", default=5173)
         return {
             "error": "开发模式下前端通过 Vite 服务器访问",
-            "frontend_url": "http://localhost:5173",
+            "frontend_url": f"http://localhost:{frontend_port}",
         }
 
     frontend_path = str(path_manager.get_frontend_path())
@@ -89,4 +100,5 @@ async def serve_frontend(full_path: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None)
+    backend_port = path_manager.get_config_value("ports.backend", default=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(backend_port), log_config=None)

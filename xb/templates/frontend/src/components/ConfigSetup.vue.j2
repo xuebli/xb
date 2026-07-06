@@ -1,40 +1,54 @@
 <template>
   <div v-if="showConfig" class="config-overlay">
     <div class="config-dialog">
-      <h2>⚙️ 密码配置</h2>
-      <p class="hint">{{ configMessage }}</p>
-      
-      <div class="form-group">
-        <label for="password">Sudo 密码：</label>
-        <input 
-          type="password" 
-          id="password" 
-          v-model="password" 
-          placeholder="输入你的 sudo 密码"
-          @keyup.enter="saveConfig"
-          :disabled="saving"
-        />
-      </div>
-      
-      <div v-if="error" class="error">{{ error }}</div>
-      
-      <div class="actions">
-        <button @click="saveConfig" :disabled="!password || saving">
-          {{ saving ? '保存中...' : '保存并启动' }}
-        </button>
-      </div>
-      
-      <div class="note">
-        <p><strong>说明：</strong></p>
-        <ul>
-          <li>此密码用于创建 sudo 免密配置文件</li>
-          <li>仅保存在本地配置文件中</li>
-          <li v-if="configPath">配置文件位置: <code>{{ configPath }}</code></li>
-          <li v-if="isPackaged !== null">
-            当前模式: {{ isPackaged ? '生产环境' : '开发环境' }}
-          </li>
-        </ul>
-      </div>
+      <aside class="config-sidebar">
+        <div class="dialog-brand">⚒</div>
+        <div class="sidebar-item active">🔐 Sudo 密码</div>
+        <div class="sidebar-item muted">🌐 服务端口</div>
+        <div class="sidebar-item muted">📄 YAML 配置</div>
+      </aside>
+
+      <section class="dialog-main">
+        <header class="dialog-header">
+          <div>
+            <h2>配置中心</h2>
+            <p>{{ configMessage }}</p>
+          </div>
+        </header>
+
+        <div class="form-card">
+          <div class="section-title">
+            <h3>🔐 Sudo 密码</h3>
+            <span>保存后立即配置免密权限</span>
+          </div>
+
+          <label class="field-row" for="password">
+            <span>Sudo 密码 <b>*</b></span>
+            <input
+              type="password"
+              id="password"
+              v-model="password"
+              placeholder="输入你的 sudo 密码"
+              @keyup.enter="saveConfig"
+              :disabled="saving"
+            />
+          </label>
+
+          <div v-if="error" class="error">{{ error }}</div>
+
+          <div class="meta-list">
+            <div v-if="configPath"><span>配置文件</span><code>{{ configPath }}</code></div>
+            <div v-if="isPackaged !== null"><span>当前模式</span><strong>{{ isPackaged ? '生产环境' : '开发环境' }}</strong></div>
+          </div>
+        </div>
+
+        <footer class="dialog-footer">
+          <span>✓ 配置仅保存在本机</span>
+          <button @click="saveConfig" :disabled="!password || saving">
+            {{ saving ? '保存中...' : '保存并启动' }}
+          </button>
+        </footer>
+      </section>
     </div>
   </div>
 </template>
@@ -46,15 +60,15 @@ const showConfig = ref(false)
 const password = ref('')
 const saving = ref(false)
 const error = ref('')
-const configMessage = ref('检测到配置文件需要设置，请输入你的 sudo 密码：')
+const configMessage = ref('检测到配置文件需要设置，请输入你的 sudo 密码')
 const configPath = ref('')
 const isPackaged = ref(null)
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const checkConfig = async () => {
   try {
-    const response = await fetch('http://localhost:8000/api/config/check')
+    const response = await fetch(`${API_BASE}/api/config/check`)
     const result = await response.json()
-    console.log('[ConfigSetup] 响应体完整内容:', JSON.stringify(result, null, 2))
     configPath.value = result.config_path || ''
     isPackaged.value = result.is_packaged
 
@@ -74,23 +88,18 @@ const saveConfig = async () => {
     error.value = '密码不能为空'
     return
   }
-  
+
   saving.value = true
   error.value = ''
-  
+
   try {
-    const response = await fetch('http://localhost:8000/api/config/save', {
+    const response = await fetch(`${API_BASE}/api/config/save`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sudo_password: password.value
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sudo_password: password.value })
     })
-    
     const result = await response.json()
-    
+
     if (response.ok && result.success) {
       showConfig.value = false
       window.location.reload()
@@ -112,163 +121,134 @@ onMounted(() => {
 <style scoped>
 .config-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  inset: 0;
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(5px);
 }
 
 .config-dialog {
-  background: white;
-  padding: 2rem;
+  width: min(860px, 96vw);
+  min-height: 500px;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.config-sidebar {
+  padding: 18px 0;
+  background: #f5f7fb;
+  border-right: 1px solid #e5eaf2;
+}
+
+.dialog-brand {
+  margin: 0 16px 14px;
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.sidebar-item {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  color: #111827;
+  font-size: 0.92rem;
+  border-left: 3px solid transparent;
+}
+.sidebar-item.active { background: #eef2f8; border-left-color: #8b5cf6; }
+.sidebar-item.muted { color: #8a94a6; }
+
+.dialog-main { display: flex; flex-direction: column; min-width: 0; }
+.dialog-header {
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid #e5eaf2;
+}
+.dialog-header h2 { margin: 0; color: #111827; font-size: 1.2rem; }
+.dialog-header p { margin: 6px 0 0; color: #6b7280; }
+
+.form-card {
+  margin: 24px;
+  padding: 18px;
+  border: 1px solid #dde5ef;
   border-radius: 8px;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  background: #fff;
 }
+.section-title h3 { margin: 0; color: #111827; font-size: 1rem; }
+.section-title span { display: block; margin-top: 5px; color: #8a94a6; font-size: 0.86rem; }
 
-.config-dialog h2 {
-  margin: 0 0 1rem 0;
-  color: #2c3e50;
+.field-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  color: #111827;
+  font-weight: 650;
 }
-
-.hint {
-  color: #666;
-  margin-bottom: 1.5rem;
+.field-row b { color: #ef4444; }
+.field-row input {
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #d6dee9;
+  border-radius: 7px;
+  background: #fff;
 }
-
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 600;
-  color: #2c3e50;
-}
-
-.form-group input {
-  width: 100%;
-  padding: 0.75rem;
-  border: 2px solid #ddd;
-  border-radius: 4px;
-  font-size: 1rem;
-  box-sizing: border-box;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: #42b983;
-}
-
-.form-group input:disabled {
-  background: #f5f5f5;
-  cursor: not-allowed;
-}
+.field-row input:focus { outline: 3px solid rgba(139, 92, 246, 0.16); border-color: #a78bfa; }
 
 .error {
-  background: #fee;
-  border: 1px solid #fcc;
-  color: #c33;
-  padding: 0.75rem;
-  border-radius: 4px;
-  margin-bottom: 1rem;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
-.actions {
-  margin-bottom: 1.5rem;
+.meta-list {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+  color: #6b7280;
+  font-size: 0.84rem;
 }
+.meta-list div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; align-items: center; }
+.meta-list code { overflow: hidden; text-overflow: ellipsis; }
 
-.actions button {
-  width: 100%;
-  padding: 0.75rem 1.5rem;
-  background: #42b983;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  font-size: 1rem;
-  font-weight: 600;
+.dialog-footer {
+  margin-top: auto;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e5eaf2;
+  background: #f5f7fb;
+  color: #8a94a6;
+  font-size: 0.86rem;
+}
+.dialog-footer button {
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 8px;
+  background: #c084fc;
+  color: #fff;
+  font-weight: 750;
   cursor: pointer;
-  transition: background 0.3s;
 }
+.dialog-footer button:disabled { opacity: 0.55; cursor: not-allowed; }
 
-.actions button:hover:not(:disabled) {
-  background: #33a06f;
-}
-
-.actions button:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-}
-
-.note {
-  background: #f8f9fa;
-  border-left: 4px solid #42b983;
-  padding: 1rem;
-  border-radius: 4px;
-}
-
-.note p {
-  margin: 0 0 0.5rem 0;
-  font-weight: 600;
-  color: #2c3e50;
-}
-
-.note ul {
-  margin: 0;
-  padding-left: 1.5rem;
-  text-align: left;
-}
-
-.note li {
-  color: #666;
-  margin-bottom: 0.25rem;
-  text-align: left;
-}
-
-.note code {
-  background: #e8e8e8;
-  padding: 0.2rem 0.4rem;
-  border-radius: 3px;
-  font-family: 'Courier New', monospace;
-  font-size: 0.9em;
-}
-
-@media (prefers-color-scheme: dark) {
-  .config-dialog {
-    background: #1e1e1e;
-  }
-  
-  .config-dialog h2,
-  .note p,
-  .form-group label {
-    color: #e0e0e0;
-  }
-  
-  .hint,
-  .note li {
-    color: #b0b0b0;
-  }
-  
-  .form-group input {
-    background: #2d2d2d;
-    border-color: #444;
-    color: #e0e0e0;
-  }
-  
-  .note {
-    background: #2d2d2d;
-  }
-  
-  .note code {
-    background: #3d3d3d;
-    color: #e0e0e0;
-  }
+@media (max-width: 720px) {
+  .config-dialog { grid-template-columns: 1fr; }
+  .config-sidebar { display: none; }
+  .field-row, .meta-list div { grid-template-columns: 1fr; }
 }
 </style>

@@ -68,7 +68,7 @@ class SudoersManager:
 
         logger.info("配置 sudo 免密...")
 
-        password = path_manager.get_config_value("sudo_password")
+        password = path_manager.get_config_value("sudo_password", config_file="secrets.yaml")
         if not password:
             logger.error("未配置 sudo_password")
             return False
@@ -118,7 +118,7 @@ class SudoersManager:
             return True
 
         logger.info("移除 sudo 免密配置...")
-        password = path_manager.get_config_value("sudo_password")
+        password = path_manager.get_config_value("sudo_password", config_file="secrets.yaml")
 
         if not password:
             logger.error("未配置 sudo_password,无法移除")

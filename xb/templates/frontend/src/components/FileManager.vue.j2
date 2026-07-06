@@ -1,65 +1,152 @@
 <template>
   <div v-if="showManager" class="file-overlay" @click="closeIfOutside">
     <div class="file-dialog" @click.stop>
-      <div class="dialog-header">
-        <h2>⚙️ 配置文件管理</h2>
+      <header class="dialog-header">
+        <h2>⚒ 配置中心</h2>
         <button class="close-btn" @click="close">×</button>
-      </div>
+      </header>
 
       <div class="dialog-body">
-        <div class="file-list">
-          <h3>配置文件列表</h3>
-          <div v-if="loading" class="loading">加载中...</div>
-          <div v-else-if="error" class="error">{{ error }}</div>
-          <div v-else-if="files.length === 0" class="empty">暂无配置文件</div>
-          <div v-else class="files">
-            <div
-              v-for="file in files"
-              :key="file.name"
-              class="file-item"
-              :class="{ active: selectedFile?.name === file.name }"
-              @click="loadFile(file.name)"
-            >
-              <div class="file-icon">📄</div>
-              <div class="file-info">
-                <div class="file-name">{{ file.name }}</div>
-                <div class="file-meta">{{ formatSize(file.size) }} · {{ formatTime(file.modified) }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <aside class="settings-nav">
+          <button :class="{ active: activeMode === 'form' }" @click="activeMode = 'form'">🌐 应用配置</button>
+          <button :class="{ active: activeMode === 'secrets' }" @click="activeMode = 'secrets'">🔐 密钥管理</button>
+          <button :class="{ active: activeMode === 'yaml' }" @click="activeMode = 'yaml'">📄 YAML 文件</button>
+        </aside>
 
-        <div class="file-editor">
-          <div v-if="!selectedFile" class="editor-placeholder">
-            <p>👈 选择一个文件开始编辑</p>
-          </div>
-          <div v-else class="editor-content">
-            <div class="editor-header">
-              <h3>{{ selectedFile.name }}</h3>
-              <div class="editor-actions">
-                <button @click="saveFile" :disabled="saving || !hasChanges">
-                  {{ saving ? '保存中...' : '💾 保存' }}
+        <main class="settings-main">
+          <section v-if="activeMode === 'form'" class="settings-panel">
+            <div class="content-header">
+              <div>
+                <h3>🌐 应用配置</h3>
+                <p>保存后会写入对应配置文件；可热重载项会立即刷新缓存。</p>
+              </div>
+              <button class="save-top" @click="saveSettings" :disabled="settingsSaving || settingsLoading">
+                {{ settingsSaving ? '保存中...' : '保存配置' }}
+              </button>
+            </div>
+
+            <div class="settings-content">
+              <div v-if="settingsLoading" class="state-text">加载中...</div>
+              <div v-else-if="settingsError" class="validation-error">{{ settingsError }}</div>
+              <template v-else>
+                <section class="settings-section">
+                  <h4>🔌 服务端口</h4>
+                  <p class="section-hint">端口保存后会刷新配置缓存，但 dev.sh / Electron 监听端口需要重启进程才会接管。</p>
+                  <label class="field-row">
+                    <span>后端端口</span>
+                    <input v-model.number="settingsForm.ports.backend" type="number" min="1" max="65535" />
+                  </label>
+                  <label class="field-row">
+                    <span>前端端口</span>
+                    <input v-model.number="settingsForm.ports.frontend" type="number" min="1" max="65535" />
+                  </label>
+                </section>
+
+                <div v-if="settingsMessage" class="settings-message">{{ settingsMessage }}</div>
+                <div v-if="settingsPath" class="path-strip">{{ settingsPath }}</div>
+              </template>
+            </div>
+          </section>
+
+          <section v-else-if="activeMode === 'secrets'" class="settings-panel">
+            <div class="content-header">
+              <div>
+                <h3>🔐 密钥管理</h3>
+                <p>敏感信息存储在 secrets.yaml，不会提交到 git。</p>
+              </div>
+              <button class="save-top" @click="saveSecrets" :disabled="secretsSaving">
+                {{ secretsSaving ? '保存中...' : '保存密钥' }}
+              </button>
+            </div>
+
+            <div class="settings-content">
+              [% if enable_sudo %]
+              <section class="settings-section">
+                <h4>🔑 Sudo 密码</h4>
+                <p class="section-hint">留空表示不修改当前密码；填写后会立即更新 sudo 免密配置。</p>
+                <label class="field-row">
+                  <span>密码</span>
+                  <input
+                    v-model="secretsForm.sudo_password"
+                    type="password"
+                    placeholder="不修改请留空"
+                    autocomplete="current-password"
+                  />
+                </label>
+              </section>
+              [% endif %]
+
+              <p class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
+
+              <div v-if="secretsMessage" class="settings-message">{{ secretsMessage }}</div>
+              <div v-if="secretsError" class="validation-error">{{ secretsError }}</div>
+            </div>
+          </section>
+
+          <section v-else class="yaml-panel">
+            <div class="content-header">
+              <div>
+                <h3>📄 YAML 文件</h3>
+                <p>高级兜底入口。常规配置应优先使用表单。</p>
+              </div>
+              <button class="save-top" @click="saveFile" :disabled="saving || !hasChanges || !selectedFile">
+                {{ saving ? '保存中...' : '保存 YAML' }}
+              </button>
+            </div>
+
+            <div class="yaml-layout">
+              <aside class="yaml-files">
+                <div v-if="loading" class="state-text">加载中...</div>
+                <div v-else-if="error" class="validation-error">{{ error }}</div>
+                <div v-else-if="files.length === 0" class="state-text">暂无配置文件</div>
+                <button
+                  v-for="file in files"
+                  v-else
+                  :key="file.filename"
+                  class="file-item"
+                  :class="{ active: selectedFile?.filename === file.filename }"
+                  @click="loadFile(file.filename)"
+                >
+                  <span>📄</span>
+                  <strong>{{ file.filename }}</strong>
+                  <small>{{ formatSize(file.size) }}</small>
                 </button>
+              </aside>
+
+              <div class="yaml-editor">
+                <div v-if="!selectedFile" class="editor-placeholder">选择一个 YAML 文件开始编辑</div>
+                <template v-else>
+                  <div v-if="fileError" class="validation-error">YAML 格式错误: {{ fileError }}</div>
+                  <textarea
+                    :key="selectedFile.filename"
+                    v-model="fileContent"
+                    class="code-editor"
+                    spellcheck="false"
+                    @input="onContentChange"
+                  ></textarea>
+                  <div class="path-strip">{{ selectedFile.path }}</div>
+                </template>
               </div>
             </div>
-            
-            <div v-if="fileError" class="validation-error">
-              ⚠️ YAML 格式错误: {{ fileError }}
-            </div>
-            
-            <textarea
-              v-model="fileContent"
-              class="code-editor"
-              spellcheck="false"
-              @input="onContentChange"
-            ></textarea>
-            
-            <div class="editor-footer">
-              <span class="file-path">{{ selectedFile.path }}</span>
-            </div>
-          </div>
-        </div>
+          </section>
+        </main>
       </div>
+
+      <footer class="dialog-footer">
+        <span>{{ settingsMessage || secretsMessage ? '✓ 全部已保存' : '准备就绪' }}</span>
+        <div class="footer-actions">
+          <button class="cancel-btn" @click="close">取消</button>
+          <button v-if="activeMode === 'form'" class="primary-btn" @click="saveSettings" :disabled="settingsSaving || settingsLoading">
+            保存
+          </button>
+          <button v-else-if="activeMode === 'secrets'" class="primary-btn" @click="saveSecrets" :disabled="secretsSaving">
+            保存
+          </button>
+          <button v-else class="primary-btn" @click="saveFile" :disabled="saving || !hasChanges || !selectedFile">
+            保存
+          </button>
+        </div>
+      </footer>
     </div>
   </div>
 </template>
@@ -67,9 +154,12 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+// 后端基地址：开发态走 dev.sh 注入的 VITE_API_BASE；
+// 打包态由 backend 直接当静态服务器返回页面，同源访问用相对路径即可
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const showManager = ref(false)
+const activeMode = ref('form')
 const loading = ref(false)
 const error = ref('')
 const files = ref([])
@@ -78,11 +168,32 @@ const fileContent = ref('')
 const originalContent = ref('')
 const saving = ref(false)
 const fileError = ref('')
+const settingsLoading = ref(false)
+const settingsSaving = ref(false)
+const settingsError = ref('')
+const settingsMessage = ref('')
+const settingsPath = ref('')
+const settingsForm = ref({
+  ports: {
+    backend: 8000,
+    frontend: 5173
+  }
+})
+const secretsForm = ref({
+  [% if enable_sudo %]
+  sudo_password: '',
+  [% endif %]
+})
+const secretsSaving = ref(false)
+const secretsMessage = ref('')
+const secretsError = ref('')
 
 const hasChanges = computed(() => fileContent.value !== originalContent.value)
 
 const open = () => {
   showManager.value = true
+  activeMode.value = 'form'
+  loadSettings()
   loadFileList()
 }
 
@@ -101,6 +212,86 @@ const close = () => {
 const closeIfOutside = (e) => {
   if (e.target.classList.contains('file-overlay')) {
     close()
+  }
+}
+
+
+const loadSettings = async () => {
+  settingsLoading.value = true
+  settingsError.value = ''
+  settingsMessage.value = ''
+
+  try {
+    const response = await fetch(`${API_BASE}/api/settings`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '读取应用配置失败')
+
+    settingsPath.value = data.config_path || ''
+    settingsForm.value = {
+      ports: {
+        backend: data.ports?.backend || 8000,
+        frontend: data.ports?.frontend || 5173
+      }
+    }
+  } catch (e) {
+    settingsError.value = e.message
+    console.error('读取应用配置失败:', e)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+const saveSettings = async () => {
+  settingsSaving.value = true
+  settingsError.value = ''
+  settingsMessage.value = ''
+
+  try {
+    const response = await fetch(`${API_BASE}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settingsForm.value)
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '保存应用配置失败')
+
+    settingsMessage.value = '配置已保存。可热重载配置已立即生效；端口变更需重启 dev.sh 或 Electron。'
+    await loadFileList()
+    await loadSettings()
+  } catch (e) {
+    settingsError.value = e.message
+    console.error('保存应用配置失败:', e)
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+const saveSecrets = async () => {
+  secretsSaving.value = true
+  secretsError.value = ''
+  secretsMessage.value = ''
+
+  try {
+    [% if enable_sudo %]
+    const password = (secretsForm.value.sudo_password || '').trim()
+    if (password) {
+      const response = await fetch(`${API_BASE}/api/config/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sudo_password: password })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || '保存密钥失败')
+      secretsForm.value.sudo_password = ''
+    }
+    [% endif %]
+
+    secretsMessage.value = '密钥已保存。'
+  } catch (e) {
+    secretsError.value = e.message
+    console.error('保存密钥失败:', e)
+  } finally {
+    secretsSaving.value = false
   }
 }
 
@@ -171,9 +362,14 @@ const saveFile = async () => {
       throw new Error(data.detail || '保存失败')
     }
     
-    originalContent.value = fileContent.value
-    alert('保存成功!')
+    // 重新拉一次 read 接口刷新 selectedFile / fileContent / originalContent，
+    // 与磁盘对齐——之前是"前端自己 originalContent = fileContent"假定一致，
+    // 但 path_manager.reload_config 后磁盘内容可能被规整化（YAML round-trip），
+    // 不重读会让"再次点同一文件"出现微妙的状态分裂
+    const savedFilename = selectedFile.value.filename
     await loadFileList()
+    await loadFile(savedFilename)
+    alert('保存成功!')
   } catch (e) {
     console.error('Save error:', e)
     alert(`保存失败: ${e.message}`)
@@ -199,231 +395,233 @@ defineExpose({ open })
 <style scoped>
 .file-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  inset: 0;
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(4px);
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(5px);
 }
 
 .file-dialog {
-  background: white;
-  border-radius: 12px;
-  width: 90%;
-  max-width: 1200px;
-  height: 80vh;
+  width: min(1080px, 96vw);
+  height: min(820px, 92vh);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
 }
 
 .dialog-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  height: 52px;
+  padding: 0 18px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid #e5eaf2;
 }
-
-.dialog-header h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  color: #1f2937;
-}
-
+.dialog-header h2 { margin: 0; color: #111827; font-size: 1.06rem; }
 .close-btn {
-  background: none;
-  border: none;
-  font-size: 2rem;
-  color: #6b7280;
-  cursor: pointer;
-  padding: 0;
   width: 32px;
   height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  transition: all 0.2s;
+  border-radius: 7px;
+  background: transparent;
+  color: #667085;
+  font-size: 1.35rem;
+  cursor: pointer;
 }
-
-.close-btn:hover {
-  background: #f3f4f6;
-  color: #1f2937;
-}
+.close-btn:hover { background: #f2f4f8; }
 
 .dialog-body {
   flex: 1;
-  display: flex;
-  overflow: hidden;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
 }
 
-.file-list {
-  width: 300px;
-  border-right: 1px solid #e5e7eb;
+.settings-nav {
+  padding: 10px 0;
+  background: #f5f7fb;
+  border-right: 1px solid #e5eaf2;
   overflow-y: auto;
-  padding: 16px;
 }
-
-.file-list h3 {
-  margin: 0 0 12px 0;
-  font-size: 0.9rem;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.loading, .error, .empty {
-  padding: 20px;
-  text-align: center;
-  color: #6b7280;
-}
-
-.error {
-  color: #ef4444;
-}
-
-.files {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.file-item {
+.settings-nav button {
+  width: 100%;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 8px;
+  padding: 0 18px;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: #263244;
+  text-align: left;
   cursor: pointer;
-  transition: all 0.2s;
 }
+.settings-nav button.active { background: #eef2f8; border-left-color: #8b5cf6; color: #111827; font-weight: 750; }
+.settings-nav button.muted { color: #8a94a6; cursor: default; }
 
-.file-item:hover {
-  background: #f3f4f6;
+.settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.settings-panel, .yaml-panel { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.content-header {
+  min-height: 76px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e5eaf2;
 }
+.content-header h3 { margin: 0; color: #111827; font-size: 1rem; }
+.content-header p { margin: 5px 0 0; color: #8a94a6; font-size: 0.86rem; }
 
-.file-item.active {
-  background: #eff6ff;
-  border-left: 3px solid #3b82f6;
+.save-top, .primary-btn {
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 8px;
+  background: #c084fc;
+  color: #fff;
+  font-weight: 750;
+  cursor: pointer;
 }
+.save-top:disabled, .primary-btn:disabled { opacity: 0.52; cursor: not-allowed; }
 
-.file-icon {
-  font-size: 1.5rem;
-}
-
-.file-info {
+.settings-content {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
 }
+.settings-section {
+  padding: 16px;
+  margin-bottom: 14px;
+  border: 1px solid #dde5ef;
+  border-radius: 8px;
+  background: #fff;
+}
+.settings-section h4 { margin: 0; color: #111827; font-size: 0.96rem; }
+.section-hint { margin: 7px 0 16px; color: #8a94a6; font-size: 0.86rem; }
+.field-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  color: #111827;
+  font-weight: 650;
+}
+.field-row input {
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #d6dee9;
+  border-radius: 7px;
+  background: #fff;
+}
+.field-row input:focus, .code-editor:focus { outline: 3px solid rgba(139, 92, 246, 0.16); border-color: #a78bfa; }
 
-.file-name {
-  font-weight: 500;
-  color: #1f2937;
-  white-space: nowrap;
+.settings-message {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 7px;
+  background: #f0fdf4;
+  color: #166534;
+}
+.validation-error {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.state-text { padding: 20px; color: #8a94a6; }
+.path-strip {
+  padding: 12px 14px;
+  background: #f6f8fb;
+  color: #667085;
+  font-family: var(--mono);
+  font-size: 0.78rem;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.file-meta {
-  font-size: 0.75rem;
-  color: #9ca3af;
-  margin-top: 2px;
-}
-
-.file-editor {
+.yaml-layout {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
 }
-
-.editor-placeholder {
-  flex: 1;
-  display: flex;
+.yaml-files {
+  padding: 12px;
+  border-right: 1px solid #e5eaf2;
+  overflow-y: auto;
+}
+.file-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
-  justify-content: center;
-  color: #9ca3af;
-  font-size: 1.1rem;
-}
-
-.editor-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.editor-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid #e5e7eb;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.editor-header h3 {
-  margin: 0;
-  font-size: 1.1rem;
-  color: #1f2937;
-}
-
-.editor-actions button {
-  padding: 8px 16px;
-  background: #3b82f6;
-  color: white;
-  border: none;
-  border-radius: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: #263244;
+  text-align: left;
   cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.2s;
 }
+.file-item:hover, .file-item.active { background: #eef2f8; }
+.file-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
+.file-item small { color: #8a94a6; }
 
-.editor-actions button:hover:not(:disabled) {
-  background: #2563eb;
-}
-
-.editor-actions button:disabled {
-  background: #d1d5db;
-  cursor: not-allowed;
-}
-
-.validation-error {
-  padding: 12px 24px;
-  background: #fef2f2;
-  color: #dc2626;
-  font-size: 0.9rem;
-  border-bottom: 1px solid #fecaca;
-}
-
+.yaml-editor { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.editor-placeholder { flex: 1; display: grid; place-items: center; color: #8a94a6; }
 .code-editor {
   flex: 1;
-  padding: 16px 24px;
-  border: none;
-  outline: none;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 0.9rem;
-  line-height: 1.6;
+  min-height: 0;
+  padding: 16px;
+  border: 0;
+  border-radius: 0;
+  background: #fbfcfe;
+  color: #111827;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  line-height: 1.65;
   resize: none;
-  overflow-y: auto;
-  background: #f9fafb;
-  color: #1f2937;
 }
 
-.editor-footer {
-  padding: 12px 24px;
-  border-top: 1px solid #e5e7eb;
-  background: #f9fafb;
+.dialog-footer {
+  height: 60px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e5eaf2;
+  background: #f5f7fb;
+  color: #8a94a6;
+  font-size: 0.86rem;
+}
+.footer-actions { display: flex; gap: 10px; }
+.cancel-btn {
+  height: 34px;
+  padding: 0 15px;
+  border: 1px solid #d6dee9;
+  border-radius: 8px;
+  background: #fff;
+  color: #475467;
+  cursor: pointer;
 }
 
-.file-path {
-  font-size: 0.8rem;
-  color: #6b7280;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+@media (max-width: 760px) {
+  .dialog-body, .yaml-layout { grid-template-columns: 1fr; }
+  .settings-nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid #e5eaf2; }
+  .settings-nav button { width: auto; min-width: 132px; border-left: 0; border-bottom: 3px solid transparent; }
+  .settings-nav button.active { border-bottom-color: #8b5cf6; }
+  .yaml-files { max-height: 180px; border-right: 0; border-bottom: 1px solid #e5eaf2; }
+  .field-row { grid-template-columns: 1fr; }
 }
 </style>

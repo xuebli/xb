@@ -1,0 +1,105 @@
+import os
+import shutil
+import subprocess
+
+from fastapi import APIRouter, HTTPException
+
+from managers import get_logger, path_manager
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+def _process_cwd(pid: int) -> str:
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except Exception:
+        return "未知"
+
+
+def _process_command(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            command = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+            if command:
+                return command
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "args="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        return result.stdout.strip() or "未知"
+    except Exception:
+        return "未知"
+
+
+def _process_name(pid: int) -> str:
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        return result.stdout.strip() or "未知"
+    except Exception:
+        return "未知"
+
+
+def _pids_for_port(port: int) -> list[int]:
+    commands = (["lsof", "-ti", f"tcp:{port}"], ["fuser", f"{port}/tcp"])
+    for cmd in commands:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=2, check=False)
+            pids = [int(value) for value in result.stdout.split() if value.isdigit()]
+            if pids:
+                return sorted(set(pids))
+        except Exception:
+            continue
+    return []
+
+
+def _port_status(label: str, port: int, expected_pids: set[int] | None = None) -> dict:
+    expected_pids = expected_pids or set()
+    pids = [pid for pid in _pids_for_port(port) if pid not in expected_pids]
+    owners = [
+        {
+            "pid": pid,
+            "name": _process_name(pid),
+            "cwd": _process_cwd(pid),
+            "command": _process_command(pid),
+        }
+        for pid in pids
+    ]
+    return {"label": label, "port": port, "occupied": bool(owners), "owners": owners}
+
+
+@router.get("/ports/status")
+async def get_ports_status():
+    """检查前后端端口占用情况，并返回占用进程定位信息。"""
+    try:
+        config = path_manager.load_config("global_config.yaml")
+        ports = config.get("ports") if isinstance(config, dict) else {}
+        if not isinstance(ports, dict):
+            ports = {}
+        backend_port = int(ports.get("backend") or 8000)
+        frontend_port = int(ports.get("frontend") or 5173)
+
+        return {
+            "ports": [
+                _port_status("后端", backend_port, expected_pids={os.getpid()}),
+                _port_status("前端", frontend_port),
+            ]
+        }
+    except Exception as e:
+        logger.error(f"检查端口占用失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"检查端口占用失败: {str(e)}")
