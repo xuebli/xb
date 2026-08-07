@@ -2,9 +2,11 @@
 
 **xb**（PyPI: `xb-init`）是一个基于 `uv` 又类似 `uv` 的项目管理工具，专为快速初始化 **UV + FastAPI + Vue3 + Electron** 桌面应用而生。一条命令拉起完整工程脚手架，开发、构建、版本管理一站式搞定。
 
+![首页截图](docs/screenshot.png)
+
 ## 核心特性
 
-- 一键初始化完整项目结构（`xb init myapp`）
+- 一键初始化完整项目结构（`xb init demo`）
 - UV + FastAPI + Vue3 + Electron 开箱即用
 - 自动 `git init` 并提交首个 commit
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
@@ -25,6 +27,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install xb-init
 
 # 方式二：从源码安装
+git clone -b release_v0 https://github.com/xuebli/xb.git
 cd xb
 uv sync
 uv tool install .
@@ -37,15 +40,15 @@ xb --help
 
 ```bash
 # 创建项目（自动 git init + 首次 commit）
-xb init myapp
+xb init demo
 
 # 带 sudo 免密配置
-xb init myapp --sudoers
+xb init demo --sudoers
 
 # 带自定义图标
-xb init myapp --icon ~/icons/app.png
+xb init demo --icon ~/icons/app.png
 
-cd myapp
+cd demo
 
 # 启动开发环境
 xb dev
@@ -93,7 +96,7 @@ xb build electron    # 或 xb build -e
 ## 生成的项目结构
 
 ```
-myapp/
+demo/
 ├── pyproject.toml          # Python 依赖（uv 管理）
 ├── AGENTS.md               # AI 编码助手协作约定
 ├── README.md               # 项目说明
@@ -193,7 +196,7 @@ xb version major    # x+1.0.0
 
 ```bash
 # 初始化时启用
-xb init myapp --sudoers
+xb init demo --sudoers
 
 # 密码存储在 configs/secrets.yaml（自动 gitignore）
 # 建议设置文件权限: chmod 600 configs/secrets.yaml
@@ -203,7 +206,7 @@ xb init myapp --sudoers
 
 ```bash
 # 显式指定图标
-xb init myapp --icon ./my-icon.png
+xb init demo --icon ./my-icon.png
 
 # 不指定时自动查找以下约定路径：
 # ./app-icon.png, ./icon.png, ./<package>.png,
