@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xb-init"
-version = "1.4.2"
+version = "1.4.3"
 description = "Project management tool for UV + FastAPI + Vue3 + Electron desktop applications"
 readme = "README.md"
 requires-python = ">=3.12"

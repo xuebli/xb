@@ -134,12 +134,17 @@
 
 * { box-sizing: border-box; }
 
+html,
+body,
+#app {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
   background: var(--bg);
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 
@@ -284,14 +289,19 @@ code {
 }
 
 .app-shell {
-  min-height: 100vh;
+  /* 用 height:100% 而非 100vh/100dvh：视口单位在浏览器缩放时解析值不变（恒为 CSS px），
+     会被 zoom 二次放大导致溢出；百分比链相对父级计算，缩放下始终贴合可视区域。
+     顶栏高度也不能硬编码——窄屏媒体查询会让它竖排，高度从 ~90px 变到 ~154px。 */
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
-  position: sticky;
-  top: 0;
+  position: relative;
+  flex: 0 0 auto;
   z-index: 20;
   display: flex;
   align-items: center;
@@ -381,13 +391,18 @@ code {
   transform: translateY(-1px);
 }
 
+/* workspace 占满宽度，不再自身居中：否则容器宽度随缩放变化时，
+   作为其首个子元素的侧边导航会跟着左右漂移（实测左边距在 30~425px 间跳动）。
+   改为「导航固定贴左 + 内容区内部居中」，导航位置与缩放解耦。 */
 .workspace {
-  width: min(1180px, calc(100% - 40px));
-  min-height: calc(100vh - 108px);
-  margin: 0 auto;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   padding: 34px 0 56px;
   display: flex;
   gap: 0;
+  overflow: hidden;
 }
 
 .side-nav {
@@ -396,7 +411,9 @@ code {
   gap: 4px;
   padding: 8px 6px;
   width: 72px;
-  flex-shrink: 0;
+  flex: 0 0 72px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .nav-item {
@@ -434,10 +451,31 @@ code {
 }
 
 .page-content {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  display: grid;
-  place-items: center;
+  min-height: 0;
+  padding: 0 20px;
+  display: flex;
+  align-items: stretch;
+}
+
+/* 首页内容按需滚动并居中；终端 / 配置页需要撑满且自行处理内部滚动 */
+.page-content--centered {
+  overflow: auto;
+}
+
+.page-content--centered > * {
+  width: min(1180px, 100%);
+  margin: auto;
+}
+
+.page-content--stretch {
+  overflow: hidden;
+}
+
+.page-content--stretch > * {
+  width: min(1180px, 100%);
+  margin: 0 auto;
 }
 
 .intro-shell {
@@ -533,7 +571,8 @@ code {
 @media (max-width: 860px) {
   .topbar { align-items: flex-start; flex-direction: column; padding: 16px 20px; }
   .toolbar { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
-  .workspace { width: min(100% - 28px, 1180px); padding-top: 22px; }
+  .workspace { padding-top: 22px; }
+  .page-content { padding: 0 14px; }
   .intro-shell { width: 100%; grid-template-columns: 1fr; }
   .intro-copy { padding: 24px; }
 }

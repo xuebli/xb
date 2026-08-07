@@ -11,7 +11,6 @@ import ConfigSetup from './components/ConfigSetup.vue'
 import FileManager from './components/FileManager.vue'
 
 const currentPage = ref('home')
-const fileManager = ref(null)
 [% if icon_path %]
 const showIconFallback = ref(false)
 [% endif %]
@@ -19,6 +18,7 @@ const showIconFallback = ref(false)
 const navItems = [
   { id: 'home', label: '首页', icon: '🏠' },
   { id: 'terminal', label: '终端', icon: '💻' },
+  { id: 'settings', label: '配置', icon: '⚒' },
 ]
 
 const handleRefresh = () => {
@@ -26,7 +26,7 @@ const handleRefresh = () => {
 }
 
 const openSettings = () => {
-  fileManager.value?.open()
+  currentPage.value = 'settings'
 }
 </script>
 
@@ -48,7 +48,6 @@ const openSettings = () => {
     [% if enable_sudo %]
     <ConfigSetup />
     [% endif %]
-    <FileManager ref="fileManager" />
 
     <header class="topbar">
       <div class="brand-block">
@@ -72,7 +71,7 @@ const openSettings = () => {
         <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
         <button class="icon-button" @click="openSettings" title="配置中心" aria-label="配置中心">
-          <span>⚙</span>
+          <span>⚒</span>
         </button>
       </div>
     </header>
@@ -91,9 +90,13 @@ const openSettings = () => {
           <span class="nav-label">{{ item.label }}</span>
         </button>
       </nav>
-      <div class="page-content">
+      <div
+        class="page-content"
+        :class="currentPage === 'home' ? 'page-content--centered' : 'page-content--stretch'"
+      >
         <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
         <TerminalView v-else-if="currentPage === 'terminal'" />
+        <FileManager v-else-if="currentPage === 'settings'" />
       </div>
     </main>
   </div>
