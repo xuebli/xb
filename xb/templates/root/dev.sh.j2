@@ -28,7 +28,16 @@ read_port() {
 }
 BACKEND_PORT=$(read_port backend 8000)
 FRONTEND_PORT=$(read_port frontend 5173)
-export VITE_API_BASE="http://localhost:${BACKEND_PORT}"
+
+# 获取本机局域网 IP，回退 localhost
+get_local_ip() {
+    local ip
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -n "$ip" ] && echo "$ip" || echo "localhost"
+}
+LOCAL_IP=$(get_local_ip)
+
+export VITE_API_BASE="http://${LOCAL_IP}:${BACKEND_PORT}"
 export VITE_DEV_PORT="${FRONTEND_PORT}"
 
 is_running() {
@@ -146,7 +155,7 @@ cleanup_runtime() {
 }
 
 wait_for_frontend() {
-    local url="http://localhost:${FRONTEND_PORT}"
+    local url="http://${LOCAL_IP}:${FRONTEND_PORT}"
     local i
     for i in $(seq 1 20); do
         if command -v curl >/dev/null 2>&1; then
@@ -162,7 +171,7 @@ wait_for_frontend() {
 }
 
 print_frontend_url() {
-    echo "浏览器未自动打开，请访问: http://localhost:${FRONTEND_PORT}"
+    echo "浏览器未自动打开，请访问: http://${LOCAL_IP}:${FRONTEND_PORT}"
 }
 
 start_backend() {
@@ -198,7 +207,7 @@ start_backend() {
         sleep 2
 
         if screen_running "$BACKEND_SCREEN" || pids_for_port "$BACKEND_PORT" >/dev/null 2>&1; then
-            echo "✓ 后端已在screen会话中启动 (会话名: ${BACKEND_SCREEN}, http://localhost:${BACKEND_PORT})"
+            echo "✓ 后端已在screen会话中启动 (会话名: ${BACKEND_SCREEN}, http://${LOCAL_IP}:${BACKEND_PORT})"
             echo "  查看后端: screen -r ${BACKEND_SCREEN}"
         else
             echo "✗ 后端启动失败,查看screen会话或 datas/logs/backend.log"
@@ -210,7 +219,7 @@ start_backend() {
         sleep 2
 
         if is_running "$BACKEND_PID"; then
-            echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://localhost:${BACKEND_PORT})"
+            echo "✓ 后端已启动 (PID: $(cat $BACKEND_PID), http://${LOCAL_IP}:${BACKEND_PORT})"
         else
             echo "✗ 后端启动失败,查看日志: datas/logs/backend.log"
             return 1
@@ -268,10 +277,10 @@ start_frontend() {
         if wait_for_frontend; then
             local actual_pids=$(pids_for_port "$FRONTEND_PORT" | tr '\n' ' ')
             if screen_running "$FRONTEND_SCREEN"; then
-                echo "✓ 前端已在screen会话中启动 (会话名: ${FRONTEND_SCREEN}, http://localhost:${FRONTEND_PORT})"
+                echo "✓ 前端已在screen会话中启动 (会话名: ${FRONTEND_SCREEN}, http://${LOCAL_IP}:${FRONTEND_PORT})"
                 echo "  查看前端: screen -r ${FRONTEND_SCREEN}"
             else
-                echo "✓ 前端已启动 (PID: ${actual_pids:-$(cat $FRONTEND_PID)}, http://localhost:${FRONTEND_PORT})"
+                echo "✓ 前端已启动 (PID: ${actual_pids:-$(cat $FRONTEND_PID)}, http://${LOCAL_IP}:${FRONTEND_PORT})"
             fi
             print_frontend_url
         else
