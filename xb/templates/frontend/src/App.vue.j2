@@ -9,7 +9,9 @@ import ConfigSetup from './components/ConfigSetup.vue'
 import FileManager from './components/FileManager.vue'
 
 const fileManager = ref(null)
+[% if icon_path %]
 const showIconFallback = ref(false)
+[% endif %]
 
 const handleRefresh = () => {
   window.location.reload()
@@ -42,10 +44,16 @@ const openSettings = () => {
 
     <header class="topbar">
       <div class="brand-block">
+[% if icon_path %]
         <div class="brand-mark" :class="{ 'has-icon': !showIconFallback }">
           <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ package_name_capitalized]]" @error="showIconFallback = true" />
           <span v-else>[[ package_name_capitalized | first ]]</span>
         </div>
+[% else %]
+        <div class="brand-mark">
+          <span>[[ package_name_capitalized | first ]]</span>
+        </div>
+[% endif %]
         <div>
           <h1>[[ package_name_capitalized]] <GitVersionBadge /></h1>
           <p>AI Native · FastAPI · Electron</p>
