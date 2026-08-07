@@ -173,7 +173,7 @@ class XbGroup(click.Group):
 @click.option(
     "--icon",
     "icon",
-    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    type=click.Path(dir_okay=False, path_type=str),
     default=None,
     help="应用图标 PNG 路径；不传时自动查找 ./app-icon.png、./icon.png、./assets/icon.png 等约定路径",
 )
@@ -183,24 +183,41 @@ def init_command(package: str, sudoers: bool, icon: str | None):
 
     在当前目录创建一个完整的 UV + FastAPI + Vue3 + Electron 项目
 
+    支持指定路径创建项目，找不到的父目录会自动创建。
+
     示例:
         xb init demo
         xb init myapp --sudoers
+        xb init /home/user/projects/myapp
+        xb init ../other_dir/demo
     """
     # 检测到 PyPI 有新版 xb 时，先询问是否升级再创建项目，避免用旧模板生成项目
     _prompt_upgrade_before_init()
 
+    # 解析路径：支持绝对路径、相对路径和纯包名
+    raw_path = Path(package)
+    if raw_path.is_absolute():
+        target_dir = raw_path
+    else:
+        target_dir = Path.cwd() / raw_path
+
+    # 从路径末尾提取包名
+    package_name = target_dir.name
+
     # 验证包名
-    if not validate_package_name(package):
+    if not validate_package_name(package_name):
         console.print(
-            f"[red]✗[/red] 项目名称 '{package}' 无效! "
+            f"[red]✗[/red] 项目名称 '{package_name}' 无效! "
             "请使用小写字母、数字和下划线 (例如: demo, my_app)",
             style="red",
         )
         raise click.Abort()
 
-    # 获取当前目录
-    target_dir = Path.cwd() / package
+    # 自动创建父目录（不存在时）
+    parent_dir = target_dir.parent
+    if not parent_dir.exists():
+        console.print(f"[green]→[/green] 自动创建父目录: [cyan]{parent_dir}[/cyan]")
+        parent_dir.mkdir(parents=True, exist_ok=True)
 
     # 检查目录是否已存在
     if target_dir.exists():
@@ -210,7 +227,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             raise click.Abort()
         shutil.rmtree(target_dir)
 
-    icon_path = resolve_icon_path(icon, package)
+    icon_path = resolve_icon_path(icon, package_name)
     if icon_path:
         console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
 
@@ -235,13 +252,13 @@ def init_command(package: str, sudoers: bool, icon: str | None):
 
     # 创建项目
     console.print()
-    console.print(f"[green]→[/green] 正在创建项目 [bold]{package}[/bold] ...")
+    console.print(f"[green]→[/green] 正在创建项目 [bold]{package_name}[/bold] ...")
 
     try:
         engine = TemplateEngine()
         engine.render_project(
             target_dir=target_dir,
-            package_name=package,
+            package_name=package_name,
             enable_sudo=enable_sudo,
             sudo_password=sudo_password,
             icon_path=icon_path,
@@ -266,7 +283,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
                 "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
             )
 
-        git_ok = init_git_repo(target_dir, package)
+        git_ok = init_git_repo(target_dir, package_name)
         git_line = (
             "[green]→[/green] 已初始化 git 仓库并完成首个 commit\n"
             if git_ok
@@ -280,7 +297,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
                 f"项目位置: [cyan]{target_dir}[/cyan]\n"
                 f"{git_line}\n"
                 f"[bold]下一步:[/bold]\n"
-                f"  cd {package}\n"
+                f"  cd {target_dir}\n"
                 f"  bash dev.sh start    # 启动开发环境\n\n"
                 f"[dim]更多命令请查看 README.md 与 AGENTS.md[/dim]",
                 border_style="green",
