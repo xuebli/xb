@@ -15,12 +15,14 @@
     "files": [
       "launcher.js",
       "main.js",
-      "port_diagnostics.js",
-      "resources/icon.png"
+      "port_diagnostics.js"[% if icon_path %],
+      "resources/icon.png"[% endif %]
     ],
     "linux": {
       "target": "deb",
+[% if icon_path %]
       "icon": "resources/icon.png",
+[% endif %]
       "category": "Utility"
     },
     "deb": {

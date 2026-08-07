@@ -243,7 +243,7 @@ xb doctor
 
 # 后端启动失败
 cat datas/logs/backend.log
-lsof -i :8000
+lsof -i:8000
 .venv/bin/python backend/main.py
 
 # 前端启动失败
