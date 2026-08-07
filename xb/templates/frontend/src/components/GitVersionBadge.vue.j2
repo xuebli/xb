@@ -303,4 +303,57 @@ const processedCommits = computed(() => {
   .git-modal-content { width: calc(100vw - 28px); max-height: 86vh; }
   .git-commit-header { align-items: flex-start; flex-direction: column; }
 }
+
+/* === 暗色模式 === */
+:root[data-theme='dark'] .git-version-badge {
+  background: rgba(30, 35, 50, 0.82);
+  border-color: rgba(139, 92, 246, 0.24);
+  color: #94a3b8;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+:root[data-theme='dark'] .git-version-badge:hover {
+  background: rgba(40, 48, 68, 0.9);
+  color: #f1f5f9;
+}
+
+:root[data-theme='dark'] .git-modal { background: rgba(0, 0, 0, 0.6); }
+
+:root[data-theme='dark'] .git-modal-content {
+  background: #1a1f2e;
+  border-color: rgba(139, 92, 246, 0.2);
+  color: #e2e8f0;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='dark'] .git-modal-header {
+  background: #1a1f2e;
+  border-bottom-color: rgba(139, 92, 246, 0.16);
+}
+:root[data-theme='dark'] .git-modal-header h3 { color: #f8fafc; }
+
+:root[data-theme='dark'] .git-close-btn { color: #94a3b8; }
+:root[data-theme='dark'] .git-close-btn:hover { background: rgba(51, 65, 85, 0.6); }
+
+:root[data-theme='dark'] .git-commits-container { background: #1a1f2e; }
+:root[data-theme='dark'] .git-empty { color: #64748b; }
+
+:root[data-theme='dark'] .git-commit { border-bottom-color: rgba(139, 92, 246, 0.12); }
+
+:root[data-theme='dark'] .git-hash {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fb923c;
+}
+
+:root[data-theme='dark'] .git-date { color: #64748b; }
+
+:root[data-theme='dark'] .git-msg-line { color: #e2e8f0; }
+:root[data-theme='dark'] .git-msg-line.level-title { color: #f8fafc; }
+:root[data-theme='dark'] .git-msg-line.level-0 { color: #e2e8f0; }
+:root[data-theme='dark'] .git-msg-line.level-1 { color: #cbd5e1; }
+:root[data-theme='dark'] .git-msg-line.level-2 { color: #94a3b8; }
+:root[data-theme='dark'] .git-msg-line.level-3 { color: #64748b; }
+
+:root[data-theme='dark'] .git-bullet { color: #a78bfa; }
+:root[data-theme='dark'] .git-bullet.sub { color: #64748b; }
+:root[data-theme='dark'] .git-author { color: #64748b; }
 </style>

@@ -6,6 +6,7 @@
   "author": "[[ package_name]]@example.com",
   "homepage": "https://example.com",
   "scripts": {
+    "prestart": "[ \"$(stat -c '%u:%a' node_modules/electron/dist/chrome-sandbox 2>/dev/null)\" = \"0:4755\" ] || (sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox)",
     "start": "electron .",
     "build": "electron-builder"
   },
@@ -15,12 +16,14 @@
     "files": [
       "launcher.js",
       "main.js",
-      "port_diagnostics.js",
-      "resources/icon.png"
+      "port_diagnostics.js"[% if icon_path %],
+      "resources/icon.png"[% endif %]
     ],
     "linux": {
       "target": "deb",
+[% if icon_path %]
       "icon": "resources/icon.png",
+[% endif %]
       "category": "Utility"
     },
     "deb": {

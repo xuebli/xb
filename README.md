@@ -1,39 +1,56 @@
-# xb - Project Management Tool
+# xb - 前后端打包构建工具
 
-**xb** 是一个基于 `uv` 又类似 `uv` 的项目管理工具，用于快速初始化 **UV + FastAPI + Vue3 + Electron** 桌面应用。
+**xb**（PyPI: `xb-init`）是一个基于 `uv` 又类似 `uv` 的项目管理工具，专为快速初始化 **UV + FastAPI + Vue3 + Electron** 桌面应用而生。一条命令拉起完整工程脚手架，开发、构建、版本管理一站式搞定。
 
-## 特性
+![首页截图](docs/screenshot.png)
 
-- 一键初始化完整项目结构
+## 核心特性
+
+- 一键初始化完整项目结构（`xb init demo`）
 - UV + FastAPI + Vue3 + Electron 开箱即用
-- 可选 sudo 免密配置
-- 内置开发、构建、版本管理脚本
-- 自动初始化 git 仓库并提交首个 commit
+- 自动安装前端和 Electron 依赖（`npm install`）
+- 自动 `git init` 并提交首个 commit（含 lock 文件）
+- 自动生成 `AGENTS.md`（AI 编码助手协作约定）
+- 内置全局亮色/暗色主题切换
+- 可选 sudo 免密配置（`--sudoers`）
+- 可选自定义应用图标（`--icon`）
+- 内置开发、构建、版本管理命令
+- 自动版本检查与一键升级（`xb --upgrade`）
+- 环境诊断（`xb doctor`）
+- DEB 安装钩子（postinst / postrm）
 
 ## 安装
 
 ```bash
-# 安装 uv
+# 安装 uv（若已有可跳过）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 安装 xb
+# 方式一：从 PyPI 安装（推荐）
+uv tool install xb-init
+
+# 方式二：从源码安装
+git clone -b release_v0 https://github.com/xuebli/xb.git
 cd xb
 uv sync
 uv tool install .
 
+# 验证
 xb --help
 ```
 
 ## 快速开始
 
 ```bash
-# 在当前目录创建 myapp/ 子目录,自动 git init + 首次 commit
-xb init myapp
+# 创建项目
+xb init demo
 
 # 带 sudo 免密配置
-xb init myapp --sudoers
+xb init demo --sudoers
 
-cd myapp
+# 带自定义图标
+xb init demo --icon ~/icons/app.png
+
+cd demo
 
 # 启动开发环境
 xb dev
@@ -45,97 +62,104 @@ xb dev status
 xb dev stop
 ```
 
-> **`xb init` 自动行为**：在目标目录执行 `git init` 并以 `chore: xb init 初始化 <package> 项目` 提交首个 commit。
-> 若系统未安装 git 或未配置 `user.name/user.email`，会打印警告但不阻塞项目创建，可稍后手动补提交。
+> **`xb init` 自动行为**：
+> - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
+> - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
+> - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目
+> - 若系统未安装 git 或未配置 `user.name/user.email`，打印警告但不阻塞
 
-## 构建
+## 命令一览
+
+| 命令 | 说明 |
+|------|------|
+| `xb init <name> [--sudoers] [--icon PATH]` | 初始化项目 |
+| `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
+| `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
+| `xb build -f / -b / -e / -a` | 构建快捷 flag |
+| `xb version [patch\|minor\|major]` | 读取或更新版本号 |
+| `xb doctor` | 检查开发环境 |
+| `xb --upgrade` | 升级 xb 到 PyPI 最新版本 |
+
+## 应用图标
 
 ```bash
-# 构建所有
-xb build
+# 显式指定图标
+xb init demo --icon ./my-icon.png
 
-# 单独构建
-xb build frontend    # 或 xb build -f
-xb build backend     # 或 xb build -b
-xb build electron    # 或 xb build -e
+# 不指定时自动查找以下约定路径：
+# ./app-icon.png, ./icon.png, ./<package>.png,
+# ./assets/app-icon.png, ./assets/icon.png, ./resources/icon.png
 ```
 
-## 项目结构
+## 生成的项目结构
 
 ```
-myapp/
-├── pyproject.toml          # Python 依赖 (uv)
+demo/
+├── pyproject.toml          # Python 依赖（uv 管理）
+├── AGENTS.md               # AI 编码助手协作约定
+├── README.md               # 项目说明（含三种启动方式详解）
+├── .gitignore
 ├── backend/                # FastAPI 后端
-│   ├── main.py
-│   ├── api/
-│   └── managers/
+│   ├── main.py             # FastAPI 入口（lifespan / CORS / SPA 兜底）
+│   ├── backend_build.py    # PyInstaller 打包脚本
+│   ├── api/                # API 路由层
+│   └── managers/           # 基础设施单例
 ├── frontend/               # Vue 3 前端
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── vite.config.js
 │   └── src/
 ├── electron/               # Electron 主进程
-├── version/                # 版本管理
-│   ├── hooks/
-│   └── scripts/
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── main.js
+│   └── resources/          # icon + postinst/postrm
+├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
-├── scripts/                # 可执行脚本
+├── datas/                  # 运行时数据（gitignore）
 ├── dev.sh                  # 开发脚本
 ├── build.sh                # 打包脚本
 └── .venv                   # Python 虚拟环境
 ```
 
-## 版本管理
+## xb 工具自身结构
 
-```bash
-# 查看当前版本
-xb version
 ```
-
-## 配置
-
-### Sudo 免密
-
-```bash
-# 启用 sudo 免密配置
-xb init myapp --sudoers
-
-# 密码存储在 configs/secrets.yaml
-# 建议设置文件权限: chmod 600 configs/secrets.yaml
+xb/
+├── cli.py                  # CLI 入口（Click + Rich）
+├── __init__.py             # 版本号
+├── commands/               # 子命令实现
+│   ├── init.py             #   初始化（升级检查、图标、npm install、git init）
+│   ├── dev.py              #   开发环境管理
+│   ├── build.py            #   构建
+│   ├── version.py          #   版本管理
+│   ├── doctor.py           #   环境诊断
+│   └── upgrade.py          #   升级 xb
+├── templates/              # Jinja2 项目模板
+│   ├── backend/
+│   ├── frontend/
+│   ├── electron/
+│   ├── configs/
+│   ├── scripts/
+│   ├── version/
+│   └── root/
+└── utils/
+    ├── template_engine.py  # 模板渲染引擎
+    ├── validators.py       # 包名校验
+    ├── click_helpers.py    # 中文化 Help 输出
+    └── version_check.py    # PyPI 版本检查（24h 缓存）
 ```
-
-## 技术栈
-
-| 组件 | 技术 |
-|------|------|
-| 后端 | FastAPI + Uvicorn |
-| 前端 | Vue 3 + Vite |
-| 桌面 | Electron |
-| 构建 | PyInstaller + electron-builder |
-| 依赖 | uv |
 
 ## 环境要求
 
 - **Python**: 3.12+
 - **Node.js**: 16+
 - **npm**: 8+
-- **OS**: Linux
+- **uv**: 已安装
+- **OS**: Linux（Ubuntu / Debian）
+
+使用 `xb doctor` 可一键检查所有环境依赖。
 
 ## 许可证
 
 MIT
-
-## 故障排查
-
-```bash
-# 后端启动失败
-cat datas/logs/backend.log
-lsof -i :8000
-
-# 手动启动测试
-cd myapp
-.venv/bin/python backend/main.py
-
-# 前端启动失败
-cat datas/logs/frontend.log
-cd frontend && rm -rf node_modules && npm install
-```
-
-

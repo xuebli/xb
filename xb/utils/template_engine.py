@@ -123,6 +123,11 @@ class TemplateEngine:
             "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
         )
         self._render_template(
+            "frontend/src/components/ThemeToggle.vue.j2",
+            components_dir / "ThemeToggle.vue",
+            context,
+        )
+        self._render_template(
             "frontend/src/components/RefreshButton.vue.j2",
             components_dir / "RefreshButton.vue",
             context,
@@ -180,10 +185,7 @@ class TemplateEngine:
             self._resize_icon(icon_path, output_path)
             return
 
-        templates_dir = Path(__file__).parent.parent / "templates" / "electron" / "resources"
-        default_icon = templates_dir / "icon.png"
-        if default_icon.exists():
-            shutil.copy(default_icon, output_path)
+        # 未指定图标时不复制任何默认图标，使用 Electron 原始默认图标
 
     @staticmethod
     def _resize_icon(src: Path, dst: Path, size: int = 256):

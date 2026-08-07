@@ -39,7 +39,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-PYPI_PACKAGE_NAME = "xiaomi-xb"
+PYPI_PACKAGE_NAME = "xb-init"
 PYPI_URL = f"https://pypi.org/pypi/{PYPI_PACKAGE_NAME}/json"
 CACHE_TTL_SECONDS = 24 * 3600  # 24h
 HTTP_TIMEOUT_BG_SECONDS = 3.0  # 后台子进程请求超时
@@ -180,7 +180,7 @@ def get_pending_upgrade_hint(current_version: str) -> Optional[str]:
     if not latest:
         return None
     return (
-        f"⬆️  xiaomi-xb {latest} 可用 (当前 {current_version})，"
+        f"⬆️  xb-init {latest} 可用 (当前 {current_version})，"
         f"运行 [bold cyan]xb upgrade[/bold cyan] 更新"
     )
 

@@ -50,9 +50,9 @@ def _prompt_upgrade_before_init() -> None:
             raise click.Abort()
         return
 
-    console.print(f"[cyan]→[/cyan] 升级到 xiaomi-xb {latest} ...")
+    console.print(f"[cyan]→[/cyan] 升级到 xb-init {latest} ...")
     result = subprocess.run(
-        ["uv", "tool", "install", "xiaomi-xb@latest", "--reinstall"],
+        ["uv", "tool", "install", "xb-init@latest", "--reinstall"],
         check=False,
     )
     if result.returncode != 0:
@@ -246,6 +246,25 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             sudo_password=sudo_password,
             icon_path=icon_path,
         )
+
+        # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
+        if shutil.which("npm"):
+            for sub in ("frontend", "electron"):
+                sub_dir = target_dir / sub
+                if (sub_dir / "package.json").exists():
+                    console.print(
+                        f"[green]→[/green] 正在安装 {sub} 依赖 ..."
+                    )
+                    subprocess.run(
+                        ["npm", "install"],
+                        cwd=sub_dir,
+                        capture_output=True,
+                        timeout=120,
+                    )
+        else:
+            console.print(
+                "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
+            )
 
         git_ok = init_git_repo(target_dir, package)
         git_line = (
