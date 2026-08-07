@@ -248,6 +248,23 @@ lsof -i :8000   # 检查端口占用（改过端口换成实际值）
 cd frontend && rm -rf node_modules && npm install
 ```
 
+**npm install 慢或超时**
+
+`frontend/.npmrc` 与 `electron/.npmrc` 已配置华为云镜像。若仍然慢，可换源重试：
+
+```bash
+cd frontend && npm install --registry=https://registry.npmjs.org/
+```
+
+Electron 的 200MB 二进制走 `electron/.npmrc` 里的 `electron_mirror`。
+安装时 npm 提示 `Unknown project config "electron_mirror"` 属正常现象——该键由
+`@electron/get` 读取，npm 本身不识别。若二进制未下载成功（`node_modules/electron/dist/`
+为空），手动补一次：
+
+```bash
+cd electron/node_modules/electron && node install.js
+```
+
 **Electron 窗口空白**
 ```bash
 # 确认前后端已构建

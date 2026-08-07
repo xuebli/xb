@@ -8,7 +8,7 @@
 
 - 一键初始化完整项目结构（`xb init demo`）
 - UV + FastAPI + Vue3 + Electron 开箱即用
-- 自动安装前端和 Electron 依赖（`npm install`）
+- 自动安装前端和 Electron 依赖（`npm install`，内置国内镜像源）
 - 自动 `git init` 并提交首个 commit（含 lock 文件）
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
@@ -64,6 +64,8 @@ xb dev stop
 
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
+>   - 生成的 `.npmrc` 已配好华为云镜像；electron 约 200MB 二进制也走镜像下载
+>   - 若安装失败或超时，会打印提示但不中断项目创建，可稍后手动重试
 > - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
 > - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目
 > - 若系统未安装 git 或未配置 `user.name/user.email`，打印警告但不阻塞
@@ -107,11 +109,13 @@ demo/
 ├── frontend/               # Vue 3 前端
 │   ├── package.json
 │   ├── package-lock.json
+│   ├── .npmrc              # npm 镜像源（华为云）
 │   ├── vite.config.js
 │   └── src/
 ├── electron/               # Electron 主进程
 │   ├── package.json
 │   ├── package-lock.json
+│   ├── .npmrc              # npm + electron 二进制镜像源
 │   ├── main.js
 │   └── resources/          # icon + postinst/postrm
 ├── version/                # 版本管理（pre-commit hook）

@@ -119,6 +119,8 @@ class TemplateEngine:
         components_dir.mkdir(exist_ok=True)
 
         self._render_template("frontend/package.json.j2", frontend_dir / "package.json", context)
+        # npm 镜像配置：npm 不继承父目录 .npmrc，frontend / electron 需各自持有一份
+        self._render_template("frontend/.npmrc.j2", frontend_dir / ".npmrc", context)
         self._render_template(
             "frontend/vite.config.js.j2", frontend_dir / "vite.config.js", context
         )
@@ -180,6 +182,7 @@ class TemplateEngine:
             "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context
         )
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
+        self._render_template("electron/.npmrc.j2", electron_dir / ".npmrc", context)
 
         self._render_template(
             "electron/resources/postinst.j2", resources_dir / "postinst", context

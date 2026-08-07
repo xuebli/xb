@@ -1,0 +1,14 @@
+# npm 镜像配置（华为云，国内下载 tarball 稳定在 2MB/s 左右）
+# 若需切回官方源：npm install --registry=https://registry.npmjs.org/
+registry=https://mirrors.huaweicloud.com/repository/npm/
+
+# electron 二进制（约 200MB）镜像。默认从 GitHub Releases 拉，国内极慢甚至超时。
+# npm 会提示 "Unknown project config"，属正常现象——该键由 @electron/get 读取，npm 本身不识别。
+electron_mirror=https://mirrors.huaweicloud.com/electron/
+
+# electron-builder 打包时下载的辅助二进制（app-builder / fpm 等）镜像
+electron_builder_binaries_mirror=https://npmmirror.com/mirrors/electron-builder-binaries/
+
+# 安装期不跑 audit / fund，减少额外网络请求
+audit=false
+fund=false

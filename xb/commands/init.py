@@ -265,6 +265,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
         )
 
         # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
+        # 镜像源由各子目录的 .npmrc 提供；electron 需下载约 200MB 二进制，超时给足 10 分钟
         if shutil.which("npm"):
             for sub in ("frontend", "electron"):
                 sub_dir = target_dir / sub
@@ -272,12 +273,30 @@ def init_command(package: str, sudoers: bool, icon: str | None):
                     console.print(
                         f"[green]→[/green] 正在安装 {sub} 依赖 ..."
                     )
-                    subprocess.run(
-                        ["npm", "install"],
-                        cwd=sub_dir,
-                        capture_output=True,
-                        timeout=120,
-                    )
+                    try:
+                        result = subprocess.run(
+                            ["npm", "install"],
+                            cwd=sub_dir,
+                            capture_output=True,
+                            text=True,
+                            timeout=600,
+                        )
+                    except subprocess.TimeoutExpired:
+                        console.print(
+                            f"[yellow]⚠[/yellow]  {sub} 依赖安装超时，"
+                            f"请稍后手动执行 [cyan]cd {sub} && npm install[/cyan]"
+                        )
+                        continue
+
+                    if result.returncode != 0:
+                        tail = (result.stderr or result.stdout or "").strip().splitlines()[-5:]
+                        console.print(
+                            f"[yellow]⚠[/yellow]  {sub} 依赖安装失败（退出码 "
+                            f"{result.returncode}），请稍后手动执行 "
+                            f"[cyan]cd {sub} && npm install[/cyan]"
+                        )
+                        for line in tail:
+                            console.print(f"   [dim]{line}[/dim]")
         else:
             console.print(
                 "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
