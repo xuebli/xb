@@ -8,6 +8,7 @@
 - 自动构建 Linux DEB 安装包
 - 智能路径管理（开发/生产自动切换）
 - 版本管理（提交时更新版本号）
+- 全局亮色/暗色主题切换
 [% if enable_sudo %]
 - Sudo 免密配置
 [% endif %]
@@ -40,67 +41,177 @@
 └── build.sh            # 打包脚本
 ```
 
-## 快速开始
-
-### 环境要求
+## 环境要求
 
 - Python 3.10+
 - Node.js 16+
-- Linux
-
-### 开发环境
+- uv（Python 包管理器）
+- Linux（Ubuntu / Debian）
 
 ```bash
-# 安装 uv
+# 安装 uv（若已有可跳过）
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-bash dev.sh start   # 启动
-bash dev.sh stop    # 停止
-bash dev.sh status  # 查看状态
 ```
 
-**访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 修改）:**
-- 前端: http://localhost:5173
-- 后端 API: http://localhost:8000
-- API 文档: http://localhost:8000/docs
+---
 
-> 改完端口后重启 `bash dev.sh restart`（或 Electron）即可生效，三端（backend / vite / electron）会同步读取 yaml。
+## 三种启动方式
 
-### 打包构建
+### 方式一：开发模式（日常开发）
+
+运行**源码**，数据保存在**项目目录** (`datas/`、`configs/`)。日常开发首选。
 
 ```bash
-bash build.sh -a    # 全部
-bash build.sh -f    # 前端
-bash build.sh -b    # 后端
-bash build.sh -e    # Electron DEB
+bash dev.sh start     # 一键启动前端 + 后端
+bash dev.sh stop      # 停止所有服务
+bash dev.sh restart   # 重启
+bash dev.sh status    # 查看状态
 ```
 
-构建产物: `electron/dist/[[ package_name]]_<version>_amd64.deb`
-
-## 核心功能
-
-### 路径管理
-- 自动区分开发/生产环境
-- 生产模式符合 Linux XDG 标准
-- 配置: `~/.config/[[ package_name]]/`
-- 数据: `~/.local/share/[[ package_name]]/`
-
-### 版本管理
+也可通过 `xb dev` 命令启动（需全局安装 xb）：
 
 ```bash
+xb dev                # 等同于 bash dev.sh start
+xb dev stop
+xb dev status
+```
 
+**启动后自动完成：**
+- `uv sync --extra dev` 同步 Python 依赖
+- 安装 Git Hooks（版本管理）
+- 检查端口占用
+- 启动后端（FastAPI）和前端（Vite dev server，支持热更新）
+
+**访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports` 段修改）：**
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端页面 | `http://<本机IP>:5173` | Vite 热更新 |
+| 后端 API | `http://<本机IP>:8000` | FastAPI |
+| API 文档 | `http://<本机IP>:8000/docs` | Swagger |
+
+> 启动时自动获取本机局域网 IP，同一网络内的设备可直接访问。
+
+#### 故障排查：手动启动（dev.sh 失败时）
+
+如果 `bash dev.sh start` 启动失败，可以手动分别启动前后端，直接看终端输出定位问题：
+
+**手动启动后端：**
+
+```bash
+# 同步依赖
+uv sync --extra dev
+
+# 直接启动（日志输出到终端，Ctrl+C 停止）
+.venv/bin/python backend/main.py
+```
+
+**手动启动前端：**
+
+```bash
+cd frontend
+
+# 首次需要安装依赖
+npm install
+
+# 启动 Vite 开发服务器
+npm run dev
+```
+
+---
+
+### 方式二：Electron 桌面预览（打包前验证）
+
+运行**构建产物**（PyInstaller 打包的后端 + Vite 构建的前端），以 Electron 桌面窗口呈现。数据保存在**项目目录**。
+
+用于：开发模式没问题后，验证打包构建是否正常，确认无误再最终打包 DEB。
+
+```bash
+# 第一步：构建后端（PyInstaller → dist/server）
+bash build.sh -b
+
+# 第二步：构建前端（Vite → frontend/dist）
+bash build.sh -f
+
+# 第三步：启动 Electron 桌面窗口
+cd electron && npm install && npm start
+```
+
+**Electron 启动流程：**
+1. `electron/main.js` 拉起构建好的后端可执行文件
+2. 监听后端 stdout，等待 `应用启动完成` 字样
+3. 创建桌面窗口，加载后端提供的前端页面
+
+> 此模式下前端走后端的 SPA 静态文件服务（非 Vite dev server），没有热更新。
+
+---
+
+### 方式三：打包分发（生产部署）
+
+构建完整 DEB 安装包，安装后通过桌面图标启动。数据保存在**用户家目录**（`~/.config/[[ package_name]]/` 和 `~/.local/share/[[ package_name]]/`）。
+
+```bash
+# 一键构建 DEB（包含前端 + 后端 + Electron 打包）
+bash build.sh -a
+```
+
+构建产物：`electron/dist/[[ package_name]]_<version>_amd64.deb`
+
+```bash
+# 安装
+sudo dpkg -i electron/dist/[[ package_name]]_<version>_amd64.deb
+
+# 启动：点击桌面图标，或命令行
+[[ package_name]]
+```
+
+**生产模式路径：**
+- 配置：`~/.config/[[ package_name]]/`
+- 数据：`~/.local/share/[[ package_name]]/`
+- 日志：`~/.local/share/[[ package_name]]/logs/`
+
+---
+
+## 推荐工作流
+
+```
+日常开发          →  bash dev.sh start
+  ↓ 开发完毕
+打包前验证        →  bash build.sh -b && bash build.sh -f && cd electron && npm start
+  ↓ 验证通过
+打包分发          →  bash build.sh -a → 得到 .deb
+```
+
+---
+
+## 构建命令
+
+```bash
+bash build.sh -a    # 全部（前端 + 后端 + Electron DEB）
+bash build.sh -f    # 仅前端 → frontend/dist
+bash build.sh -b    # 仅后端 → dist/server（PyInstaller）
+bash build.sh -e    # 仅 Electron → electron/dist/*.deb
+```
+
+## 版本管理
+
+```bash
 # 安装 Git hooks
 bash version/scripts/install_hooks.sh
-# 提交代码时自动更新版本号
+
+# 提交代码时自动弹窗选择版本号
 git commit -m "feat: add new feature"
 ```
 
-[% if enable_sudo %]
-### Sudo 配置
+## 主题切换
 
-密码存储在 configs/secrets.yaml
-修改 backend/managers/sudoers_manager.py 中的 commands 列表来添加需要免密的命令。
-例如：
+项目内置全局亮色/暗色主题切换（顶栏 🌙/☀ 按钮），用户偏好保存在 `localStorage`，首次访问跟随系统设置。
+
+[% if enable_sudo %]
+## Sudo 配置
+
+密码存储在 `configs/secrets.yaml`（已 gitignore）。
+修改 `backend/managers/sudoers_manager.py` 中的 `commands` 列表来添加需要免密的命令：
 
 ```python
 self.commands = [
@@ -120,34 +231,36 @@ self.commands = [
 | GET | `/api/config/check` | 检查配置 |
 | POST | `/api/config/save` | 保存配置 |
 [% endif %]
-| GET | `/files/list` | 列出文件 |
-| GET | `/files/read` | 读取文件内容 |
-| POST | `/files/write` | 写入文件内容 |
-
-## 调试
-
-```bash
-# 后端
-.venv/bin/python backend/main.py
-
-# 前端
-cd frontend && npm run dev
-
-# Electron
-cd electron && npm start
-```
+| GET | `/api/files/list` | 列出配置文件 |
+| GET | `/api/files/read` | 读取文件内容 |
+| POST | `/api/files/write` | 写入文件内容 |
 
 ## 常见问题
 
 **后端启动失败**
 ```bash
 cat datas/logs/backend.log
-lsof -i :8000   # 默认端口；改过 configs/global_config.yaml 后换成实际端口
+lsof -i :8000   # 检查端口占用（改过端口换成实际值）
 ```
 
 **前端构建失败**
 ```bash
 cd frontend && rm -rf node_modules && npm install
+```
+
+**Electron 窗口空白**
+```bash
+# 确认前后端已构建
+bash build.sh -b && bash build.sh -f
+cd electron && npm start
+# 按 F12 打开 DevTools 查看控制台错误
+```
+
+**端口被占用**
+```bash
+bash dev.sh stop          # 先停止旧进程
+lsof -i :8000 -i :5173   # 查看占用情况
+# 或修改 configs/global_config.yaml 中的端口号
 ```
 
 ## 许可证

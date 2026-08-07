@@ -247,6 +247,25 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             icon_path=icon_path,
         )
 
+        # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
+        if shutil.which("npm"):
+            for sub in ("frontend", "electron"):
+                sub_dir = target_dir / sub
+                if (sub_dir / "package.json").exists():
+                    console.print(
+                        f"[green]→[/green] 正在安装 {sub} 依赖 ..."
+                    )
+                    subprocess.run(
+                        ["npm", "install"],
+                        cwd=sub_dir,
+                        capture_output=True,
+                        timeout=120,
+                    )
+        else:
+            console.print(
+                "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
+            )
+
         git_ok = init_git_repo(target_dir, package)
         git_line = (
             "[green]→[/green] 已初始化 git 仓库并完成首个 commit\n"
