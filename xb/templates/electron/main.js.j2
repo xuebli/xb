@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -43,6 +43,11 @@ const BACKEND_PORT = readPort('backend', 8000);
 let win;
 let backend;
 let zoomFactor = 1;
+let terminalFocused = false;
+
+ipcMain.on('terminal-focus', (_event, focused) => {
+    terminalFocused = !!focused;
+});
 
 function clampZoom(value) {
     return Math.min(3, Math.max(0.3, value));
@@ -76,7 +81,10 @@ app.whenReady().then(() => {
         if (output.includes('应用启动完成')) {
             win = new BrowserWindow({
                 width: 1200,
-                height: 800
+                height: 800,
+                webPreferences: {
+                    preload: path.join(__dirname, 'preload.js')
+                }
             });
 
             // 自定义常用桌面快捷键：隐藏菜单后，显式保留调试、全屏与缩放能力。
@@ -98,6 +106,15 @@ app.whenReady().then(() => {
                 if (isF11) {
                     win.setFullScreen(!win.isFullScreen());
                     event.preventDefault();
+                    return;
+                }
+
+                // 终端聚焦时把 Ctrl +/-/0 让给 xterm 调字号：整页 setZoomFactor 会缩放
+                // canvas 导致字体发虚、鼠标选区错位，终端场景只应改 fontSize。
+                // terminalFocused 由 preload 经 IPC 上报（见 preload.js）
+                const isZoomKey = ctrlOrCmd
+                    && (input.key === '+' || input.key === '=' || input.key === '-' || input.key === '0');
+                if (isZoomKey && terminalFocused) {
                     return;
                 }
 
@@ -125,6 +142,7 @@ app.whenReady().then(() => {
 
             // Ctrl/Cmd + 鼠标滚轮触发 Chromium zoom-changed，这里接管缩放幅度。
             win.webContents.on('zoom-changed', (event, zoomDirection) => {
+                if (terminalFocused) return;
                 event.preventDefault();
                 applyZoom(zoomDirection === 'in' ? 0.1 : -0.1);
             });

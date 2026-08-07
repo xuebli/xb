@@ -118,6 +118,9 @@ class TemplateEngine:
         components_dir = src_dir / "components"
         components_dir.mkdir(exist_ok=True)
 
+        composables_dir = src_dir / "composables"
+        composables_dir.mkdir(exist_ok=True)
+
         self._render_template("frontend/package.json.j2", frontend_dir / "package.json", context)
         # npm 镜像配置：npm 不继承父目录 .npmrc，frontend / electron 需各自持有一份
         self._render_template("frontend/.npmrc.j2", frontend_dir / ".npmrc", context)
@@ -168,6 +171,16 @@ class TemplateEngine:
             components_dir / "TerminalView.vue",
             context,
         )
+        self._render_template(
+            "frontend/src/components/TerminalPanel.vue.j2",
+            components_dir / "TerminalPanel.vue",
+            context,
+        )
+        self._render_template(
+            "frontend/src/composables/useTerminalSessions.js.j2",
+            composables_dir / "useTerminalSessions.js",
+            context,
+        )
 
     def _create_electron(self, target_dir: Path, context: Dict[str, Any]):
         electron_dir = target_dir / "electron"
@@ -177,6 +190,7 @@ class TemplateEngine:
         resources_dir.mkdir(exist_ok=True)
 
         self._render_template("electron/main.js.j2", electron_dir / "main.js", context)
+        self._render_template("electron/preload.js.j2", electron_dir / "preload.js", context)
         self._render_template("electron/launcher.js.j2", electron_dir / "launcher.js", context)
         self._render_template(
             "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context

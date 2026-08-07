@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import DashboardHome from './components/DashboardHome.vue'
-import TerminalView from './components/TerminalView.vue'
+import TerminalPanel from './components/TerminalPanel.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
@@ -95,8 +95,8 @@ const openSettings = () => {
         :class="currentPage === 'home' ? 'page-content--centered' : 'page-content--stretch'"
       >
         <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
-        <TerminalView v-else-if="currentPage === 'terminal'" />
         <FileManager v-else-if="currentPage === 'settings'" />
+        <TerminalPanel v-show="currentPage === 'terminal'" />
       </div>
     </main>
   </div>

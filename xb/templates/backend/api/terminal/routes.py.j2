@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 import os
 import pty
 import select
@@ -38,9 +39,7 @@ async def _handle_local_terminal(websocket: WebSocket):
     try:
         master_fd, slave_fd = pty.openpty()
 
-        # 设置终端大小 (rows=40, cols=120)
-        winsize = struct.pack("HHHH", 40, 120, 0, 0)
-        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+        _set_winsize(slave_fd, 40, 120)
 
         proc = subprocess.Popen(
             ["/bin/bash"],
@@ -75,7 +74,8 @@ async def _handle_local_terminal(websocket: WebSocket):
             while not stop_event.is_set():
                 try:
                     message = await websocket.receive_text()
-                    os.write(master_fd, message.encode("utf-8"))
+                    if not _try_apply_resize(master_fd, message):
+                        os.write(master_fd, message.encode("utf-8"))
                 except WebSocketDisconnect:
                     break
                 except Exception:
@@ -119,6 +119,29 @@ async def _handle_local_terminal(websocket: WebSocket):
         except Exception:
             pass
         logger.info("本地终端连接已关闭")
+
+
+def _set_winsize(fd: int, rows: int, cols: int) -> None:
+    """同步 pty 窗口尺寸，全屏 TUI（如 opencode/vim）据此决定绘制区域"""
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
+def _try_apply_resize(master_fd: int, message: str) -> bool:
+    """识别前端的 resize 控制帧；返回 True 表示该消息已消费、不应写入 pty"""
+    if not message.startswith('{"type":"resize"'):
+        return False
+    try:
+        payload = json.loads(message)
+    except ValueError:
+        return False
+    if payload.get("type") != "resize":
+        return False
+    rows = int(payload.get("rows") or 0)
+    cols = int(payload.get("cols") or 0)
+    if rows > 0 and cols > 0:
+        _set_winsize(master_fd, rows, cols)
+    return True
 
 
 def _pty_read(fd: int, stop_event: threading.Event) -> str | None:
