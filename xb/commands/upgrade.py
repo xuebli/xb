@@ -1,10 +1,10 @@
 """
 xb upgrade 命令实现
 
-封装 `uv tool install xiaomi-xb@latest --reinstall`，让用户一行命令搞定升级。
+封装 `uv tool install xb-init@latest --reinstall`，让用户一行命令搞定升级。
 
 为什么不用 `uv tool upgrade`：
-- uv tool 默认装包时把版本 exact-pin 到 pyproject 里 (xiaomi-xb==1.1.5)
+- uv tool 默认装包时把版本 exact-pin 到 pyproject 里 (xb-init==1.1.5)
 - `uv tool upgrade` 命令明确不破坏已有 pin，对 pin 用户它是 no-op
 - 必须用 `uv tool install <pkg>@latest --reinstall` 才能跨过 pin 取 PyPI 最新
 
@@ -24,7 +24,7 @@ from rich.console import Console
 
 console = Console()
 
-PACKAGE_NAME = "xiaomi-xb"
+PACKAGE_NAME = "xb-init"
 
 
 def run_upgrade() -> None:

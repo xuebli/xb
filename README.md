@@ -1,6 +1,6 @@
 # xb - 前后端打包构建工具
 
-**xb**（PyPI: `xiaomi-xb`）是一个基于 `uv` 又类似 `uv` 的项目管理工具，专为快速初始化 **UV + FastAPI + Vue3 + Electron** 桌面应用而生。一条命令拉起完整工程脚手架，开发、构建、版本管理一站式搞定。
+**xb**（PyPI: `xb-init`）是一个基于 `uv` 又类似 `uv` 的项目管理工具，专为快速初始化 **UV + FastAPI + Vue3 + Electron** 桌面应用而生。一条命令拉起完整工程脚手架，开发、构建、版本管理一站式搞定。
 
 ## 核心特性
 
@@ -22,7 +22,7 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 方式一：从 PyPI 安装（推荐）
-uv tool install xiaomi-xb
+uv tool install xb-init
 
 # 方式二：从源码安装
 cd xb

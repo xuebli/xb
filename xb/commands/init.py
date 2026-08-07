@@ -50,9 +50,9 @@ def _prompt_upgrade_before_init() -> None:
             raise click.Abort()
         return
 
-    console.print(f"[cyan]→[/cyan] 升级到 xiaomi-xb {latest} ...")
+    console.print(f"[cyan]→[/cyan] 升级到 xb-init {latest} ...")
     result = subprocess.run(
-        ["uv", "tool", "install", "xiaomi-xb@latest", "--reinstall"],
+        ["uv", "tool", "install", "xb-init@latest", "--reinstall"],
         check=False,
     )
     if result.returncode != 0:
