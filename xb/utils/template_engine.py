@@ -57,6 +57,7 @@ class TemplateEngine:
         backend_dir.mkdir(exist_ok=True)
 
         (backend_dir / "api").mkdir(exist_ok=True)
+        (backend_dir / "api" / "terminal").mkdir(exist_ok=True)
         (backend_dir / "managers").mkdir(exist_ok=True)
 
         self._render_template("backend/main.py.j2", backend_dir / "main.py", context)
@@ -72,6 +73,18 @@ class TemplateEngine:
         )
         self._render_template(
             "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
+        )
+
+        # 终端模块
+        self._render_template(
+            "backend/api/terminal/__init__.py.j2",
+            backend_dir / "api" / "terminal" / "__init__.py",
+            context,
+        )
+        self._render_template(
+            "backend/api/terminal/routes.py.j2",
+            backend_dir / "api" / "terminal" / "routes.py",
+            context,
         )
 
         self._render_template(
@@ -146,6 +159,11 @@ class TemplateEngine:
         self._render_template(
             "frontend/src/components/FileManager.vue.j2",
             components_dir / "FileManager.vue",
+            context,
+        )
+        self._render_template(
+            "frontend/src/components/TerminalView.vue.j2",
+            components_dir / "TerminalView.vue",
             context,
         )
 

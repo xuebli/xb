@@ -1,0 +1,287 @@
+<script setup>
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { Terminal } from 'xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import 'xterm/css/xterm.css'
+
+const BASE = import.meta.env.VITE_API_BASE || ''
+
+const connected = ref(false)
+const connecting = ref(false)
+
+let term = null
+let fitAddon = null
+let ws = null
+const termRef = ref(null)
+
+function getWsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const base = BASE.replace(/^https?:\/\//, '') || location.host
+  return `${proto}//${base}/api/terminal/ws`
+}
+
+function initTerminal() {
+  if (term) {
+    term.dispose()
+  }
+
+  term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'block',
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    theme: {
+      background: '#0a0e17',
+      foreground: '#e4e8f0',
+      cursor: '#3b82f6',
+      selectionBackground: 'rgba(59,130,246,0.3)',
+      black: '#1e2740',
+      red: '#ef4444',
+      green: '#22c55e',
+      yellow: '#f59e0b',
+      blue: '#3b82f6',
+      magenta: '#8b5cf6',
+      cyan: '#06b6d4',
+      white: '#e4e8f0',
+      brightBlack: '#5a6478',
+      brightRed: '#fca5a5',
+      brightGreen: '#86efac',
+      brightYellow: '#fde047',
+      brightBlue: '#93c5fd',
+      brightMagenta: '#c4b5fd',
+      brightCyan: '#67e8f9',
+      brightWhite: '#f8fafc',
+    },
+    allowProposedApi: true,
+  })
+
+  fitAddon = new FitAddon()
+  term.loadAddon(fitAddon)
+
+  nextTick(() => {
+    if (termRef.value) {
+      term.open(termRef.value)
+      fitAddon.fit()
+    }
+  })
+
+  term.onData((data) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data)
+    }
+  })
+}
+
+function connect() {
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+
+  connected.value = false
+  connecting.value = true
+
+  if (term) {
+    term.clear()
+    term.reset()
+  }
+
+  const url = getWsUrl()
+  ws = new WebSocket(url)
+
+  ws.onopen = () => {
+    connecting.value = false
+    connected.value = true
+  }
+
+  ws.onmessage = (event) => {
+    if (term) {
+      term.write(event.data)
+    }
+  }
+
+  ws.onclose = () => {
+    connected.value = false
+    connecting.value = false
+    if (term) {
+      term.write('\r\n\x1b[90m--- 连接已断开 ---\x1b[0m\r\n')
+    }
+  }
+
+  ws.onerror = () => {
+    connected.value = false
+    connecting.value = false
+    if (term) {
+      term.write('\r\n\x1b[31m连接失败，请检查后端服务是否正常运行\x1b[0m\r\n')
+    }
+  }
+}
+
+function disconnect() {
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  connected.value = false
+}
+
+function handleResize() {
+  if (fitAddon) {
+    fitAddon.fit()
+  }
+}
+
+onMounted(() => {
+  initTerminal()
+  window.addEventListener('resize', handleResize)
+  connect()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  if (term) {
+    term.dispose()
+    term = null
+  }
+})
+</script>
+
+<template>
+  <div class="terminal-page">
+    <div class="terminal-toolbar">
+      <div class="toolbar-left">
+        <span class="terminal-title">终端</span>
+        <span class="terminal-hint">可在此运行 opencode / codex 等 AI 工具</span>
+      </div>
+      <div class="toolbar-right">
+        <span class="status-indicator" :class="{ on: connected, connecting: connecting }">
+          {{ connecting ? '连接中...' : connected ? '已连接' : '未连接' }}
+        </span>
+        <button v-if="!connected" class="tool-btn connect-btn" @click="connect" :disabled="connecting">
+          连接
+        </button>
+        <button v-else class="tool-btn disconnect-btn" @click="disconnect">
+          断开
+        </button>
+      </div>
+    </div>
+    <div class="terminal-container" ref="termRef"></div>
+  </div>
+</template>
+
+<style scoped>
+.terminal-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0a0e17;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, #1e2740);
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(14, 20, 32, 0.95);
+  border-bottom: 1px solid var(--color-border, #1e2740);
+  flex-shrink: 0;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.terminal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-bright, #f0f4ff);
+}
+
+.terminal-hint {
+  font-size: 11px;
+  color: var(--color-text-muted, #5a6478);
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-indicator {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--color-border, #1e2740);
+  color: var(--color-text-muted, #5a6478);
+}
+
+.status-indicator.on {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-indicator.connecting {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.tool-btn {
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.connect-btn {
+  background: var(--color-primary, #3b82f6);
+  color: #fff;
+}
+
+.connect-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.connect-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.disconnect-btn {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.disconnect-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.terminal-container {
+  flex: 1;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.terminal-container :deep(.xterm) {
+  height: 100%;
+}
+
+.terminal-container :deep(.xterm-viewport) {
+  overflow-y: auto !important;
+}
+</style>

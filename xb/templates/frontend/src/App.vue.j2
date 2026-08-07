@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import DashboardHome from './components/DashboardHome.vue'
+import TerminalView from './components/TerminalView.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
@@ -9,10 +10,16 @@ import ConfigSetup from './components/ConfigSetup.vue'
 [% endif %]
 import FileManager from './components/FileManager.vue'
 
+const currentPage = ref('home')
 const fileManager = ref(null)
 [% if icon_path %]
 const showIconFallback = ref(false)
 [% endif %]
+
+const navItems = [
+  { id: 'home', label: '首页', icon: '🏠' },
+  { id: 'terminal', label: '终端', icon: '💻' },
+]
 
 const handleRefresh = () => {
   window.location.reload()
@@ -71,7 +78,23 @@ const openSettings = () => {
     </header>
 
     <main class="workspace">
-      <DashboardHome @open-settings="openSettings" />
+      <nav class="side-nav">
+        <button
+          v-for="item in navItems"
+          :key="item.id"
+          class="nav-item"
+          :class="{ active: currentPage === item.id }"
+          @click="currentPage = item.id"
+          :title="item.label"
+        >
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-label">{{ item.label }}</span>
+        </button>
+      </nav>
+      <div class="page-content">
+        <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
+        <TerminalView v-else-if="currentPage === 'terminal'" />
+      </div>
     </main>
   </div>
 </template>
