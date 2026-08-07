@@ -31,6 +31,107 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-theme='dark'] {
+  --bg: #0f1219;
+  --surface: rgba(30, 35, 50, 0.82);
+  --surface-soft: rgba(30, 35, 50, 0.56);
+  --text: #e2e8f0;
+  --text-h: #f8fafc;
+  --muted: #94a3b8;
+  --border: rgba(139, 92, 246, 0.28);
+  --border-strong: rgba(34, 211, 238, 0.52);
+  --accent: #a78bfa;
+  --accent-dark: #7c3aed;
+  --accent-soft: rgba(167, 139, 250, 0.16);
+  --blue: #22d3ee;
+  --blue-soft: rgba(34, 211, 238, 0.18);
+  --amber: #fb923c;
+  --amber-soft: rgba(251, 146, 60, 0.18);
+  --green: #34d399;
+  --green-soft: rgba(52, 211, 153, 0.18);
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  --shadow-soft: 0 16px 44px rgba(0, 0, 0, 0.35);
+
+  color: var(--text);
+  background: var(--bg);
+}
+
+[data-theme='dark'] body {
+  background: var(--bg);
+}
+
+/* === 背景动效 === */
+[data-theme='dark'] .ambient-bg {
+  background:
+    radial-gradient(circle at 20% 18%, rgba(125, 92, 255, 0.10), transparent 30%),
+    radial-gradient(circle at 82% 20%, rgba(34, 211, 238, 0.08), transparent 28%),
+    radial-gradient(circle at 72% 82%, rgba(16, 185, 129, 0.06), transparent 30%),
+    linear-gradient(180deg, #0f1219 0%, #131824 54%, #110f1e 100%);
+}
+
+[data-theme='dark'] .ambient-bg::before {
+  background: radial-gradient(circle, rgba(124, 58, 237, 0.08), transparent 62%);
+}
+
+[data-theme='dark'] .ambient-bg::after {
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.08), transparent 64%);
+}
+
+[data-theme='dark'] .node {
+  background: rgba(167, 139, 250, 0.36);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.24);
+}
+
+[data-theme='dark'] .link {
+  background: linear-gradient(90deg, transparent, rgba(167, 139, 250, 0.12), rgba(34, 211, 238, 0.10), transparent);
+}
+
+/* === 顶栏 === */
+[data-theme='dark'] .topbar {
+  background: rgba(15, 18, 25, 0.78);
+  border-bottom-color: rgba(139, 92, 246, 0.22);
+}
+
+[data-theme='dark'] .brand-block h1 { color: #f8fafc; }
+[data-theme='dark'] .brand-block p { color: #94a3b8; }
+
+[data-theme='dark'] .icon-button {
+  background: rgba(30, 35, 50, 0.72);
+  color: #f1f5f9;
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .icon-button:hover {
+  border-color: var(--border-strong);
+  background: rgba(40, 48, 68, 0.8);
+}
+
+/* === 通用文本 === */
+[data-theme='dark'] code {
+  color: #e2e8f0;
+  background: rgba(30, 35, 50, 0.8);
+  border-color: rgba(139, 92, 246, 0.24);
+}
+
+/* === 首页面板 (intro) === */
+[data-theme='dark'] .intro-copy,
+[data-theme='dark'] .panel,
+[data-theme='dark'] .intro-panel {
+  background: rgba(22, 27, 40, 0.78);
+  border-color: rgba(139, 92, 246, 0.22);
+}
+
+[data-theme='dark'] .intro-copy h2 { color: #f8fafc; }
+[data-theme='dark'] .intro-copy p { color: #cbd5e1; }
+[data-theme='dark'] .panel-heading h3 { color: #f8fafc; }
+[data-theme='dark'] .stack-row { border-bottom-color: rgba(139, 92, 246, 0.16); }
+[data-theme='dark'] .stack-row strong { color: #f1f5f9; }
+[data-theme='dark'] .stack-row span { color: #94a3b8; }
+
+/* === eyebrow 暗色 === */
+[data-theme='dark'] .eyebrow,
+[data-theme='dark'] .panel-kicker { color: #a78bfa; }
+
 * { box-sizing: border-box; }
 
 body {

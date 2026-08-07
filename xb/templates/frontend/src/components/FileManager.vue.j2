@@ -624,4 +624,104 @@ defineExpose({ open })
   .yaml-files { max-height: 180px; border-right: 0; border-bottom: 1px solid #e5eaf2; }
   .field-row { grid-template-columns: 1fr; }
 }
+
+/* === 暗色模式 === */
+:root[data-theme='dark'] .file-overlay { background: rgba(0, 0, 0, 0.6); }
+
+:root[data-theme='dark'] .file-dialog {
+  background: #1a1f2e;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='dark'] .dialog-header {
+  border-bottom-color: rgba(139, 92, 246, 0.2);
+  background: #1a1f2e;
+}
+:root[data-theme='dark'] .dialog-header h2 { color: #f1f5f9; }
+
+:root[data-theme='dark'] .close-btn { color: #94a3b8; }
+:root[data-theme='dark'] .close-btn:hover { background: rgba(51, 65, 85, 0.6); }
+
+:root[data-theme='dark'] .settings-nav {
+  background: #151923;
+  border-right-color: rgba(139, 92, 246, 0.16);
+}
+:root[data-theme='dark'] .settings-nav button { color: #e2e8f0; }
+:root[data-theme='dark'] .settings-nav button.active {
+  background: rgba(139, 92, 246, 0.14);
+  border-left-color: #a78bfa;
+  color: #f8fafc;
+}
+:root[data-theme='dark'] .settings-nav button.muted { color: #64748b; }
+
+:root[data-theme='dark'] .content-header { border-bottom-color: rgba(139, 92, 246, 0.16); }
+:root[data-theme='dark'] .content-header h3 { color: #f8fafc; }
+:root[data-theme='dark'] .content-header p { color: #94a3b8; }
+
+:root[data-theme='dark'] .settings-content { color: #e2e8f0; }
+
+:root[data-theme='dark'] .settings-section {
+  background: rgba(30, 35, 50, 0.6);
+  border-color: rgba(139, 92, 246, 0.18);
+}
+:root[data-theme='dark'] .settings-section h4 { color: #f8fafc; }
+:root[data-theme='dark'] .section-hint { color: #94a3b8; }
+
+:root[data-theme='dark'] .field-row { color: #f1f5f9; }
+:root[data-theme='dark'] .field-row input {
+  background: rgba(15, 18, 25, 0.7);
+  border-color: rgba(100, 116, 139, 0.4);
+  color: #f8fafc;
+}
+:root[data-theme='dark'] .field-row input:focus {
+  border-color: #a78bfa;
+}
+
+:root[data-theme='dark'] .settings-message {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(52, 211, 153, 0.3);
+  color: #34d399;
+}
+:root[data-theme='dark'] .validation-error {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+:root[data-theme='dark'] .state-text { color: #94a3b8; }
+:root[data-theme='dark'] .path-strip {
+  background: rgba(15, 18, 25, 0.5);
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .yaml-files { border-right-color: rgba(139, 92, 246, 0.16); }
+:root[data-theme='dark'] .file-item { color: #e2e8f0; }
+:root[data-theme='dark'] .file-item:hover,
+:root[data-theme='dark'] .file-item.active { background: rgba(139, 92, 246, 0.14); }
+:root[data-theme='dark'] .file-item small { color: #64748b; }
+
+:root[data-theme='dark'] .code-editor {
+  background: rgba(15, 18, 25, 0.7);
+  color: #f1f5f9;
+}
+
+:root[data-theme='dark'] .editor-placeholder { color: #64748b; }
+
+:root[data-theme='dark'] .dialog-footer {
+  background: #151923;
+  border-top-color: rgba(139, 92, 246, 0.16);
+  color: #94a3b8;
+}
+:root[data-theme='dark'] .cancel-btn {
+  background: rgba(30, 35, 50, 0.7);
+  border-color: rgba(100, 116, 139, 0.4);
+  color: #e2e8f0;
+}
+:root[data-theme='dark'] .cancel-btn:hover { background: rgba(51, 65, 85, 0.6); }
+
+:root[data-theme='dark'] .save-top,
+:root[data-theme='dark'] .primary-btn {
+  background: #a78bfa;
+  color: #0f1219;
+}
 </style>

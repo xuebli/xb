@@ -114,6 +114,7 @@ bash version/scripts/install_hooks.sh
 - **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
 - **写完配置必须精确 reload**：`path_manager.reload_config(<filename>)` 传具体文件名，**不要** `reload_config()` 全清——配置缓存是按文件名独立的，全清会无端废掉其他文件的缓存（详见 `path_manager.reload_config` docstring）。
 - **Vue 用 `<script setup>` + 组合式 API**，API 调用直接 `fetch`（无 axios），失败统一 `alert + console.error`。组件名 PascalCase，文件名同步。
+- **前端样式必须同时适配亮色和暗色主题**：项目通过 `<html data-theme="dark|light">` 切换主题，`ThemeToggle.vue` 组件负责切换并持久化到 `localStorage`。**任何新增或修改的样式，如果使用了硬编码颜色（`#xxx`、`rgb()`、`rgba()` 中不透明的值），都必须同时提供 `[data-theme='dark']` 或 `:root[data-theme='dark']`（scoped 组件内）的暗色覆盖**。优先使用 CSS 变量（`var(--text)`、`var(--bg)` 等），只有 CSS 变量覆盖不到的才加具体暗色选择器。暗色模式下文字必须是浅色（`#e2e8f0` / `#f1f5f9` / `#f8fafc`），背景必须是深色（`#0f1219` / `#1a1f2e` / `#151923`），不允许出现暗色背景+深色文字导致看不清的情况。
 - **前端新增代码必须模块化**：`App.vue` 只做应用壳、顶栏、全局弹窗挂载和页面编排；页面级内容放 `views/`，可复用 UI 放 `components/<feature>/`，API 调用放 `services/` 或 `composables/`，纯函数放 `utils/`。不要把一个功能的模板、状态、请求、格式化、弹窗、表格全塞进单个 `.vue`。
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
@@ -297,6 +298,7 @@ class FeishuBitableManager:
 
 # ANTI-PATTERNS（本项目禁止）
 
+- ❌ 不要写只适配亮色的样式 —— 项目已启用全局亮/暗主题切换（`data-theme` 属性）。任何硬编码颜色都必须同时写暗色覆盖，或改用 CSS 变量。尤其注意 scoped 组件内要用 `:root[data-theme='dark'] .xxx` 而非全局 `[data-theme='dark'] .xxx`（后者穿透不了 scoped）。
 - ❌ 不要 `from backend.managers import ...` —— pyproject 把 `backend/` 当包根，应 `from managers import ...`。开发态可能能跑，PyInstaller 打包后 hidden-import 不匹配，运行时崩溃。
 - ❌ 不要把所有 API 都塞进 `backend/api/config.py`、`backend/api/main.py` 或单个 `<feature>.py` —— 按业务域拆 `api/<feature>/routes.py`，复杂域继续拆 `validators.py` / `dependencies.py` / 子 routes。
 - ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、sudo、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。

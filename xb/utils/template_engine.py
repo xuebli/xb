@@ -123,6 +123,11 @@ class TemplateEngine:
             "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
         )
         self._render_template(
+            "frontend/src/components/ThemeToggle.vue.j2",
+            components_dir / "ThemeToggle.vue",
+            context,
+        )
+        self._render_template(
             "frontend/src/components/RefreshButton.vue.j2",
             components_dir / "RefreshButton.vue",
             context,

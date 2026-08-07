@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import DashboardHome from './components/DashboardHome.vue'
 import RefreshButton from './components/RefreshButton.vue'
+import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
 [% if enable_sudo %]
 import ConfigSetup from './components/ConfigSetup.vue'
@@ -61,6 +62,7 @@ const openSettings = () => {
       </div>
 
       <div class="toolbar">
+        <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
         <button class="icon-button" @click="openSettings" title="配置中心" aria-label="配置中心">
           <span>⚙</span>
