@@ -5,10 +5,13 @@
 ## 特性
 
 - 一键启动开发环境
-- 自动构建 Linux DEB 安装包
+- 自动构建 Linux DEB 与 Windows NSIS 安装包
 - 智能路径管理（开发/生产自动切换）
 - 版本管理（提交时更新版本号）
 - 全局亮色/暗色主题切换
+[% if enable_terminal %]
+- 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
+[% endif %]
 [% if enable_sudo %]
 - Sudo 免密配置
 [% endif %]
@@ -37,8 +40,8 @@
 │   └── scripts/
 ├── configs/            # 配置文件
 ├── datas/              # 运行时数据
-├── dev.sh              # 开发脚本
-└── build.sh            # 打包脚本
+├── dev.py              # 开发脚本
+└── build.py            # 打包脚本
 ```
 
 ## 环境要求
@@ -46,7 +49,10 @@
 - Python 3.10+
 - Node.js 16+
 - uv（Python 包管理器）
-- Linux（Ubuntu / Debian）
+- Windows 10/11 或 Ubuntu/Debian
+[% if enable_terminal %]
+- Windows 终端自动安装 `pywinpty`，提供 PowerShell 原生交互能力
+[% endif %]
 
 ```bash
 # 安装 uv（若已有可跳过）
@@ -62,25 +68,38 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 运行**源码**，数据保存在**项目目录** (`datas/`、`configs/`)。日常开发首选。
 
 ```bash
-bash dev.sh start     # 一键启动前端 + 后端
-bash dev.sh stop      # 停止所有服务
-bash dev.sh restart   # 重启
-bash dev.sh status    # 查看状态
+./dev.py start     # 一键启动前端 + 后端
+./dev.py stop      # 停止所有服务
+./dev.py restart   # 重启
+./dev.py status    # 查看状态
 ```
+
+> 脚本自带 shebang 且已加可执行位，可直接用文件名运行。
+> Windows PowerShell 下推荐写作 `python .\dev.py start`；
+> Linux 可写作 `./dev.py start`。Windows 后台服务会写入
+> `datas/logs/` 并与当前 PowerShell 的输入隔离，启动命令完成后不会占用当前终端。
 
 也可通过 `xb dev` 命令启动（需全局安装 xb）：
 
 ```bash
-xb dev                # 等同于 bash dev.sh start
+xb dev                # 等同于 ./dev.py start
 xb dev stop
 xb dev status
 ```
 
 **启动后自动完成：**
-- `uv sync --extra dev` 同步 Python 依赖
+- 首次启动时执行 `uv sync --extra dev` 同步 Python 依赖
 - 安装 Git Hooks（版本管理）
 - 检查端口占用
 - 启动后端（FastAPI）和前端（Vite dev server，支持热更新）
+- 开发态通过 Vite 代理转发 `/api`[% if enable_terminal %] 和 WebSocket[% endif %] 到 FastAPI
+
+[% if enable_terminal %]
+Windows 终端使用 PowerShell + ConPTY，支持命令历史、方向键、复制粘贴、
+Tab 补全和 Ctrl+C。Ubuntu/Linux 继续使用 bash + Unix PTY。
+Windows `cmd.exe` 没有 `ls` 内置命令；PowerShell 中 `ls` 是 `Get-ChildItem`
+的别名，Ubuntu/Linux 中可直接使用 `ls`。
+[% endif %]
 
 **访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports` 段修改）：**
 
@@ -92,9 +111,9 @@ xb dev status
 
 > 启动时自动获取本机局域网 IP，同一网络内的设备可直接访问。
 
-#### 故障排查：手动启动（dev.sh 失败时）
+#### 故障排查：手动启动（dev.py 失败时）
 
-如果 `bash dev.sh start` 启动失败，可以手动分别启动前后端，直接看终端输出定位问题：
+如果 `./dev.py start` 启动失败，可以手动分别启动前后端，直接看终端输出定位问题：
 
 **手动启动后端：**
 
@@ -102,8 +121,16 @@ xb dev status
 # 同步依赖
 uv sync --extra dev
 
-# 直接启动（日志输出到终端，Ctrl+C 停止）
+# 直接启动（Linux/macOS，日志输出到终端，Ctrl+C 停止）
+# Linux/macOS
 .venv/bin/python backend/main.py
+```
+
+Windows PowerShell 单独启动后端：
+
+```powershell
+uv sync --extra dev
+.\.venv\Scripts\python.exe backend\main.py
 ```
 
 **手动启动前端：**
@@ -124,17 +151,28 @@ npm run dev
 
 运行**构建产物**（PyInstaller 打包的后端 + Vite 构建的前端），以 Electron 桌面窗口呈现。数据保存在**项目目录**。
 
-用于：开发模式没问题后，验证打包构建是否正常，确认无误再最终打包 DEB。
+用于：开发模式没问题后，验证打包构建是否正常。Linux 生成 DEB，
+Windows 生成 NSIS 安装程序。
 
 ```bash
 # 第一步：构建后端（PyInstaller → dist/server）
-bash build.sh -b
+./build.py -b
 
 # 第二步：构建前端（Vite → frontend/dist）
-bash build.sh -f
+./build.py -f
 
 # 第三步：启动 Electron 桌面窗口
 cd electron && npm install && npm start
+```
+
+Windows PowerShell 等价命令：
+
+```powershell
+python .\build.py -b
+python .\build.py -f
+Set-Location electron
+npm install
+npm start
 ```
 
 **Electron 启动流程：**
@@ -148,14 +186,23 @@ cd electron && npm install && npm start
 
 ### 方式三：打包分发（生产部署）
 
-构建完整 DEB 安装包，安装后通过桌面图标启动。数据保存在**用户家目录**（`~/.config/[[ package_name]]/` 和 `~/.local/share/[[ package_name]]/`）。
+Linux 构建完整 DEB 安装包，Windows 构建 NSIS 安装程序。安装后通过桌面图标启动。
+配置和数据目录由系统决定：
+Linux 使用 `~/.config/[[ package_name]]/`、`~/.local/share/[[ package_name]]/datas/`
+与 `~/.local/share/[[ package_name]]/scripts/`；
+Windows 使用 `C:\Users\你的用户名\AppData\Roaming\[[ package_name]]\`、
+`C:\Users\你的用户名\AppData\Local\[[ package_name]]\datas\` 与
+`C:\Users\你的用户名\AppData\Local\[[ package_name]]\scripts\`。
 
 ```bash
-# 一键构建 DEB（包含前端 + 后端 + Electron 打包）
-bash build.sh -a
+# 一键构建当前平台安装包（Linux 为 DEB，Windows 为 NSIS）
+./build.py -a
 ```
 
-构建产物：`electron/dist/[[ package_name]]_<version>_amd64.deb`
+构建产物位于 `electron/dist/`：
+
+- Linux：`*.deb`
+- Windows：`*.exe`
 
 ```bash
 # 安装
@@ -166,20 +213,29 @@ sudo dpkg -i electron/dist/[[ package_name]]_<version>_amd64.deb
 ```
 
 **生产模式路径：**
-- 配置：`~/.config/[[ package_name]]/`
-- 数据：`~/.local/share/[[ package_name]]/`
-- 日志：`~/.local/share/[[ package_name]]/logs/`
+
+| 平台 | 配置 | 数据/日志 | 用户脚本 |
+|------|------|-----------|----------|
+| Linux | `~/.config/[[ package_name]]/` | `~/.local/share/[[ package_name]]/datas/` | `~/.local/share/[[ package_name]]/scripts/` |
+| Windows | `%APPDATA%\[[ package_name]]\` | `%LOCALAPPDATA%\[[ package_name]]\datas\` | `%LOCALAPPDATA%\[[ package_name]]\scripts\` |
+| macOS | `~/Library/Application Support/[[ package_name]]/` | `~/Library/Application Support/[[ package_name]]/datas/` | `~/Library/Application Support/[[ package_name]]/scripts/` |
+
+安装包中的 `scripts/` 会在首次启动时复制到上述用户脚本目录。已有文件不会被覆盖。
+
+Windows 卸载时会显示“删除用户数据（配置、日志和脚本）”可选项，默认不勾选。
+勾选后会删除 `%APPDATA%\[[ package_name]]\` 和
+`%LOCALAPPDATA%\[[ package_name]]\`；应用升级不会触发该删除逻辑。
 
 ---
 
 ## 推荐工作流
 
 ```
-日常开发          →  bash dev.sh start
+日常开发          →  ./dev.py start（Windows 使用 python .\dev.py start）
   ↓ 开发完毕
-打包前验证        →  bash build.sh -b && bash build.sh -f && cd electron && npm start
+打包前验证        →  ./build.py -b && ./build.py -f && cd electron && npm start
   ↓ 验证通过
-打包分发          →  bash build.sh -a → 得到 .deb
+打包分发          →  ./build.py -a → 得到 .deb
 ```
 
 ---
@@ -187,17 +243,17 @@ sudo dpkg -i electron/dist/[[ package_name]]_<version>_amd64.deb
 ## 构建命令
 
 ```bash
-bash build.sh -a    # 全部（前端 + 后端 + Electron DEB）
-bash build.sh -f    # 仅前端 → frontend/dist
-bash build.sh -b    # 仅后端 → dist/server（PyInstaller）
-bash build.sh -e    # 仅 Electron → electron/dist/*.deb
+./build.py -a    # 全部（当前平台安装包）
+./build.py -f    # 仅前端 → frontend/dist
+./build.py -b    # 仅后端 → dist/server（PyInstaller）
+./build.py -e    # 仅 Electron → electron/dist/*.deb
 ```
 
 ## 版本管理
 
 ```bash
-# 安装 Git hooks
-bash version/scripts/install_hooks.sh
+# 安装 Git hooks（./dev.py start 会自动执行一次）
+./version/scripts/install_hooks.py
 
 # 提交代码时自动弹窗选择版本号
 git commit -m "feat: add new feature"
@@ -227,6 +283,9 @@ self.commands = [
 |------|------|------|
 | GET | `/api` | 欢迎信息 |
 | GET | `/api/health` | 健康检查 |
+[% if enable_terminal %]
+| WS | `/api/terminal/ws` | 本地交互式终端 |
+[% endif %]
 [% if enable_sudo %]
 | GET | `/api/config/check` | 检查配置 |
 | POST | `/api/config/save` | 保存配置 |
@@ -243,24 +302,70 @@ cat datas/logs/backend.log
 lsof -i :8000   # 检查端口占用（改过端口换成实际值）
 ```
 
+Windows PowerShell 查看日志和端口：
+
+```powershell
+Get-Content .\datas\logs\backend.log -Tail 80
+Get-NetTCPConnection -LocalPort 8000,5173 -State Listen
+```
+
 **前端构建失败**
 ```bash
 cd frontend && rm -rf node_modules && npm install
 ```
 
+以上命令适用于 Linux/macOS；Windows 请使用下面的 PowerShell 命令。
+
+Windows PowerShell：
+
+```powershell
+Remove-Item -Recurse -Force .\frontend\node_modules
+Set-Location frontend
+npm install
+```
+
+**npm install 慢或超时**
+
+`frontend/.npmrc` 与 `electron/.npmrc` 已配置华为云镜像。若仍然慢，可换源重试：
+
+```bash
+cd frontend && npm install --registry=https://registry.npmjs.org/
+```
+
+Electron 的二进制镜像由初始化流程、`build.py` 和 `electron/prepare.js`
+通过 `ELECTRON_MIRROR` 环境变量注入，不再向 `.npmrc` 写 npm 不识别的自定义键。
+若安装 Electron npm 包后网络中断，`npm start` / `npm run build` 会在
+`prestart` / `prebuild` 阶段检查 `node_modules/electron/dist/` 和 `path.txt`，
+缺失时自动重新下载。
+
+自动修复仍失败时，可手动指定镜像补装：
+
+```powershell
+$env:ELECTRON_MIRROR = "https://mirrors.huaweicloud.com/electron/"
+node .\node_modules\electron\install.js
+```
+
 **Electron 窗口空白**
 ```bash
 # 确认前后端已构建
-bash build.sh -b && bash build.sh -f
+./build.py -b && ./build.py -f
 cd electron && npm start
 # 按 F12 打开 DevTools 查看控制台错误
 ```
 
 **端口被占用**
 ```bash
-bash dev.sh stop          # 先停止旧进程
+./dev.py stop          # 先停止旧进程
 lsof -i :8000 -i :5173   # 查看占用情况
 # 或修改 configs/global_config.yaml 中的端口号
+```
+
+Windows PowerShell：
+
+```powershell
+python .\dev.py stop
+Get-NetTCPConnection -LocalPort 8000,5173 -State Listen
+# 或修改 configs\global_config.yaml 中的端口号后重启 dev.py
 ```
 
 ## 许可证

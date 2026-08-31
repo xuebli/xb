@@ -2,6 +2,7 @@
 模板引擎 - 负责生成项目文件
 """
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict
@@ -30,6 +31,7 @@ class TemplateEngine:
         target_dir: Path,
         package_name: str,
         enable_sudo: bool = False,
+        enable_terminal: bool = False,
         sudo_password: str = "",
         icon_path: Path | None = None,
     ):
@@ -40,6 +42,7 @@ class TemplateEngine:
             "package_name_upper": package_name.upper(),
             "package_name_capitalized": package_name.capitalize(),
             "enable_sudo": enable_sudo,
+            "enable_terminal": enable_terminal,
             "sudo_password": sudo_password,
             "icon_path": icon_path,
         }
@@ -74,6 +77,20 @@ class TemplateEngine:
             "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
         )
 
+        if context["enable_terminal"]:
+            terminal_dir = backend_dir / "api" / "terminal"
+            terminal_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/api/terminal/__init__.py.j2",
+                terminal_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/api/terminal/routes.py.j2",
+                terminal_dir / "routes.py",
+                context,
+            )
+
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
         )
@@ -105,7 +122,12 @@ class TemplateEngine:
         components_dir = src_dir / "components"
         components_dir.mkdir(exist_ok=True)
 
+        composables_dir = src_dir / "composables"
+        composables_dir.mkdir(exist_ok=True)
+
         self._render_template("frontend/package.json.j2", frontend_dir / "package.json", context)
+        # npm 镜像配置：npm 不继承父目录 .npmrc，frontend / electron 需各自持有一份
+        self._render_template("frontend/.npmrc.j2", frontend_dir / ".npmrc", context)
         self._render_template(
             "frontend/vite.config.js.j2", frontend_dir / "vite.config.js", context
         )
@@ -148,6 +170,22 @@ class TemplateEngine:
             components_dir / "FileManager.vue",
             context,
         )
+        if context["enable_terminal"]:
+            self._render_template(
+                "frontend/src/components/TerminalView.vue.j2",
+                components_dir / "TerminalView.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/components/TerminalPanel.vue.j2",
+                components_dir / "TerminalPanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/composables/useTerminalSessions.js.j2",
+                composables_dir / "useTerminalSessions.js",
+                context,
+            )
 
     def _create_electron(self, target_dir: Path, context: Dict[str, Any]):
         electron_dir = target_dir / "electron"
@@ -157,21 +195,26 @@ class TemplateEngine:
         resources_dir.mkdir(exist_ok=True)
 
         self._render_template("electron/main.js.j2", electron_dir / "main.js", context)
+        self._render_template("electron/preload.js.j2", electron_dir / "preload.js", context)
         self._render_template("electron/launcher.js.j2", electron_dir / "launcher.js", context)
+        self._render_template("electron/prepare.js.j2", electron_dir / "prepare.js", context)
         self._render_template(
             "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context
         )
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
+        self._render_template("electron/.npmrc.j2", electron_dir / ".npmrc", context)
 
         self._render_template(
-            "electron/resources/postinst.j2", resources_dir / "postinst", context
+            "electron/resources/postinst.py.j2", resources_dir / "postinst.py", context, executable=True
         )
-        (resources_dir / "postinst").chmod(0o755)
-
         self._render_template(
-            "electron/resources/postrm.j2", resources_dir / "postrm", context
+            "electron/resources/postrm.py.j2", resources_dir / "postrm.py", context, executable=True
         )
-        (resources_dir / "postrm").chmod(0o755)
+        self._render_template(
+            "electron/resources/uninstaller.nsh.j2",
+            resources_dir / "uninstaller.nsh",
+            context,
+        )
 
         self._copy_app_icon(resources_dir / "icon.png", context)
 
@@ -215,9 +258,10 @@ class TemplateEngine:
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):
         scripts_dir = target_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
+        self._render_template(
+            "scripts/example.py.j2", scripts_dir / "example.py", context, executable=True
+        )
 
-        self._render_template("scripts/example.sh.j2", scripts_dir / "example.sh", context)
-        (scripts_dir / "example.sh").chmod(0o755)
 
     def _create_version(self, target_dir: Path, context: Dict[str, Any]):
         version_dir = target_dir / "version"
@@ -228,45 +272,67 @@ class TemplateEngine:
 
         scripts_dir = version_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
-
-        self._render_template("version/hooks/pre-commit.j2", hooks_dir / "pre-commit", context)
-        (hooks_dir / "pre-commit").chmod(0o755)
+        self._render_template(
+            "version/hooks/pre-commit.py.j2", hooks_dir / "pre-commit.py", context, executable=True
+        )
+        self._render_template(
+            "version/scripts/install_hooks.py.j2",
+            scripts_dir / "install_hooks.py",
+            context,
+            executable=True,
+        )
 
         self._render_template(
-            "version/scripts/version_manager.py.j2", scripts_dir / "version_manager.py", context
+            "version/scripts/version_manager.py.j2",
+            scripts_dir / "version_manager.py",
+            context,
+            executable=True,
         )
         self._render_template(
             "version/scripts/gui_version_manager.py.j2",
             scripts_dir / "gui_version_manager.py",
             context,
+            executable=True,
         )
         self._render_template(
             "version/scripts/web_version_manager.py.j2",
             scripts_dir / "web_version_manager.py",
             context,
+            executable=True,
         )
-        self._render_template(
-            "version/scripts/install_hooks.sh.j2", scripts_dir / "install_hooks.sh", context
-        )
-        (scripts_dir / "install_hooks.sh").chmod(0o755)
 
     def _create_root_files(self, target_dir: Path, context: Dict[str, Any]):
         self._render_template("root/pyproject.toml.j2", target_dir / "pyproject.toml", context)
-        self._render_template("root/dev.sh.j2", target_dir / "dev.sh", context)
-        self._render_template("root/build.sh.j2", target_dir / "build.sh", context)
+        self._render_template("root/dev.py.j2", target_dir / "dev.py", context, executable=True)
+        self._render_template("root/build.py.j2", target_dir / "build.py", context, executable=True)
         self._render_template("root/README.md.j2", target_dir / "README.md", context)
         self._render_template("root/.gitignore.j2", target_dir / ".gitignore", context)
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
-        (target_dir / "dev.sh").chmod(0o755)
-        (target_dir / "build.sh").chmod(0o755)
 
         (target_dir / "datas" / "logs").mkdir(parents=True, exist_ok=True)
         (target_dir / "datas" / "pids").mkdir(parents=True, exist_ok=True)
         (target_dir / "datas" / "reports").mkdir(parents=True, exist_ok=True)
 
-    def _render_template(self, template_name: str, output_path: Path, context: Dict[str, Any]):
+    def _render_template(
+        self,
+        template_name: str,
+        output_path: Path,
+        context: Dict[str, Any],
+        executable: bool = False,
+    ):
         template = self.env.get_template(template_name)
         content = template.render(**context)
-        output_path.write_text(content, encoding="utf-8")
+        # 带 shebang 的脚本必须是 LF 换行，CRLF 会让 Linux 的 execve 找不到解释器。
+        with output_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        if executable:
+            self._make_executable(output_path)
+
+    @staticmethod
+    def _make_executable(path: Path):
+        """给脚本加可执行位，使其能以 ./script.py 直接运行；Windows 无此概念，靠文件关联。"""
+        if os.name == "nt":
+            return
+        path.chmod(path.stat().st_mode | 0o111)

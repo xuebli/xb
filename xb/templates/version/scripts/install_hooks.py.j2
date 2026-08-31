@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[2]
+# 从版本目录安装 hook，不依赖 bash、cp 或 chmod 命令。
+source_dir = root / "version" / "hooks"
+target_dir = root / ".git" / "hooks"
+if not (root / ".git").exists():
+    raise SystemExit("不是 Git 仓库")
+
+
+def check_dependency(command: str, package: str) -> None:
+    """检查依赖；Ubuntu 可选地尝试通过 apt 安装，Windows 不执行 apt。"""
+    if shutil.which(command):
+        return
+    if sys.platform.startswith("linux") and shutil.which("apt-get"):
+        subprocess.run(["sudo", "apt-get", "install", "-y", package], check=False)
+
+
+def interpreter_path() -> str:
+    """优先使用项目虚拟环境的解释器；未创建时退回当前解释器。"""
+    venv = root / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
+    python = venv if venv.exists() else Path(sys.executable)
+    # Git Bash 只接受正斜杠路径，Linux 下同样合法。
+    return python.as_posix()
+
+
+check_dependency("sshpass", "sshpass")
+try:
+    __import__("tkinter")
+except ImportError:
+    if sys.platform.startswith("linux") and shutil.which("apt-get"):
+        subprocess.run(["sudo", "apt-get", "install", "-y", "python3-tk"], check=False)
+
+target_dir.mkdir(parents=True, exist_ok=True)
+python_command = interpreter_path()
+for hook in sorted(source_dir.iterdir()):
+    if not (hook.is_file() and hook.suffix == ".py"):
+        continue
+    name = hook.stem
+    target = target_dir / name
+    # Git 在 Ubuntu 与 Windows（Git Bash）下都用 sh 执行 hook，因此统一写 sh 转发脚本：
+    # 既避开 Windows 上没有 python3 shebang 的问题，也让 hook 源码改动立即生效。
+    relative = hook.relative_to(root).as_posix()
+    script = (
+        "#!/bin/sh\n"
+        "# 由 version/scripts/install_hooks.py 生成，请勿手动修改。\n"
+        f'PY="{python_command}"\n'
+        '[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
+        f'exec "$PY" "$(git rev-parse --show-toplevel)/{relative}" "$@"\n'
+    )
+    # 换行必须是 LF，CRLF 会让 sh 无法解析 shebang。
+    with target.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(script)
+    if os.name != "nt":
+        target.chmod(target.stat().st_mode | 0o111)
+    print(f"已安装 hook: {name}")

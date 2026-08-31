@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# Git 要求钩子文件位于仓库根目录下的 .git/hooks/pre-commit。
+root = Path(subprocess.check_output(
+    ["git", "rev-parse", "--show-toplevel"], text=True
+).strip())
+manager = root / "version/scripts/version_manager.py"
+web = root / "version/scripts/web_version_manager.py"
+gui = root / "version/scripts/gui_version_manager.py"
+if not manager.exists():
+    raise SystemExit(0)
+
+changed = subprocess.check_output(
+    ["git", "diff", "--cached", "--name-only"], text=True
+).splitlines()
+# 版本文件本身的更新不应再次触发版本检查。
+excluded = ("version.json", "版本迭代日志.md", "package.json")
+changed = [item for item in changed if not any(key in item for key in excluded)]
+if not changed:
+    raise SystemExit(0)
+
+# 远程 IDE 使用 Web 管理器；本地图形环境使用 GUI 管理器。
+remote_ide = bool(os.getenv("VSCODE_IPC_HOOK_CLI")) or "server" in os.getenv("BROWSER", "")
+target = web if remote_ide else gui
+graphical = bool(os.getenv("DISPLAY")) or os.name == "nt"
+if target.exists() and (remote_ide or graphical):
+    arguments = [sys.executable, str(target)]
+    if target == gui:
+        arguments.append("--check-changes")
+    raise SystemExit(subprocess.run(arguments).returncode)

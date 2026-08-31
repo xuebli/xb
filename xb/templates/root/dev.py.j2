@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# 可直接执行：Linux/macOS 用 ./dev.py start，Windows 用 .\dev.py start（依赖 .py 文件关联）。
+import os
+import signal
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# 项目根目录以及运行时 PID、日志目录；两种平台统一使用同一布局。
+ROOT = Path(__file__).resolve().parent
+PID_DIR = ROOT / "datas" / "pids"
+LOG_DIR = ROOT / "datas" / "logs"
+
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，✓ 会抛 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
+def stop_service(name: str) -> None:
+    """停止指定服务并删除 PID 文件。Windows 递归结束子进程。"""
+    pid_file = PID_DIR / f"{name}.pid"
+    if not pid_file.exists():
+        print(f"{name} 未运行（未找到 PID 文件）")
+        return
+    try:
+        pid = int(pid_file.read_text())
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        print(f"已停止 {name}（PID {pid}）")
+    except (OSError, ValueError):
+        pass
+    pid_file.unlink(missing_ok=True)
+
+
+def service_status(name: str) -> str:
+    return "运行中" if process_alive(name) else "未运行"
+
+
+def kill_port(port: int) -> None:
+    """清理 PID 文件之外仍占用端口的进程，兼容 Windows/Linux。"""
+    if os.name == "nt":
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
+        pids = {line.split()[-1] for line in result.stdout.splitlines()
+                if f":{port}" in line and "LISTENING" in line}
+        for pid in pids:
+            subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], check=False)
+    elif shutil.which("lsof"):
+        result = subprocess.run(["lsof", "-ti", f"TCP:{port}"], capture_output=True, text=True, check=False)
+        for pid in result.stdout.split():
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except (OSError, ValueError):
+                pass
+
+
+def start_service(
+    name: str,
+    command: list[str],
+    cwd: Path = ROOT,
+    environment_updates: dict[str, str] | None = None,
+) -> None:
+    """启动服务，将标准输出和错误统一写入 datas/logs。"""
+    stop_service(name)
+    log_file = (LOG_DIR / f"{name}.log").open("a", encoding="utf-8", newline="")
+    environment = os.environ.copy()
+    if environment_updates:
+        environment.update(environment_updates)
+    # Windows 控制台默认使用 CP936；强制 Python 子进程以 UTF-8 输出，避免日志混合编码。
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
+    creationflags = 0
+    if os.name == "nt":
+        # 隐藏服务子进程控制台，避免启动后弹出空白的 python.exe 黑窗口。
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        env=environment,
+        start_new_session=os.name != "nt",
+        creationflags=creationflags,
+        close_fds=os.name != "nt",
+    )
+    (PID_DIR / f"{name}.pid").write_text(str(process.pid))
+
+
+def install_git_hooks() -> None:
+    """启动前安装 Git 钩子；非 Git 仓库或安装失败只提示，不阻断服务启动。"""
+    script = ROOT / "version" / "scripts" / "install_hooks.py"
+    if not script.exists():
+        return
+    environment = os.environ.copy()
+    # 子脚本会输出中文；Windows 控制台默认 CP936，强制 UTF-8 避免乱码。
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
+    result = subprocess.run(
+        [sys.executable, str(script)], cwd=ROOT, env=environment,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    if result.returncode == 0:
+        print("✓ Git hooks 已安装")
+        return
+    lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
+    print(f"! 跳过 Git hooks 安装：{lines[-1].strip() if lines else '未知原因'}")
+
+
+def wait_for_port(port: int, timeout: float = 20.0) -> bool:
+    """等待服务开始监听端口，避免前端早于后端启动。"""
+    import socket
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket() as sock:
+            if sock.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        time.sleep(0.5)
+    return False
+
+
+def port_is_free(port: int) -> bool:
+    import socket
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def print_port_owner(port: int) -> None:
+    """显示占用端口的 PID，帮助定位启动失败原因。"""
+    if os.name == "nt":
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
+        owners = {line.split()[-1] for line in result.stdout.splitlines()
+                  if f":{port}" in line and "LISTENING" in line}
+    else:
+        result = subprocess.run(["lsof", "-ti", f"TCP:{port}"], capture_output=True, text=True, check=False)
+        owners = set(result.stdout.split())
+    if owners:
+        print(f"端口 {port} 已被占用，PID: {', '.join(sorted(owners))}")
+
+
+def process_alive(name: str) -> bool:
+    path = PID_DIR / f"{name}.pid"
+    if not path.exists():
+        return False
+    try:
+        pid = int(path.read_text())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def configured_port(name: str, default: int) -> int:
+    """读取 global_config.yaml；配置缺失、格式错误或解释器没装 PyYAML 时使用默认端口。"""
+    try:
+        import yaml
+        config = yaml.safe_load(
+            (ROOT / "configs" / "global_config.yaml").read_text(encoding="utf-8")
+        ) or {}
+        return int(config.get("ports", {}).get(name, default))
+    except (ImportError, OSError, TypeError, ValueError):
+        return default
+
+
+PID_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+# start/stop/restart/status 与原开发脚本保持一致。
+action = sys.argv[1].lower() if len(sys.argv) > 1 else "start"
+if action not in {"start", "stop", "restart", "status"}:
+    usage = ".\\dev.py" if os.name == "nt" else "./dev.py"
+    print(f"用法: {usage} {{start|stop|restart|status}}")
+    raise SystemExit(2)
+backend_port = configured_port("backend", 8000)
+frontend_port = configured_port("frontend", 5173)
+python = ROOT / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
+service_python = (
+    python.with_name("pythonw.exe")
+    if os.name == "nt" and python.with_name("pythonw.exe").exists()
+    else python
+)
+npm = "npm.cmd" if os.name == "nt" else "npm"
+
+if action in {"stop", "restart"}:
+    # 重启前先停止旧的前后端，避免端口和旧进程残留。
+    stop_service("backend")
+    stop_service("frontend")
+    kill_port(backend_port)
+    kill_port(frontend_port)
+    if action == "stop":
+        print("✓ 服务已停止")
+if action in {"start", "restart"}:
+    # 启动服务前先安装 Git 钩子，保证提交时版本检查始终生效。
+    install_git_hooks()
+    # 后端必须先启动并通过端口检查，前端才继续启动。
+    if not port_is_free(backend_port):
+        print_port_owner(backend_port)
+        raise SystemExit(f"后端端口 {backend_port} 已被占用")
+    if not python.exists():
+        print("→ 正在同步 Python 依赖，首次启动可能需要几分钟...")
+        try:
+            subprocess.run(
+                ["uv", "sync", "--extra", "dev"],
+                cwd=ROOT,
+                check=True,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            raise SystemExit(
+                "Python 依赖同步超时，请检查网络或 uv 镜像后重新执行 python dev.py start"
+            )
+    start_service("backend", [str(service_python), "backend/main.py"])
+    print(f"✓ 后端已启动（PID 文件: {PID_DIR / 'backend.pid'}，端口: {backend_port}）")
+    if not wait_for_port(backend_port):
+        stop_service("backend")
+        raise SystemExit("后端启动失败，请查看 datas/logs/backend.log")
+    frontend = ROOT / "frontend"
+    if (frontend / "package.json").exists():
+        if not (frontend / "node_modules").exists():
+            print("→ 正在安装前端依赖，首次启动可能需要几分钟...")
+            try:
+                subprocess.run(
+                    [npm, "install", "--no-audit", "--no-fund"],
+                    cwd=frontend,
+                    check=True,
+                    timeout=600,
+                )
+            except subprocess.TimeoutExpired:
+                stop_service("backend")
+                raise SystemExit(
+                    "前端依赖安装超时，请检查网络或 npm 镜像后重新执行 python dev.py start"
+                )
+        start_service(
+            "frontend",
+            [npm, "run", "dev"],
+            frontend,
+            environment_updates={
+                "VITE_DEV_PORT": str(frontend_port),
+                "VITE_BACKEND_PORT": str(backend_port),
+            },
+        )
+        print(f"✓ 前端已启动（PID 文件: {PID_DIR / 'frontend.pid'}，端口: {frontend_port}）")
+        if not wait_for_port(frontend_port):
+            stop_service("frontend")
+            raise SystemExit("前端启动失败，请查看 datas/logs/frontend.log")
+if action == "status":
+    print("=========================================")
+    print("  服务状态")
+    print("=========================================")
+    for name in ("backend", "frontend"):
+        state = "运行中" if process_alive(name) else "未运行"
+        print(f"{name}: {state}")
+    print("=========================================")

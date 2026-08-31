@@ -1,0 +1,211 @@
+<script setup>
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { attachSink, detachSink, sendInput, sendResize, setFontSize } from '../composables/useTerminalSessions'
+
+const props = defineProps({
+  session: { type: Object, required: true },
+  visible: { type: Boolean, default: true },
+})
+
+const MIN_FONT = 8
+const MAX_FONT = 32
+
+let term = null
+let fitAddon = null
+let resizeObserver = null
+let fitFrame = 0
+let dprQuery = null
+let dprHandler = null
+const termRef = ref(null)
+
+function initTerminal() {
+  term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'block',
+    fontSize: props.session.fontSize,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    theme: {
+      background: '#0a0e17',
+      foreground: '#e4e8f0',
+      cursor: '#3b82f6',
+      selectionBackground: 'rgba(59,130,246,0.3)',
+      black: '#1e2740',
+      red: '#ef4444',
+      green: '#22c55e',
+      yellow: '#f59e0b',
+      blue: '#3b82f6',
+      magenta: '#8b5cf6',
+      cyan: '#06b6d4',
+      white: '#e4e8f0',
+      brightBlack: '#5a6478',
+      brightRed: '#fca5a5',
+      brightGreen: '#86efac',
+      brightYellow: '#fde047',
+      brightBlue: '#93c5fd',
+      brightMagenta: '#c4b5fd',
+      brightCyan: '#67e8f9',
+      brightWhite: '#f8fafc',
+    },
+    allowProposedApi: true,
+  })
+
+  fitAddon = new FitAddon()
+  term.loadAddon(fitAddon)
+
+  // Ctrl +/- 调终端字号：拦截后返回 false 阻止 xterm 把按键透传给 pty。
+  // 走字号而非 Electron setZoomFactor，后者缩放整页 canvas 会导致字体发虚、鼠标选区错位。
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown' || !(ev.ctrlKey || ev.metaKey)) return true
+    if (ev.key === '+' || ev.key === '=') {
+      changeFontSize(1)
+      return false
+    }
+    if (ev.key === '-') {
+      changeFontSize(-1)
+      return false
+    }
+    if (ev.key === '0') {
+      applyFontSize(14)
+      return false
+    }
+    return true
+  })
+
+  if (termRef.value) {
+    term.open(termRef.value)
+    term.focus()
+    termRef.value.addEventListener('mousedown', () => term?.focus())
+  }
+
+  term.onData((data) => sendInput(props.session.id, data))
+
+  term.textarea?.addEventListener('focus', () => reportFocus(true))
+  term.textarea?.addEventListener('blur', () => reportFocus(false))
+
+  props.session.onReady = () => scheduleFit()
+  const backlog = attachSink(props.session.id, (data) => term?.write(data))
+  if (backlog) {
+    term.write(backlog)
+  }
+}
+
+// 桌面端存在时告知主进程，让它在终端聚焦时放行 Ctrl +/-（浏览器里 window.desktopBridge 不存在）
+function reportFocus(focused) {
+  window.desktopBridge?.setTerminalFocused(focused)
+}
+
+function applyFontSize(size) {
+  const next = Math.min(MAX_FONT, Math.max(MIN_FONT, size))
+  if (!term || next === term.options.fontSize) return
+  term.options.fontSize = next
+  setFontSize(props.session.id, next)
+  scheduleFit()
+}
+
+function changeFontSize(delta) {
+  if (term) applyFontSize(term.options.fontSize + delta)
+}
+
+function scheduleFit() {
+  if (fitFrame) {
+    cancelAnimationFrame(fitFrame)
+  }
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = 0
+    if (!term || !fitAddon || !termRef.value) return
+    if (!term.element || !term.element.parentElement) return
+
+    const { width, height } = termRef.value.getBoundingClientRect()
+    if (width < 2 || height < 2) return
+
+    fitAddon.fit()
+    sendResize(props.session.id, term.cols, term.rows)
+  })
+}
+
+// 浏览器缩放只改变 devicePixelRatio，不触发 window.resize，必须用 matchMedia 单独监听
+function watchDevicePixelRatio() {
+  if (dprQuery && dprHandler) {
+    dprQuery.removeEventListener('change', dprHandler)
+  }
+  dprQuery = window.matchMedia(`screen and (resolution: ${window.devicePixelRatio}dppx)`)
+  dprHandler = () => {
+    scheduleFit()
+    watchDevicePixelRatio()
+  }
+  dprQuery.addEventListener('change', dprHandler)
+}
+
+// 隐藏时容器尺寸为 0，fitAddon.proposeDimensions() 会直接 return，
+// 因此终端会保持隐藏前的行列数；恢复显示后必须重新 fit 才能贴合容器
+watch(
+  () => props.visible,
+  (isVisible) => {
+    if (isVisible) {
+      nextTick(() => {
+        scheduleFit()
+        term?.focus()
+      })
+    }
+  }
+)
+
+onMounted(async () => {
+  initTerminal()
+  await nextTick()
+
+  if (termRef.value) {
+    resizeObserver = new ResizeObserver(scheduleFit)
+    resizeObserver.observe(termRef.value)
+  }
+  window.addEventListener('resize', scheduleFit)
+  watchDevicePixelRatio()
+  scheduleFit()
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  window.removeEventListener('resize', scheduleFit)
+  if (dprQuery && dprHandler) {
+    dprQuery.removeEventListener('change', dprHandler)
+  }
+  dprQuery = null
+  dprHandler = null
+  if (fitFrame) {
+    cancelAnimationFrame(fitFrame)
+    fitFrame = 0
+  }
+  // 只摘掉渲染器，不关 WebSocket——会话由 useTerminalSessions 持有
+  reportFocus(false)
+  detachSink(props.session.id)
+  term?.dispose()
+  term = null
+})
+
+defineExpose({ refit: scheduleFit, changeFontSize })
+</script>
+
+<template>
+  <div class="terminal-container" ref="termRef"></div>
+</template>
+
+<style scoped>
+.terminal-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px;
+  overflow: hidden;
+}
+
+/* xterm 6 的滚动条由内部 SmoothScrollableElement 接管，
+   不要再覆盖 .xterm-viewport 的 overflow，否则滚动位置会错位 */
+.terminal-container :deep(.xterm) {
+  width: 100%;
+  height: 100%;
+}
+</style>

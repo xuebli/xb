@@ -2,6 +2,7 @@ import pathlib
 import subprocess
 import getpass
 import tempfile
+import sys
 from datetime import datetime
 from .logger_manager import get_logger
 from .path_manager import path_manager
@@ -12,11 +13,14 @@ logger = get_logger(__name__)
 class SudoersManager:
     def __init__(self, app_name: str = "[[ package_name_capitalized]]"):
         self.app_name = app_name
+        self.required = sys.platform.startswith("linux")
         self.sudoers_file = f"/etc/sudoers.d/{app_name}_nopasswd"
         self.commands = []
         self._is_setup = False
 
     def verify_password(self, password: str) -> bool:
+        if not self.required:
+            return True
         try:
             result = subprocess.run(
                 ["sudo", "-k", "-S", "-p", "", "true"],
@@ -63,6 +67,9 @@ class SudoersManager:
         return "\n".join(lines) + "\n"
 
     def setup(self) -> bool:
+        if not self.required:
+            self._is_setup = True
+            return True
         if self._is_setup:
             return True
 
@@ -114,6 +121,9 @@ class SudoersManager:
             pathlib.Path(tmp_path).unlink(missing_ok=True)
 
     def remove(self) -> bool:
+        if not self.required:
+            self._is_setup = False
+            return True
         if not self._is_setup:
             return True
 

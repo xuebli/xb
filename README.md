@@ -8,16 +8,17 @@
 
 - 一键初始化完整项目结构（`xb init demo`）
 - UV + FastAPI + Vue3 + Electron 开箱即用
-- 自动安装前端和 Electron 依赖（`npm install`）
+- 自动安装前端和 Electron 依赖（`npm install`，内置国内镜像源）
 - 自动 `git init` 并提交首个 commit（含 lock 文件）
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
 - 可选 sudo 免密配置（`--sudoers`）
+- 可选内置终端（`--terminal`）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
 - 环境诊断（`xb doctor`）
-- DEB 安装钩子（postinst / postrm）
+- Linux DEB 与 Windows NSIS 安装支持
 
 ## 安装
 
@@ -47,6 +48,12 @@ xb init demo
 # 带 sudo 免密配置
 xb init demo --sudoers
 
+# 带内置终端
+xb init demo --terminal
+
+# 同时启用终端和 sudo 免密配置
+xb init demo --terminal --sudoers
+
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
 
@@ -62,8 +69,27 @@ xb dev status
 xb dev stop
 ```
 
+Windows PowerShell 也可以直接运行生成项目脚本：
+
+```powershell
+Set-Location demo
+python .\dev.py start
+python .\dev.py status
+python .\dev.py stop
+```
+
+使用 `--terminal` 时，Windows 终端使用 PowerShell + ConPTY，支持上下箭头
+命令历史、复制粘贴、Tab 补全和 Ctrl+C；Ubuntu/Debian 使用 bash + Unix PTY。
+
+Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.npmrc`
+写 npm 不识别的自定义键。若安装过程被网络中断，生成项目的
+`electron/prepare.js` 会在 `npm start` 或 `npm run build` 前自动检查并补装
+缺失的 Electron 二进制。
+
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
+>   - 生成的 `.npmrc` 已配好华为云镜像；electron 约 200MB 二进制也走镜像下载
+>   - 若安装失败或超时，会打印提示但不中断项目创建，可稍后手动重试
 > - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
 > - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目
 > - 若系统未安装 git 或未配置 `user.name/user.email`，打印警告但不阻塞
@@ -72,7 +98,7 @@ xb dev stop
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--icon PATH]` | 初始化项目 |
+| `xb init <name> [--sudoers] [--terminal] [--icon PATH]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -107,18 +133,20 @@ demo/
 ├── frontend/               # Vue 3 前端
 │   ├── package.json
 │   ├── package-lock.json
+│   ├── .npmrc              # npm 镜像源（华为云）
 │   ├── vite.config.js
 │   └── src/
 ├── electron/               # Electron 主进程
 │   ├── package.json
 │   ├── package-lock.json
+│   ├── .npmrc              # npm + electron 二进制镜像源
 │   ├── main.js
-│   └── resources/          # icon + postinst/postrm
+│   └── resources/          # icon + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
 ├── datas/                  # 运行时数据（gitignore）
-├── dev.sh                  # 开发脚本
-├── build.sh                # 打包脚本
+├── dev.py                  # 开发脚本（Windows/Linux）
+├── build.py                # 打包脚本（Windows/Linux）
 └── .venv                   # Python 虚拟环境
 ```
 
@@ -156,7 +184,11 @@ xb/
 - **Node.js**: 16+
 - **npm**: 8+
 - **uv**: 已安装
-- **OS**: Linux（Ubuntu / Debian）
+- **OS**: Windows 10/11 或 Ubuntu/Debian
+- **Windows 终端**: 使用 `--terminal` 时自动安装 Windows 专用 `pywinpty`
+
+Windows 可使用 Python、Node.js、npm 和 uv 的官方安装方式或 `winget` 安装。
+Ubuntu/Debian 可使用系统包管理器或官方安装方式。
 
 使用 `xb doctor` 可一键检查所有环境依赖。
 

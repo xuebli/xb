@@ -4,6 +4,7 @@ xb build 命令实现
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -12,7 +13,7 @@ from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
 
 
 def is_project_root(path: Path) -> bool:
-    return (path / "pyproject.toml").exists() and (path / "build.sh").exists()
+    return (path / "pyproject.toml").exists() and (path / "build.py").exists()
 
 
 def find_project_root() -> Path | None:
@@ -64,10 +65,10 @@ def build(target: str, all_build: bool, frontend: bool, backend: bool, electron:
     """
     project_root = find_project_root()
     if not project_root:
-        click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 build.sh）")
+        click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 build.py）")
         raise click.Abort()
 
-    build_script = project_root / "build.sh"
+    build_script = project_root / "build.py"
     selected = _selected_target(target.lower(), frontend, backend, electron, all_build)
     arg_map = {
         "all": "-a",
@@ -75,4 +76,4 @@ def build(target: str, all_build: bool, frontend: bool, backend: bool, electron:
         "backend": "-b",
         "electron": "-e",
     }
-    subprocess.run(["bash", str(build_script), arg_map[selected]], cwd=project_root)
+    subprocess.run([sys.executable, str(build_script), arg_map[selected]], cwd=project_root)

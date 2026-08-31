@@ -1,0 +1,125 @@
+/**
+ * 终端会话管理：会话（WebSocket + 缓冲）的生命周期独立于 Vue 组件。
+ *
+ * 这样设计的原因：xterm.js 只是渲染器，pty 会话不该随组件卸载而销毁。
+ * 切换页面时组件可以隐藏甚至卸载，但 WebSocket 与已输出内容留在这里，
+ * 恢复显示时把缓冲重放回终端即可，会话不中断。
+ */
+import { ref } from 'vue'
+
+const API_BASE = import.meta.env.VITE_API_BASE || ''
+
+// 隐藏期间仍会持续收到 pty 输出，需限制缓冲避免无上限增长
+const MAX_BUFFER = 200_000
+
+let seq = 0
+
+export const sessions = ref([])
+export const activeId = ref(null)
+
+function wsUrl() {
+  const base = API_BASE.replace(/^https?:\/\//, '') || location.host
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${base}/api/terminal/ws`
+}
+
+function connect(session) {
+  session.status = 'connecting'
+  const ws = new WebSocket(wsUrl())
+  session.ws = ws
+
+  ws.onopen = () => {
+    session.status = 'connected'
+    session.onReady?.()
+  }
+
+  ws.onmessage = (e) => {
+    session.buffer += e.data
+    if (session.buffer.length > MAX_BUFFER) {
+      session.buffer = session.buffer.slice(-MAX_BUFFER)
+    }
+    // 已挂载的终端直接写入；未挂载时只进缓冲，等 attach 时重放
+    session.sink?.(e.data)
+  }
+
+  ws.onclose = () => {
+    session.status = 'closed'
+    session.ws = null
+  }
+
+  ws.onerror = () => {
+    session.status = 'error'
+  }
+}
+
+export function createSession() {
+  seq += 1
+  sessions.value.push({
+    id: `term-${seq}`,
+    title: `终端 ${seq}`,
+    buffer: '',
+    status: 'idle',
+    ws: null,
+    sink: null,
+    fontSize: 14,
+  })
+  // 必须取 push 之后的响应式代理：直接持有原始对象改属性不会触发视图更新
+  const session = sessions.value[sessions.value.length - 1]
+  activeId.value = session.id
+  connect(session)
+  return session
+}
+
+export function closeSession(id) {
+  const idx = sessions.value.findIndex((s) => s.id === id)
+  if (idx === -1) return
+
+  const [session] = sessions.value.splice(idx, 1)
+  session.ws?.close()
+  session.sink = null
+
+  if (activeId.value === id) {
+    const next = sessions.value[idx] || sessions.value[idx - 1]
+    activeId.value = next ? next.id : null
+  }
+}
+
+export function reconnectSession(id) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (!session || session.ws) return
+  session.buffer = ''
+  connect(session)
+}
+
+export function sendInput(id, data) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (session?.ws?.readyState === WebSocket.OPEN) {
+    session.ws.send(data)
+  }
+}
+
+/** 终端组件挂载时接管输出；返回已积累的缓冲用于重放 */
+/** 把终端行列数同步给 pty，否则全屏 TUI 会按后端默认尺寸绘制而留白 */
+export function sendResize(id, cols, rows) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (session?.ws?.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+  }
+}
+
+export function attachSink(id, sink) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (!session) return ''
+  session.sink = sink
+  return session.buffer
+}
+
+export function detachSink(id) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (session) session.sink = null
+}
+
+export function setFontSize(id, size) {
+  const session = sessions.value.find((s) => s.id === id)
+  if (session) session.fontSize = size
+}

@@ -1,0 +1,236 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import TerminalView from './TerminalView.vue'
+import {
+  sessions,
+  activeId,
+  createSession,
+  closeSession,
+  reconnectSession,
+} from '../composables/useTerminalSessions'
+
+const viewRefs = ref({})
+
+const activeSession = computed(() => sessions.value.find((s) => s.id === activeId.value))
+
+const statusText = computed(() => {
+  const s = activeSession.value
+  if (!s) return ''
+  return { connecting: '连接中...', connected: '已连接', closed: '已断开', error: '连接失败' }[s.status] || '未连接'
+})
+
+function select(id) {
+  activeId.value = id
+}
+
+onMounted(() => {
+  if (sessions.value.length === 0) {
+    createSession()
+  }
+})
+</script>
+
+<template>
+  <div class="terminal-page">
+    <div class="terminal-toolbar">
+      <div class="tab-strip">
+        <button
+          v-for="s in sessions"
+          :key="s.id"
+          class="term-tab"
+          :class="{ active: s.id === activeId }"
+          @click="select(s.id)"
+        >
+          <span class="dot" :class="s.status"></span>
+          <span class="tab-title">{{ s.title }}</span>
+          <span class="tab-close" role="button" @click.stop="closeSession(s.id)">×</span>
+        </button>
+        <button class="term-new" title="新建终端" @click="createSession()">＋</button>
+      </div>
+
+      <div class="toolbar-right">
+        <span class="status-indicator" :class="activeSession?.status">{{ statusText }}</span>
+        <button
+          v-if="activeSession && activeSession.status !== 'connected'"
+          class="tool-btn connect-btn"
+          @click="reconnectSession(activeSession.id)"
+        >
+          重连
+        </button>
+      </div>
+    </div>
+
+    <div class="terminal-stack">
+      <div v-if="sessions.length === 0" class="empty-state">
+        没有终端，点击 ＋ 新建
+      </div>
+      <!-- 所有会话常驻挂载，仅用 v-show 切换显隐：
+           用 v-if 会卸载组件并中断 pty 会话（这正是「切页终端被关闭」的原因） -->
+      <div
+        v-for="s in sessions"
+        v-show="s.id === activeId"
+        :key="s.id"
+        class="terminal-slot"
+      >
+        <TerminalView :ref="(el) => (viewRefs[s.id] = el)" :session="s" :visible="s.id === activeId" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.terminal-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: #0a0e17;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, #1e2740);
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  background: rgba(14, 20, 32, 0.95);
+  border-bottom: 1px solid var(--color-border, #1e2740);
+  flex-shrink: 0;
+}
+
+.tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.term-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b95a8;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.term-tab:hover { background: rgba(59, 130, 246, 0.1); color: #d6dded; }
+
+.term-tab.active {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.34);
+  color: #f0f4ff;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5a6478;
+  flex-shrink: 0;
+}
+.dot.connected { background: #22c55e; }
+.dot.connecting { background: #f59e0b; }
+.dot.error { background: #ef4444; }
+
+.tab-close {
+  padding: 0 2px;
+  border-radius: 3px;
+  color: #6b7688;
+  font-size: 14px;
+  line-height: 1;
+}
+.tab-close:hover { background: rgba(239, 68, 68, 0.22); color: #fca5a5; }
+
+.term-new {
+  padding: 4px 9px;
+  border: 1px dashed rgba(139, 149, 168, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  color: #8b95a8;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.term-new:hover { border-color: #3b82f6; color: #93c5fd; }
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.status-indicator {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--color-border, #1e2740);
+  color: var(--color-text-muted, #5a6478);
+}
+
+.status-indicator.connected {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-indicator.connecting {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.status-indicator.error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.tool-btn {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.connect-btn {
+  background: var(--color-primary, #3b82f6);
+  color: #fff;
+}
+.connect-btn:hover { opacity: 0.9; }
+
+.terminal-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.terminal-slot {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.empty-state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: #5a6478;
+  font-size: 13px;
+}
+</style>

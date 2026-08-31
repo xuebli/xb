@@ -9,6 +9,9 @@ from contextlib import asynccontextmanager
 from managers import get_logger[% if enable_sudo %], sudoers_manager[% endif %], path_manager
 from api.config import router as config_router
 from api.ports import router as ports_router
+[% if enable_terminal %]
+from api.terminal import router as terminal_router
+[% endif %]
 
 logger = get_logger(__name__)
 _cleanup_done = False
@@ -33,11 +36,23 @@ async def lifespan(app: FastAPI):
     logger.opt(raw=True).info("=" * 80 + "\n")
 
     try:
+        path_manager.init_user_data_dirs()
+    except Exception as e:
+        logger.warning(f"初始化用户数据目录失败: {e}")
+
+    try:
         copied = path_manager.init_user_configs()
         if copied:
             logger.info(f"已初始化用户配置文件: {copied}")
     except Exception as e:
         logger.warning(f"初始化用户配置文件失败: {e}")
+
+    try:
+        copied = path_manager.init_user_scripts()
+        if copied:
+            logger.info(f"已初始化用户脚本: {copied}")
+    except Exception as e:
+        logger.warning(f"初始化用户脚本失败: {e}")
 
     logger.info("应用启动完成")
 
@@ -65,6 +80,9 @@ if path_manager.is_packaged:
 
 app.include_router(config_router, prefix="/api")
 app.include_router(ports_router, prefix="/api")
+[% if enable_terminal %]
+app.include_router(terminal_router, prefix="/api")
+[% endif %]
 
 
 @app.get("/api")

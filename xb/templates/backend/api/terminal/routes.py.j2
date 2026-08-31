@@ -1,0 +1,258 @@
+"""本地终端 WebSocket 接口
+
+前端 xterm.js → WebSocket → pty.fork（本地 bash）
+用户可在 Web 终端中直接运行 opencode / codex 等 AI 工具
+"""
+
+import asyncio
+import json
+import os
+import subprocess
+import threading
+
+if os.name != "nt":
+    import fcntl
+    import pty
+    import select
+    import signal
+    import struct
+    import termios
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from managers import get_logger
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+@router.websocket("/terminal/ws")
+async def terminal_ws(websocket: WebSocket):
+    """本地交互式终端 WebSocket"""
+    await websocket.accept()
+    await _handle_local_terminal(websocket)
+
+
+async def _handle_local_terminal(websocket: WebSocket):
+    """本地终端：Unix 使用 PTY，Windows 使用 cmd.exe 管道。"""
+    if os.name == "nt":
+        await _handle_windows_terminal(websocket)
+        return
+    master_fd = None
+    proc = None
+
+    try:
+        master_fd, slave_fd = pty.openpty()
+
+        _set_winsize(slave_fd, 40, 120)
+
+        proc = subprocess.Popen(
+            ["/bin/bash"],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            preexec_fn=os.setsid,
+            env={**os.environ, "TERM": "xterm-256color"},
+        )
+        os.close(slave_fd)
+
+        # master_fd 设为非阻塞
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+        stop_event = threading.Event()
+
+        async def read_from_pty():
+            """从 PTY 读取输出发送到 WebSocket"""
+            while not stop_event.is_set():
+                try:
+                    data = await asyncio.to_thread(_pty_read, master_fd, stop_event)
+                    if data:
+                        await websocket.send_text(data)
+                    elif data is None:
+                        break
+                except Exception:
+                    break
+
+        async def write_to_pty():
+            """从 WebSocket 读取输入写到 PTY"""
+            while not stop_event.is_set():
+                try:
+                    message = await websocket.receive_text()
+                    if not _try_apply_resize(master_fd, message):
+                        os.write(master_fd, message.encode("utf-8"))
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    break
+
+        read_task = asyncio.create_task(read_from_pty())
+        write_task = asyncio.create_task(write_to_pty())
+
+        done, pending = await asyncio.wait(
+            [read_task, write_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        stop_event.set()
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    except Exception as e:
+        logger.error(f"本地终端异常: {e}")
+        try:
+            await websocket.send_text(f"\r\n\x1b[31m终端异常: {e}\x1b[0m\r\n")
+        except Exception:
+            pass
+    finally:
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        logger.info("本地终端连接已关闭")
+
+async def _handle_windows_terminal(websocket: WebSocket):
+    """Windows 使用 ConPTY 提供 PowerShell 原生交互体验。"""
+    try:
+        from winpty import PtyProcess
+    except ImportError:
+        await websocket.send_text(
+            "\r\n\x1b[31mWindows 终端缺少 pywinpty 依赖，请先执行 uv sync。\x1b[0m\r\n"
+        )
+        await websocket.close()
+        return
+
+    proc = None
+    stop_event = threading.Event()
+    try:
+        # ConPTY 将 stdin/stdout 连接到真正的 Windows 伪控制台，
+        # PowerShell 的历史、方向键、复制粘贴、Tab 补全和 Ctrl+C 均由其原生处理。
+        proc = PtyProcess.spawn(
+            ["powershell.exe", "-NoLogo", "-NoProfile"],
+            dimensions=(40, 120),
+        )
+
+        async def reader():
+            while not stop_event.is_set() and proc.isalive():
+                try:
+                    data = await asyncio.to_thread(proc.read, 4096)
+                except (EOFError, OSError):
+                    break
+                if data:
+                    await websocket.send_text(data)
+
+        async def writer():
+            while not stop_event.is_set() and proc.isalive():
+                try:
+                    message = await websocket.receive_text()
+                    if _try_resize_windows_pty(proc, message):
+                        continue
+                    proc.write(message)
+                except WebSocketDisconnect:
+                    break
+                except (EOFError, OSError):
+                    break
+
+        read_task = asyncio.create_task(reader())
+        write_task = asyncio.create_task(writer())
+        _, pending = await asyncio.wait(
+            [read_task, write_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        stop_event.set()
+        for task in pending:
+            task.cancel()
+        for task in (read_task, write_task):
+            if not task.done():
+                continue
+            try:
+                task.result()
+            except (asyncio.CancelledError, EOFError, OSError, WebSocketDisconnect):
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Windows ConPTY 终端异常: {e}", exc_info=True)
+        try:
+            await websocket.send_text(f"\r\n\x1b[31m终端异常: {e}\x1b[0m\r\n")
+        except Exception:
+            pass
+    finally:
+        stop_event.set()
+        if proc:
+            try:
+                proc.terminate()
+            except (EOFError, OSError):
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        logger.info("Windows ConPTY 终端连接已关闭")
+
+
+def _try_resize_windows_pty(proc, message: str) -> bool:
+    """识别前端 resize 控制帧，其他输入原样交给 ConPTY。"""
+    if not message.startswith('{"type":"resize"'):
+        return False
+    try:
+        payload = json.loads(message)
+        rows = int(payload.get("rows") or 0)
+        cols = int(payload.get("cols") or 0)
+        if rows > 0 and cols > 0:
+            proc.setwinsize(rows, cols)
+    except (ValueError, TypeError, EOFError, OSError):
+        pass
+    return True
+
+
+def _set_winsize(fd: int, rows: int, cols: int) -> None:
+    """同步 pty 窗口尺寸，全屏 TUI（如 opencode/vim）据此决定绘制区域"""
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
+def _try_apply_resize(master_fd: int, message: str) -> bool:
+    """识别前端的 resize 控制帧；返回 True 表示该消息已消费、不应写入 pty"""
+    if not message.startswith('{"type":"resize"'):
+        return False
+    try:
+        payload = json.loads(message)
+    except ValueError:
+        return False
+    if payload.get("type") != "resize":
+        return False
+    rows = int(payload.get("rows") or 0)
+    cols = int(payload.get("cols") or 0)
+    if rows > 0 and cols > 0:
+        _set_winsize(master_fd, rows, cols)
+    return True
+
+
+def _pty_read(fd: int, stop_event: threading.Event) -> str | None:
+    """阻塞读取 PTY 数据（在线程中运行）"""
+    while not stop_event.is_set():
+        try:
+            r, _, _ = select.select([fd], [], [], 0.05)
+            if r:
+                data = os.read(fd, 4096)
+                if not data:
+                    return None
+                return data.decode("utf-8", errors="replace")
+        except OSError:
+            return None
+    return None
