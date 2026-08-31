@@ -28,7 +28,7 @@
             <template v-else>
               <section class="settings-section">
                 <h4>🔌 服务端口</h4>
-                <p class="section-hint">端口保存后会刷新配置缓存，但 dev.sh / Electron 监听端口需要重启进程才会接管。</p>
+                <p class="section-hint">端口保存后会刷新配置缓存，但 dev.py / Electron 监听端口需要重启进程才会接管。</p>
                 <label class="field-row">
                   <span>后端端口</span>
                   <input v-model.number="settingsForm.ports.backend" type="number" min="1" max="65535" />
@@ -58,7 +58,7 @@
 
           <div class="settings-content">
             [% if enable_sudo %]
-            <section class="settings-section">
+            <section v-if="requiresSudo" class="settings-section">
               <h4>🔑 Sudo 密码</h4>
               <p class="section-hint">留空表示不修改当前密码；填写后会立即更新 sudo 免密配置。</p>
               <label class="field-row">
@@ -73,7 +73,8 @@
             </section>
             [% endif %]
 
-            <p class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
+            <p v-if="requiresSudo" class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
+            <p v-else class="section-hint">当前平台无需配置 Sudo 密码。后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
 
             <div v-if="secretsMessage" class="settings-message">{{ secretsMessage }}</div>
             <div v-if="secretsError" class="validation-error">{{ secretsError }}</div>
@@ -135,7 +136,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-// 后端基地址：开发态走 dev.sh 注入的 VITE_API_BASE；
+// 后端基地址：开发态走 dev.py 注入的 VITE_API_BASE；
 // 打包态由 backend 直接当静态服务器返回页面，同源访问用相对路径即可
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -166,6 +167,7 @@ const secretsForm = ref({
   [% endif %]
 })
 const secretsSaving = ref(false)
+const requiresSudo = ref(true)
 const secretsMessage = ref('')
 const secretsError = ref('')
 
@@ -183,6 +185,7 @@ const loadSettings = async () => {
     if (!response.ok) throw new Error(data.detail || '读取应用配置失败')
 
     settingsPath.value = data.config_path || ''
+    requiresSudo.value = data.requires_sudo !== false
     settingsForm.value = {
       ports: {
         backend: data.ports?.backend || 8000,
@@ -211,7 +214,7 @@ const saveSettings = async () => {
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '保存应用配置失败')
 
-    settingsMessage.value = '配置已保存。可热重载配置已立即生效；端口变更需重启 dev.sh 或 Electron。'
+    settingsMessage.value = '配置已保存。可热重载配置已立即生效；端口变更需重启 dev.py 或 Electron。'
     await loadFileList()
     await loadSettings()
   } catch (e) {

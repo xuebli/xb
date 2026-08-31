@@ -7,6 +7,14 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，
+# ✓ / ❌ 会抛 UnicodeEncodeError（且异常分支里的 print 会再次抛出）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 class VersionManager:
     def __init__(self, project_root: str = None):

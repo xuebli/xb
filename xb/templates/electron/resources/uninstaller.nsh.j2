@@ -1,0 +1,44 @@
+!ifdef BUILD_UNINSTALLER
+  !include "LogicLib.nsh"
+  !include "nsDialogs.nsh"
+
+  Var deleteUserDataCheckbox
+  Var deleteUserData
+
+  Function un.userDataPageCreate
+    nsDialogs::Create 1018
+    Pop $0
+    ${if} $0 == error
+      Abort
+    ${endIf}
+
+    ${NSD_CreateLabel} 0 0 100% 24u "默认保留应用配置、日志、脚本和其他运行数据。"
+    Pop $0
+
+    ${NSD_CreateCheckbox} 0 34u 100% 12u "同时删除用户数据"
+    Pop $deleteUserDataCheckbox
+    ${NSD_Uncheck} $deleteUserDataCheckbox
+
+    nsDialogs::Show
+  FunctionEnd
+
+  Function un.userDataPageLeave
+    ${NSD_GetState} $deleteUserDataCheckbox $deleteUserData
+  FunctionEnd
+
+  !macro customUnWelcomePage
+    UninstPage custom un.userDataPageCreate un.userDataPageLeave
+  !macroend
+
+  !macro customUnInstall
+    ${ifNot} ${isUpdated}
+      ${if} $deleteUserData == ${BST_CHECKED}
+        SetShellVarContext current
+        DetailPrint "删除用户配置: $APPDATA\[[ package_name]]"
+        RMDir /r "$APPDATA\[[ package_name]]"
+        DetailPrint "删除用户运行数据: $LOCALAPPDATA\[[ package_name]]"
+        RMDir /r "$LOCALAPPDATA\[[ package_name]]"
+      ${endIf}
+    ${endIf}
+  !macroend
+!endif

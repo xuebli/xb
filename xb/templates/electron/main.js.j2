@@ -1,26 +1,34 @@
 const { app, BrowserWindow, Menu, ipcMain } = require('electron');
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const yaml = require('js-yaml');
 
-app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
-app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
+function userConfigRoot() {
+    if (process.platform === 'win32') {
+        return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    }
+    if (process.platform === 'darwin') {
+        return path.join(os.homedir(), 'Library', 'Application Support');
+    }
+    return path.join(os.homedir(), '.config');
+}
+
+const electronStateDir = path.join(userConfigRoot(), '[[ package_name]]-electron');
+app.setPath('userData', electronStateDir);
+app.setPath('sessionData', path.join(electronStateDir, 'Session'));
 
 // 复刻 backend/managers/path_manager.py 的配置目录选择逻辑：
 //   - 开发态(electron 跑源码)：<repo>/configs
-//   - 项目目录跑打包二进制(<repo>/dist/server)：<repo>/configs
-//   - DEB 安装态：~/.config/<package_name>
+//   - 项目目录跑打包二进制(<repo>/dist/server[.exe])：<repo>/configs
+//   - 安装态：Linux ~/.config；Windows %APPDATA%；macOS Application Support
 function resolveConfigDir() {
     const appName = '[[ package_name]]';
     if (!app.isPackaged) {
         return path.join(__dirname, '..', 'configs');
     }
-    // app.isPackaged 时 process.resourcesPath = .../resources
-    // 形式 3：<repo>/dist/server，对应 electron 是 <repo> 下直接跑（这条分支 isPackaged 为 false，落到上面）
-    // 这里只处理 DEB 安装态
-    return path.join(os.homedir(), '.config', appName);
+    return path.join(userConfigRoot(), appName);
 }
 
 // 端口读取，与 path_manager.get_config_value 行为对齐：缺失/异常 fallback 默认值
@@ -42,8 +50,64 @@ const BACKEND_PORT = readPort('backend', 8000);
 
 let win;
 let backend;
+let backendPid;
+let backendShutdownStarted = false;
 let zoomFactor = 1;
 let terminalFocused = false;
+
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isProcessGroupRunning(pid) {
+    try {
+        process.kill(-pid, 0);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function shutdownBackendTree() {
+    if (backendShutdownStarted) return;
+    backendShutdownStarted = true;
+
+    const pid = Number(backendPid || (backend && backend.pid));
+    if (!Number.isInteger(pid) || pid <= 0) return;
+
+    if (process.platform === 'win32') {
+        try {
+            // /T 递归结束 server.exe 拉起的 PowerShell、ConPTY 和业务子进程。
+            // /F 保证 Electron 退出前命令已经完成，避免孤儿进程继续运行。
+            execFileSync(
+                'taskkill',
+                ['/PID', String(pid), '/T', '/F'],
+                { windowsHide: true, stdio: 'ignore' }
+            );
+        } catch (_) {
+            // 进程可能已经自行退出。
+        }
+        return;
+    }
+
+    try {
+        process.kill(-pid, 'SIGTERM');
+    } catch (_) {
+        return;
+    }
+
+    const deadline = Date.now() + 1500;
+    while (Date.now() < deadline && isProcessGroupRunning(pid)) {
+        sleepSync(50);
+    }
+    if (isProcessGroupRunning(pid)) {
+        try {
+            process.kill(-pid, 'SIGKILL');
+        } catch (_) {
+            // 进程组可能已在检查后退出。
+        }
+    }
+}
 
 ipcMain.on('terminal-focus', (_event, focused) => {
     terminalFocused = !!focused;
@@ -68,11 +132,34 @@ function resetZoom() {
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
 
+    const backendName = process.platform === 'win32' ? 'server.exe' : 'server';
     const backendPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'server')
-        : path.join(__dirname, '..', 'dist', 'server');
+        ? path.join(process.resourcesPath, 'server-bin', backendName)
+        : path.join(__dirname, '..', 'dist', backendName);
 
-    backend = spawn(backendPath);
+    if (!fs.existsSync(backendPath)) {
+        const message = `后端程序不存在: ${backendPath}`;
+        console.error(message);
+        require('electron').dialog.showErrorBox('应用启动失败', message);
+        app.quit();
+        return;
+    }
+
+    backend = spawn(backendPath, [], {
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    backendPid = backend.pid;
+
+    backend.on('error', (error) => {
+        console.error('[Backend] 启动失败:', error);
+        require('electron').dialog.showErrorBox(
+            '应用启动失败',
+            `无法启动后端程序:\n${backendPath}\n\n${error.message}`
+        );
+        app.quit();
+    });
 
     backend.stdout.on('data', (data) => {
         const output = data.toString();
@@ -150,8 +237,14 @@ app.whenReady().then(() => {
             win.loadURL(`http://localhost:${BACKEND_PORT}`);
         }
     });
+
+    backend.stderr.on('data', (data) => {
+        console.error('[Backend]', data.toString());
+    });
 });
 
-app.on('quit', () => {
-    if (backend) backend.kill();
+app.on('before-quit', shutdownBackendTree);
+app.on('window-all-closed', () => {
+    app.quit();
 });
+process.on('exit', shutdownBackendTree);

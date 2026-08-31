@@ -1,4 +1,5 @@
 const { app } = require('electron');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -9,8 +10,19 @@ const {
     showPortConflictWindow
 } = require('./port_diagnostics');
 
-app.setPath('userData', path.join(os.homedir(), '.config', '[[ package_name]]-electron'));
-app.setPath('sessionData', path.join(os.homedir(), '.config', '[[ package_name]]-electron', 'Session'));
+function userConfigRoot() {
+    if (process.platform === 'win32') {
+        return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    }
+    if (process.platform === 'darwin') {
+        return path.join(os.homedir(), 'Library', 'Application Support');
+    }
+    return path.join(os.homedir(), '.config');
+}
+
+const electronStateDir = path.join(userConfigRoot(), '[[ package_name]]-electron');
+app.setPath('userData', electronStateDir);
+app.setPath('sessionData', path.join(electronStateDir, 'Session'));
 
 let diagnosticsWindow = null;
 let mainLoaded = false;
@@ -19,7 +31,7 @@ function resolveConfigDir() {
     if (!app.isPackaged) {
         return path.join(__dirname, '..', 'configs');
     }
-    return path.join(os.homedir(), '.config', '[[ package_name]]');
+    return path.join(userConfigRoot(), '[[ package_name]]');
 }
 
 function configPath() {
@@ -78,6 +90,18 @@ async function killProcesses(pids) {
         .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
 
     for (const pid of values) {
+        if (process.platform === 'win32') {
+            try {
+                execFileSync(
+                    'taskkill',
+                    ['/PID', String(pid), '/T', '/F'],
+                    { windowsHide: true, stdio: 'ignore' }
+                );
+            } catch (_) {
+                // Process may already be gone.
+            }
+            continue;
+        }
         try {
             process.kill(pid, 'SIGTERM');
         } catch (_) {
@@ -91,6 +115,18 @@ async function killProcesses(pids) {
 
     for (const pid of values) {
         if (!isPidRunning(pid)) continue;
+        if (process.platform === 'win32') {
+            try {
+                execFileSync(
+                    'taskkill',
+                    ['/PID', String(pid), '/T', '/F'],
+                    { windowsHide: true, stdio: 'ignore' }
+                );
+            } catch (_) {
+                // Process may already be gone.
+            }
+            continue;
+        }
         try {
             process.kill(pid, 'SIGKILL');
         } catch (_) {

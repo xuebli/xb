@@ -1,5 +1,5 @@
 <template>
-  <div v-if="showConfig" class="config-overlay">
+  <div v-if="showConfig && requiresSudo" class="config-overlay">
     <div class="config-dialog">
       <aside class="config-sidebar">
         <div class="dialog-brand">⚒</div>
@@ -57,6 +57,7 @@
 import { ref, onMounted } from 'vue'
 
 const showConfig = ref(false)
+const requiresSudo = ref(true)
 const password = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -71,8 +72,9 @@ const checkConfig = async () => {
     const result = await response.json()
     configPath.value = result.config_path || ''
     isPackaged.value = result.is_packaged
+    requiresSudo.value = result.requires_sudo !== false
 
-    if (!result.valid) {
+    if (requiresSudo.value && !result.valid) {
       showConfig.value = true
       configMessage.value = result.message || '配置无效'
     }
@@ -84,6 +86,10 @@ const checkConfig = async () => {
 }
 
 const saveConfig = async () => {
+  if (!requiresSudo.value) {
+    showConfig.value = false
+    return
+  }
   if (!password.value) {
     error.value = '密码不能为空'
     return

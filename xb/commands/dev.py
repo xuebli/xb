@@ -4,6 +4,7 @@ xb dev 命令实现
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -12,7 +13,7 @@ from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
 
 
 def is_project_root(path: Path) -> bool:
-    return (path / "pyproject.toml").exists() and (path / "dev.sh").exists()
+    return (path / "pyproject.toml").exists() and (path / "dev.py").exists()
 
 
 def find_project_root() -> Path | None:
@@ -41,8 +42,8 @@ def dev(action: str):
     """
     project_root = find_project_root()
     if not project_root:
-        click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 dev.sh）")
+        click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 dev.py）")
         raise click.Abort()
 
-    dev_script = project_root / "dev.sh"
-    subprocess.run(["bash", str(dev_script), action.lower()], cwd=project_root)
+    dev_script = project_root / "dev.py"
+    subprocess.run([sys.executable, str(dev_script), action.lower()], cwd=project_root)

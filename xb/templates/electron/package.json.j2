@@ -6,7 +6,8 @@
   "author": "[[ package_name]]@example.com",
   "homepage": "https://example.com",
   "scripts": {
-    "prestart": "[ \"$(stat -c '%u:%a' node_modules/electron/dist/chrome-sandbox 2>/dev/null)\" = \"0:4755\" ] || (sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox)",
+    "prestart": "node prepare.js",
+    "prebuild": "node prepare.js",
     "start": "electron .",
     "build": "electron-builder"
   },
@@ -27,15 +28,28 @@
 [% endif %]
       "category": "Utility"
     },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }][% if icon_path %],
+      "icon": "resources/icon.ico"[% endif %]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "include": "resources/uninstaller.nsh"
+    },
     "deb": {
       "maintainer": "[[ package_name]]@example.com",
-      "afterInstall": "resources/postinst",
-      "afterRemove": "resources/postrm"
+      "afterInstall": "resources/postinst.py",
+      "afterRemove": "resources/postrm.py"
     },
     "extraResources": [
       {
-        "from": "../dist/server",
-        "to": "server"
+        "from": "../dist",
+        "to": "server-bin",
+        "filter": ["server*"]
       },
       {
         "from": "../frontend/dist",

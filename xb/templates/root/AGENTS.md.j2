@@ -5,16 +5,31 @@
 
 ## OVERVIEW
 
-跨平台桌面应用：FastAPI 后端 + Vue3 前端 + Electron 壳，PyInstaller 打 server，electron-builder 打 DEB。
-开发态/生产态路径靠 `path_manager.is_packaged` 切换（开发态读 `./configs/`，打包态读 `~/.config/<app>/`）。
+跨平台桌面应用：FastAPI 后端 + Vue3 前端 + Electron 壳，PyInstaller 打 server，electron-builder
+按平台生成 Linux DEB 或 Windows NSIS 安装程序。
+开发态/生产态路径靠 `path_manager.is_packaged` 切换（开发态读 `./configs/`，打包态按平台使用
+用户配置目录）。
+
+### 平台边界
+
+- **Linux/Ubuntu**：Unix PTY 启动 bash；安装产物为 DEB；配置位于
+  `~/.config/[[ package_name]]/`，运行数据和日志位于
+  `~/.local/share/[[ package_name]]/datas/`，用户脚本位于
+  `~/.local/share/[[ package_name]]/scripts/`。
+- **Windows**：ConPTY 启动 PowerShell；使用 Windows 专用依赖 `pywinpty`；安装产物为
+  NSIS `.exe`；配置位于 `%APPDATA%\[[ package_name]]\`，运行数据和日志位于
+  `%LOCALAPPDATA%\[[ package_name]]\datas\`，用户脚本位于
+  `%LOCALAPPDATA%\[[ package_name]]\scripts\`。
+- 平台分支必须由 `os.name`、`sys.platform` 或 Electron 的 `process.platform` 判断；
+  不要改变 Unix PTY 分支来适配 Windows。
 
 ## STRUCTURE
 
 ```
 [[ package_name]]/
 ├── pyproject.toml      # uv + hatchling，packages=["backend"]
-├── dev.sh              # 启停脚本，写 PID 到 datas/pids/
-├── build.sh            # -a/-f/-b/-e 分别构建
+├── dev.py              # 启停脚本，写 PID 到 datas/pids/
+├── build.py            # -a/-f/-b/-e 分别构建
 ├── backend/            # FastAPI（包根，不要写 from backend.xxx）
 │   ├── main.py         # FastAPI 实例 + lifespan + SPA fallback
 │   ├── backend_build.py# PyInstaller 打包入口
@@ -31,10 +46,10 @@
 │       ├── composables/# useXxx 组合式逻辑/API 调用封装
 │       ├── services/   # 前端 API 客户端/数据访问封装
 │       └── utils/      # 纯工具函数
-├── electron/           # 壳 + DEB 打包（main.js 极简，复杂度在 package.json/postinst）
+├── electron/           # 壳 + DEB/NSIS 打包（main.js 极简，复杂度在 package.json/prepare.js）
 ├── version/            # Git pre-commit 版本管理（三模态：CLI/Tk/Web）
 ├── configs/            # 配置文件（secrets.yaml 含密钥，gitignore；其他 yaml 直接提交）
-├── scripts/            # 占位脚本，打包时随 extraResources 进入 /opt/[[ package_name_capitalized]]/scripts/
+├── scripts/            # 占位脚本，打包时随 extraResources 进入安装资源目录
 └── datas/              # 运行时产物（pids/logs/reports），全部 gitignore
 ```
 
@@ -50,15 +65,15 @@
 | 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
-| 改 DEB 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
-| 改安装/卸载副作用 | `electron/resources/postinst` / `postrm` | DEB 钩子 |
+| 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
+| 改安装/卸载副作用 | `electron/resources/postinst.py` / `postrm.py` / `uninstaller.nsh` | Linux DEB 使用 Python 钩子；Windows NSIS 卸载复选项在 `uninstaller.nsh` |
 | 改 Electron 窗口尺寸/菜单 | `electron/main.js` | `BrowserWindow` 构造参数 |
 | 加前端页面 | `frontend/src/views/<Feature>View.vue` | 页面级组件只做页面编排，复杂逻辑拆 composables/services |
 | 加前端组件 | `frontend/src/components/<feature>/<ComponentName>.vue` | 可复用组件按业务域建目录；组件名 PascalCase |
 | 加前端 API 调用 | `frontend/src/services/<feature>Api.js` 或 `composables/use<Feature>.js` | 不要在组件里散落大量 fetch |
 | 改前端注入版本/git日志 | `frontend/vite.config.js` 的 `define` | `__APP_VERSION__` 读 `electron/package.json` |
 | 改后端 base URL（前端） | `frontend/src/components/FileManager.vue` | `import.meta.env.VITE_API_BASE` |
-| 改 pre-commit 行为 | `version/hooks/pre-commit` | 改完跑 `bash version/scripts/install_hooks.sh` |
+| 改 pre-commit 行为 | `version/hooks/pre-commit.py` | `.git/hooks/pre-commit` 是转发脚本，改完立即生效；新增 hook 跑 `python version/scripts/install_hooks.py` |
 | 加被 bump 的文件 | `version/scripts/version_manager.py` | 仿 `update_pyproject_version` |
 [% if enable_sudo %]| 加 sudo 免密命令 | `backend/managers/sudoers_manager.py` 的 `self.commands = []` | 加完启动应用自动写 `/etc/sudoers.d/` |
 [% endif %]
@@ -71,45 +86,57 @@
 | `app` (FastAPI) | `backend/main.py` | 含 `/api/*` API 与 `/{full_path:path}` SPA fallback |
 | `serve_frontend` | `backend/main.py` | 仅打包态服务 frontend dist；开发态返回提示 |
 | `VersionManager` | `version/scripts/version_manager.py` | 同步更新 `electron/package.json` + `pyproject.toml` 的 version |
-| `PathManager.init_user_configs` | `backend/managers/path_manager.py` | 仅打包态生效，把 `/opt/.../configs/*.example` 拷到 `~/.config/[[ package_name]]/`，已存在不覆盖 |
+| `PathManager.init_user_data_dirs` | `backend/managers/path_manager.py` | 仅打包态生效，创建用户目录中的 `datas/logs` 与 `datas/reports` |
+| `PathManager.init_user_configs` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 configs 初始化到当前平台用户配置目录，已存在不覆盖 |
+| `PathManager.init_user_scripts` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 scripts 初始化到用户数据根目录的 `scripts/`，已存在不覆盖 |
 [% if enable_sudo %]| `sudoers_manager` | `backend/managers/sudoers_manager.py` 文件底部 | 单例，把 `self.commands` 列表写入 `/etc/sudoers.d/[[ package_name_capitalized]]_nopasswd` |
 [% endif %]
 ## COMMANDS
 
 ```bash
-# 开发
-bash dev.sh start|stop|restart|status
+# 开发（Linux/macOS）
+./dev.py start|stop|restart|status
+# Windows PowerShell: python .\dev.py start|stop|restart|status
 
-# 打包
-bash build.sh -a    # 全量
-bash build.sh -f    # 仅前端 → frontend/dist
-bash build.sh -b    # 仅后端 → dist/server
-bash build.sh -e    # 仅 Electron → electron/dist/*.deb
+# 打包（Linux/macOS）
+./build.py -a    # 全量
+./build.py -f    # 仅前端 → frontend/dist
+./build.py -b    # 仅后端 → dist/server
+./build.py -e    # 仅 Electron → electron/dist/（Linux *.deb / Windows *.exe）
+# Windows PowerShell: python .\build.py -a
 
 # 版本（也可手动触发）
 .venv/bin/python version/scripts/version_manager.py {patch|minor|major}
+# Windows PowerShell: .\.venv\Scripts\python.exe version\scripts\version_manager.py patch
 
-# Hook 安装
-bash version/scripts/install_hooks.sh
+# Hook 安装（./dev.py start 会自动执行一次）
+./version/scripts/install_hooks.py
 ```
 
 ---
 
 # 跨模块约定（CONVENTIONS）
 
-- **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
+- **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。Windows 终端额外使用
+  `pywinpty`，仅在 `win32` 安装。新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
 - **包名 `backend` 而非 `src`**：`pyproject.toml` 配置 `packages = ["backend"]`，导入用 `from managers import ...` / `from api.config import ...`（即 `backend` 内相对当前包根，**不要写 `from backend.managers import ...`**）。managers 包内部互相依赖时用相对导入（`from .path_manager import path_manager`）。
 - **新增代码必须模块化**：按业务域拆目录和文件，优先采用 `api/<feature>/routes.py` + `services/<feature>/...` + `schemas/<feature>.py`。`api` 只放 HTTP 路由，`services` 放业务编排，`schemas` 放 Pydantic 模型，`managers` 只放跨模块基础设施单例。不要把所有 API 都堆进 `backend/api/*.py`，也不要把普通业务类都塞进 `backend/managers/`。
 - **单文件单职责**：一个文件只承载一个明确模块/角色。文件开始变大、同时包含路由/模型/业务/工具函数/外部接口时，必须拆分；不要写几千行的"万能文件"。经验阈值：超过约 400 行或出现 2 个以上业务域时，先拆模块再继续加代码。
 - **路径硬编码必须经 `path_manager`**：`get_config_path` / `get_log_path` / `get_report_path` / `get_script_path` / `get_frontend_path`，不要直接拼 `Path.home()` 或 `Path(__file__).parent...`。
+- **资源目录按实际需求新增，禁止预声明占位目录**：只有项目真正引入某类资源时，才创建对应目录（例如 `external/`、`firmwares/`、`vendor/`），不要提前创建空目录、常量或无实际用途的路径接口。新增后必须同步检查并按需修改：`TemplateEngine` 的生成/复制逻辑、`electron/package.json` 的 `build.extraResources`、`PathManager` 的开发态与安装态路径、需要用户写入时的首次启动初始化逻辑，以及 README 的项目结构说明。
+- **可写资源与安装资源分离**：安装包内资源是只读源；确需运行时修改的资源，Windows 放到 `%LOCALAPPDATA%\[[ package_name]]\<resource>\`，Linux 放到 `~/.local/share/[[ package_name]]/<resource>/`，并由 `path_manager` 提供统一路径。首次初始化只复制不存在的文件，不得覆盖用户已有文件；若资源应始终保持安装包版本，则直接读取安装资源目录，不复制到用户目录。
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
 - **Electron 快捷键必须保留**：`electron/main.js` 隐藏菜单后要显式支持 `F12` / `Ctrl+Shift+I` 打开 DevTools、`F11` 全屏、`Ctrl/Cmd + +/-/0` 缩放/重置、`Ctrl/Cmd + 鼠标滚轮` 缩放。改窗口或菜单逻辑时不要破坏这些桌面基础能力。
-- **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 dev.sh 注入的 `VITE_API_BASE` / `VITE_DEV_PORT` 环境变量拿到，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.sh / Electron 才能换监听端口。
+- **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。终端 PTY、PowerShell/bash 及其业务子进程都必须随应用退出。
+- **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `%APPDATA%\[[ package_name]]\` 与 `%LOCALAPPDATA%\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
+- **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 `dev.py` 注入的 `VITE_BACKEND_PORT` / `VITE_DEV_PORT` 环境变量拿到，Vite 将 `/api`（含 WebSocket）代理到 FastAPI，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.py / Electron 才能换监听端口。
 - **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。密钥类配置在"🔐 密钥管理"面板（调 `POST /api/secrets/save`），普通配置在"🌐 应用配置"面板。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
-- **进程托管走 nohup + PID 文件**：`dev.sh` 把 PID 写到 `datas/pids/[[ package_name]]_{backend,frontend}.pid`，停止靠 `pkill -f` 模糊匹配。
+- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
+- **开发服务进程隔离**：`dev.py` 将后端和 Vite 的 stdout/stderr 写入 `datas/logs/`；Windows 使用隐藏控制台与 `stdin=DEVNULL`，不能继承或占用用户当前 PowerShell 输入。首次同步 `uv`/`npm` 依赖必须有超时和明确提示。
+- **进程托管走 Python 子进程 + PID 文件**：`dev.py` 把 PID 写到 `datas/pids/backend.pid` 与 `datas/pids/frontend.pid`，日志写入 `datas/logs/`；Linux 使用进程组结束服务，Windows 使用 `taskkill /PID ... /T /F`。不要用模糊的 `pkill -f` 作为正常流程。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
 - **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
 - **写完配置必须精确 reload**：`path_manager.reload_config(<filename>)` 传具体文件名，**不要** `reload_config()` 全清——配置缓存是按文件名独立的，全清会无端废掉其他文件的缓存（详见 `path_manager.reload_config` docstring）。
@@ -305,7 +332,8 @@ class FeishuBitableManager:
 - ❌ 不要把前端所有页面都塞进 `App.vue` 或 `components/DashboardHome.vue` —— `App.vue` 是壳，业务页面进 `views/`，复杂区域拆 `components/<feature>/`。
 - ❌ 不要在单个 `.vue` 里堆几百上千行，把表单、弹窗、列表、API 请求、格式化函数和状态管理全写一起 —— 拆子组件、`composables/useXxx.js`、`services/xxxApi.js`。
 - ❌ 不要写几千行大文件 —— 一个文件如果同时包含 API、Pydantic schema、业务逻辑、文件读写、第三方接口封装，或一个前端组件同时包含多个页面/弹窗/数据流程，说明职责已经混乱，必须拆到对应目录。
-- ❌ 不要在 `path_manager` 之外直接读 `~/.config/[[ package_name]]/` —— 开发态根本不在那里（在 `./configs/`）。
+- ❌ 不要在 `path_manager` 之外直接读平台用户配置目录 —— 开发态配置在 `./configs/`，打包态 Linux/Windows/macOS 路径不同。
+- ❌ 不要在 Electron 主进程里写死 `resources/server` —— 安装包后端统一位于 `process.resourcesPath/server-bin/server[.exe]`，Windows 文件名是 `server.exe`，Linux/macOS 是 `server`。
 - ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
 - ❌ 不要把密钥/密码塞进 `global_config.yaml` —— 敏感信息只放 `secrets.yaml`，见上"配置文件分级"决策表。
 - ❌ 不要新增只有 yaml、没有 UI 的配置项 —— 用户必须能在界面里配置；原始 YAML 编辑器只能做高级兜底。
@@ -322,13 +350,13 @@ class FeishuBitableManager:
 - ❌ 不要 commit `electron/package.json` 的 version 字段 —— 由 pre-commit hook 自动 bump。
 - ❌ **不要用 `git commit --no-verify` / `-n`** —— 会跳过 `version/hooks/pre-commit`，导致 `electron/package.json` 与 `pyproject.toml` 的 version 字段漏 bump、`版本迭代日志.md` 不更新。即使 hook 弹窗"看似阻塞"，正确做法是**在屏幕上完成弹窗操作**或排查 hook 三模态判断（DISPLAY / SSH_CLIENT / VSCODE_IPC_HOOK_CLI），**不是**绕过它。
 - ❌ 不要在 `extraResources` 里漏 `filter: ["!secrets.yaml"]` —— 会把开发机的真实密钥打进 DEB。
-- ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `bash build.sh -b`。
+- ❌ 不要 `cd electron && npm run build` 单跑 —— `package.json` 的 `from: "../dist/server"` 会找不到，必须先 `./build.py -b`。
 - ❌ 不要硬编码用户路径如 `/home/xxx/...` —— 永远走 `getent passwd "$SUDO_USER" | cut -d: -f6`。
-- ❌ 不要把端口 8000 / 5173 硬编码进 backend / frontend / electron 代码或脚本 —— 永远从 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 读，三端各自的入口已经搭好（path_manager / dev.sh / electron main.js），新增模块复用即可。
+- ❌ 不要把端口 8000 / 5173 硬编码进 backend / frontend / electron 代码或脚本 —— 永远从 `configs/global_config.yaml` 的 `ports.backend / ports.frontend` 读，三端各自的入口已经搭好（path_manager / dev.py / electron main.js），新增模块复用即可。
 - ❌ 不要假设 `__GIT_COMMITS__` 非空 —— 非 git 仓库或 CI 沙箱里它是 `[]`。
 - ❌ 不要写 `process.env.XXX` —— Vite 项目用 `import.meta.env.VITE_XXX`。
 - ❌ 不要直接编辑 `frontend/dist/` —— 打包产物，被 electron-builder 通过 `extraResources` 拉走。
-- ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.sh` 分发。
+- ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.py` 分发。
 - ❌ 不要在 hook 里硬退出非 0 码 —— 除非确实是用户取消。误退会卡住整个 commit 流程。
 - ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— [% if enable_sudo %]必须注册到 `sudoers_manager.commands`，配置完成后无密执行[% else %]当前项目未启用 sudo；如确需，请重新生成项目时加 `--sudoers`[% endif %]。
 
@@ -363,17 +391,22 @@ class FeishuBitableManager:
 [% endif %]
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
 
-## D. 启动 / 停止 / 状态:用 `dev.sh`
+## D. 启动 / 停止 / 状态:用 `dev.py`
 
 | 场景 | 推荐方式 |
 |---|---|
-| **日常开发**(前后端同启) | `bash dev.sh start` |
-| **临时调试单后端** | `.venv/bin/python backend/main.py` |
+| **日常开发（Linux/macOS）** | `./dev.py start` |
+| **日常开发（Windows PowerShell）** | `python .\dev.py start` |
+| **临时调试单后端（Linux/macOS）** | `.venv/bin/python backend/main.py` |
+| **临时调试单后端（Windows）** | `.\.venv\Scripts\python.exe backend\main.py` |
 | **临时调试单前端** | `cd frontend && npm run dev` |
-| **停止 dev.sh 启动的服务** | `bash dev.sh stop`(**不要**用 `pkill -f uvicorn` —— 会留前端尾巴) |
-| **构建** | `bash build.sh -a/-f/-b/-e`(**不要**直接 `pyinstaller` / `electron-builder`) |
+| **停止 dev.py 启动的服务（Linux/macOS）** | `./dev.py stop` |
+| **停止 dev.py 启动的服务（Windows）** | `python .\dev.py stop` |
+| **构建** | `./build.py -a/-f/-b/-e`(**不要**直接 `pyinstaller` / `electron-builder`) |
 
-`dev.sh` 内部处理:端口检查、PID 文件、日志重定向、前后端同步启动。日常开发优先用它,临时单跑某一边可直接命令。
+`dev.py` 内部处理：端口检查、PID 文件、日志重定向、前后端同步启动。
+Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台 Python 控制台。
+日常开发优先用它，临时单跑某一边可直接命令。
 
 ## E. 测试
 

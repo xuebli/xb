@@ -7,14 +7,16 @@
 import asyncio
 import json
 import os
-import pty
-import select
-import signal
-import struct
 import subprocess
-import fcntl
-import termios
 import threading
+
+if os.name != "nt":
+    import fcntl
+    import pty
+    import select
+    import signal
+    import struct
+    import termios
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -32,7 +34,10 @@ async def terminal_ws(websocket: WebSocket):
 
 
 async def _handle_local_terminal(websocket: WebSocket):
-    """本地终端：用 pty 起一个 bash，双向转发"""
+    """本地终端：Unix 使用 PTY，Windows 使用 cmd.exe 管道。"""
+    if os.name == "nt":
+        await _handle_windows_terminal(websocket)
+        return
     master_fd = None
     proc = None
 
@@ -119,6 +124,100 @@ async def _handle_local_terminal(websocket: WebSocket):
         except Exception:
             pass
         logger.info("本地终端连接已关闭")
+
+async def _handle_windows_terminal(websocket: WebSocket):
+    """Windows 使用 ConPTY 提供 PowerShell 原生交互体验。"""
+    try:
+        from winpty import PtyProcess
+    except ImportError:
+        await websocket.send_text(
+            "\r\n\x1b[31mWindows 终端缺少 pywinpty 依赖，请先执行 uv sync。\x1b[0m\r\n"
+        )
+        await websocket.close()
+        return
+
+    proc = None
+    stop_event = threading.Event()
+    try:
+        # ConPTY 将 stdin/stdout 连接到真正的 Windows 伪控制台，
+        # PowerShell 的历史、方向键、复制粘贴、Tab 补全和 Ctrl+C 均由其原生处理。
+        proc = PtyProcess.spawn(
+            ["powershell.exe", "-NoLogo", "-NoProfile"],
+            dimensions=(40, 120),
+        )
+
+        async def reader():
+            while not stop_event.is_set() and proc.isalive():
+                try:
+                    data = await asyncio.to_thread(proc.read, 4096)
+                except (EOFError, OSError):
+                    break
+                if data:
+                    await websocket.send_text(data)
+
+        async def writer():
+            while not stop_event.is_set() and proc.isalive():
+                try:
+                    message = await websocket.receive_text()
+                    if _try_resize_windows_pty(proc, message):
+                        continue
+                    proc.write(message)
+                except WebSocketDisconnect:
+                    break
+                except (EOFError, OSError):
+                    break
+
+        read_task = asyncio.create_task(reader())
+        write_task = asyncio.create_task(writer())
+        _, pending = await asyncio.wait(
+            [read_task, write_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        stop_event.set()
+        for task in pending:
+            task.cancel()
+        for task in (read_task, write_task):
+            if not task.done():
+                continue
+            try:
+                task.result()
+            except (asyncio.CancelledError, EOFError, OSError, WebSocketDisconnect):
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Windows ConPTY 终端异常: {e}", exc_info=True)
+        try:
+            await websocket.send_text(f"\r\n\x1b[31m终端异常: {e}\x1b[0m\r\n")
+        except Exception:
+            pass
+    finally:
+        stop_event.set()
+        if proc:
+            try:
+                proc.terminate()
+            except (EOFError, OSError):
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        logger.info("Windows ConPTY 终端连接已关闭")
+
+
+def _try_resize_windows_pty(proc, message: str) -> bool:
+    """识别前端 resize 控制帧，其他输入原样交给 ConPTY。"""
+    if not message.startswith('{"type":"resize"'):
+        return False
+    try:
+        payload = json.loads(message)
+        rows = int(payload.get("rows") or 0)
+        cols = int(payload.get("cols") or 0)
+        if rows > 0 and cols > 0:
+            proc.setwinsize(rows, cols)
+    except (ValueError, TypeError, EOFError, OSError):
+        pass
+    return True
 
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:

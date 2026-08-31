@@ -1,0 +1,43 @@
+// Cross-platform Electron preparation hook.
+// Repairs an incomplete Electron binary install before start/build.
+const childProcess = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const electronDir = path.join(__dirname, 'node_modules', 'electron');
+const electronPackage = path.join(electronDir, 'package.json');
+const electronPathFile = path.join(electronDir, 'path.txt');
+
+function electronBinaryExists() {
+  if (!fs.existsSync(electronPackage) || !fs.existsSync(electronPathFile)) return false;
+  const relativePath = fs.readFileSync(electronPathFile, 'utf8').trim();
+  return relativePath && fs.existsSync(path.join(electronDir, 'dist', relativePath));
+}
+
+if (!electronBinaryExists()) {
+  const installScript = path.join(electronDir, 'install.js');
+  if (!fs.existsSync(installScript)) {
+    throw new Error('Electron npm package is missing; run npm install first.');
+  }
+
+  console.log('Electron binary is missing, downloading it now...');
+  const result = childProcess.spawnSync(process.execPath, [installScript], {
+    cwd: electronDir,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      ELECTRON_MIRROR:
+        process.env.ELECTRON_MIRROR || 'https://mirrors.huaweicloud.com/electron/',
+    },
+  });
+  if (result.status !== 0 || !electronBinaryExists()) {
+    throw new Error('Electron binary download failed; check the network or ELECTRON_MIRROR.');
+  }
+}
+
+if (process.platform === 'linux') {
+  const sandbox = path.join(electronDir, 'dist', 'chrome-sandbox');
+  try {
+    if (fs.existsSync(sandbox)) fs.chmodSync(sandbox, 0o4755);
+  } catch (_) {}
+}

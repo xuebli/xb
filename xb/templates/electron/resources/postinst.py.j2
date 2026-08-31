@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+import os
+try:
+    import pwd
+except ImportError:
+    pwd = None
+import shutil
+import subprocess
+import getpass
+from pathlib import Path
+
+if os.name == "nt":
+    # Windows 使用 NSIS 安装，不执行 Debian 专用 postinst 逻辑。
+    raise SystemExit(0)
+
+app = "[[ package_name]]"
+capitalized = "[[ package_name_capitalized]]"
+
+
+def run(command):
+    """执行可选的系统命令；命令缺失或失败时不中断安装。"""
+    try:
+        return subprocess.run(command, check=False).returncode == 0
+    except OSError:
+        return False
+
+
+binary = f"/opt/{capitalized}/{app}"
+link = f"/usr/bin/{app}"
+# 创建全局命令入口，使用户可以直接从终端启动应用。
+if shutil.which("update-alternatives"):
+    run(["update-alternatives", "--install", link, app, binary, "100"])
+elif os.path.exists(binary):
+    try:
+        Path(link).unlink(missing_ok=True)
+        Path(link).symlink_to(binary)
+    except OSError:
+        pass
+
+sandbox = Path(f"/opt/{capitalized}/chrome-sandbox")
+if sandbox.exists():
+    # user namespace 可用时使用普通权限，否则设置 Electron 所需的 setuid 权限。
+    supported = Path("/proc/self/ns/user").exists() and run(["unshare", "--user", "true"])
+    try:
+        sandbox.chmod(0o755 if supported else 0o4755)
+    except OSError:
+        pass
+
+for command in (("update-mime-database", "/usr/share/mime"),
+                ("update-desktop-database", "/usr/share/applications")):
+    # 刷新桌面文件关联和应用菜单缓存；精简系统可能没有这些工具。
+    if shutil.which(command[0]):
+        run(list(command))
+
+resource_root = Path(f"/opt/{capitalized}/resources")
+# 为捆绑 Python 脚本补充执行权限，保持原 chmod +x 行为。
+scripts = resource_root / "scripts"
+if scripts.is_dir():
+    for path in scripts.rglob("*.py"):
+        try:
+            path.chmod(path.stat().st_mode | 0o111)
+        except OSError:
+            pass
+config = Path.home() / ".config" / app
+data_root = Path.home() / ".local" / "share" / app
+data = data_root / "datas"
+# 用户配置和运行数据使用 XDG 目录规范。
+config.mkdir(parents=True, exist_ok=True)
+(data / "logs").mkdir(parents=True, exist_ok=True)
+(data / "reports").mkdir(parents=True, exist_ok=True)
+user_scripts = data_root / "scripts"
+user_scripts.mkdir(parents=True, exist_ok=True)
+if scripts.is_dir():
+    for source in scripts.rglob("*"):
+        if source.is_file():
+            target = user_scripts / source.relative_to(scripts)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+resources = resource_root / "configs"
+if resources.is_dir():
+    # 首次安装复制默认配置；已有文件不覆盖，保留用户修改。
+    for source in resources.rglob("*"):
+        if source.is_file():
+            relative = source.relative_to(resources)
+            name = str(relative)
+            if name.endswith(".example"):
+                relative = Path(name[:-8])
+            target = config / relative
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+secret = config / "secrets.yaml"
+if secret.exists():
+    secret.chmod(0o600)
+
+# dpkg 通常以 root 运行；优先把配置初始化到实际调用 sudo 的用户目录。
+real_home = os.environ.get("SUDO_USER")
+if real_home and pwd is not None:
+    try:
+        real_home = Path(pwd.getpwnam(real_home).pw_dir)
+    except KeyError:
+        real_home = None
+if real_home:
+    user_config = real_home / ".config" / app
+    user_data_root = real_home / ".local" / "share" / app
+    user_data = user_data_root / "datas"
+    user_config.mkdir(parents=True, exist_ok=True)
+    (user_data / "logs").mkdir(parents=True, exist_ok=True)
+    (user_data / "reports").mkdir(parents=True, exist_ok=True)
+    user_scripts = user_data_root / "scripts"
+    user_scripts.mkdir(parents=True, exist_ok=True)
+    if scripts.is_dir():
+        for source in scripts.rglob("*"):
+            if source.is_file():
+                target = user_scripts / source.relative_to(scripts)
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+    for source in resources.rglob("*") if resources.is_dir() else ():
+        if source.is_file():
+            relative = source.relative_to(resources)
+            if str(relative).endswith(".example"):
+                relative = Path(str(relative)[:-8])
+            target = user_config / relative
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+    secret = user_config / "secrets.yaml"
+    if secret.exists():
+        secret.chmod(0o600)

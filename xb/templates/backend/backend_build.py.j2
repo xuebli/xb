@@ -1,5 +1,14 @@
-import PyInstaller.__main__
+import sys
 from pathlib import Path
+
+import PyInstaller.__main__
+
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，✓ 会抛 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 project_root = Path(__file__).parent.parent
 dist_dir = project_root / "dist"

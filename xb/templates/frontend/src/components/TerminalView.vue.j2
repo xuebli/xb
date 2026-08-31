@@ -76,6 +76,8 @@ function initTerminal() {
 
   if (termRef.value) {
     term.open(termRef.value)
+    term.focus()
+    termRef.value.addEventListener('mousedown', () => term?.focus())
   }
 
   term.onData((data) => sendInput(props.session.id, data))

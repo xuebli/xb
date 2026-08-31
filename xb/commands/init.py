@@ -139,6 +139,20 @@ def init_git_repo(target_dir: Path, package: str) -> bool:
     return True
 
 
+def remove_existing_project(path: Path) -> None:
+    """删除待覆盖项目；Windows Git 对象可能是只读文件。"""
+    if os.name != "nt":
+        shutil.rmtree(path)
+        return
+
+    def clear_readonly(func, filename, _exc):
+        import stat
+        os.chmod(filename, stat.S_IWRITE)
+        func(filename)
+
+    shutil.rmtree(path, onexc=clear_readonly)
+
+
 class ParamSummaryCommand(ChineseHelpCommand):
     pass
 
@@ -225,7 +239,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
         if not Confirm.ask("是否覆盖现有目录?", default=False):
             console.print("[yellow]已取消操作[/yellow]")
             raise click.Abort()
-        shutil.rmtree(target_dir)
+        remove_existing_project(target_dir)
 
     icon_path = resolve_icon_path(icon, package_name)
     if icon_path:
@@ -267,6 +281,8 @@ def init_command(package: str, sudoers: bool, icon: str | None):
         # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
         # 镜像源由各子目录的 .npmrc 提供；electron 需下载约 200MB 二进制，超时给足 10 分钟
         if shutil.which("npm"):
+            # Windows 上 npm 通常是 npm.cmd，CreateProcess 不能可靠地直接解析裸 npm。
+            npm_command = "npm.cmd" if os.name == "nt" and shutil.which("npm.cmd") else "npm"
             for sub in ("frontend", "electron"):
                 sub_dir = target_dir / sub
                 if (sub_dir / "package.json").exists():
@@ -274,9 +290,18 @@ def init_command(package: str, sudoers: bool, icon: str | None):
                         f"[green]→[/green] 正在安装 {sub} 依赖 ..."
                     )
                     try:
+                        environment = os.environ.copy()
+                        if sub == "electron":
+                            environment.update({
+                                "ELECTRON_MIRROR": "https://mirrors.huaweicloud.com/electron/",
+                                "ELECTRON_BUILDER_BINARIES_MIRROR": (
+                                    "https://npmmirror.com/mirrors/electron-builder-binaries/"
+                                ),
+                            })
                         result = subprocess.run(
-                            ["npm", "install"],
+                            [npm_command, "install"],
                             cwd=sub_dir,
+                            env=environment,
                             capture_output=True,
                             text=True,
                             timeout=600,
@@ -309,6 +334,9 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             else "[yellow]⚠[/yellow]  git 仓库未初始化，请稍后手动 git init\n"
         )
 
+        # 脚本自带 shebang 与可执行位，可按文件名直接运行；Windows 靠 .py 文件关联。
+        dev_command = ".\\dev.py start" if os.name == "nt" else "./dev.py start"
+
         console.print()
         console.print(
             Panel.fit(
@@ -317,7 +345,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
                 f"{git_line}\n"
                 f"[bold]下一步:[/bold]\n"
                 f"  cd {target_dir}\n"
-                f"  bash dev.sh start    # 启动开发环境\n\n"
+                f"  {dev_command}    # 启动开发环境\n\n"
                 f"[dim]更多命令请查看 README.md 与 AGENTS.md[/dim]",
                 border_style="green",
             )

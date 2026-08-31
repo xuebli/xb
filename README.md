@@ -17,7 +17,7 @@
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
 - 环境诊断（`xb doctor`）
-- DEB 安装钩子（postinst / postrm）
+- Linux DEB 与 Windows NSIS 安装支持
 
 ## 安装
 
@@ -61,6 +61,23 @@ xb dev status
 # 停止
 xb dev stop
 ```
+
+Windows PowerShell 也可以直接运行生成项目脚本：
+
+```powershell
+Set-Location demo
+python .\dev.py start
+python .\dev.py status
+python .\dev.py stop
+```
+
+Windows 下终端使用 PowerShell + ConPTY，支持上下箭头命令历史、复制粘贴、
+Tab 补全和 Ctrl+C；Ubuntu/Debian 继续使用 bash + Unix PTY。
+
+Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.npmrc`
+写 npm 不识别的自定义键。若安装过程被网络中断，生成项目的
+`electron/prepare.js` 会在 `npm start` 或 `npm run build` 前自动检查并补装
+缺失的 Electron 二进制。
 
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
@@ -117,12 +134,12 @@ demo/
 │   ├── package-lock.json
 │   ├── .npmrc              # npm + electron 二进制镜像源
 │   ├── main.js
-│   └── resources/          # icon + postinst/postrm
+│   └── resources/          # icon + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
 ├── datas/                  # 运行时数据（gitignore）
-├── dev.sh                  # 开发脚本
-├── build.sh                # 打包脚本
+├── dev.py                  # 开发脚本（Windows/Linux）
+├── build.py                # 打包脚本（Windows/Linux）
 └── .venv                   # Python 虚拟环境
 ```
 
@@ -160,7 +177,11 @@ xb/
 - **Node.js**: 16+
 - **npm**: 8+
 - **uv**: 已安装
-- **OS**: Linux（Ubuntu / Debian）
+- **OS**: Windows 10/11 或 Ubuntu/Debian
+- **Windows 终端**: 自动安装 Windows 专用 `pywinpty`，提供 PowerShell 原生交互能力
+
+Windows 可使用 Python、Node.js、npm 和 uv 的官方安装方式或 `winget` 安装。
+Ubuntu/Debian 可使用系统包管理器或官方安装方式。
 
 使用 `xb doctor` 可一键检查所有环境依赖。
 

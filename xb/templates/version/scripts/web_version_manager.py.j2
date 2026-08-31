@@ -10,6 +10,13 @@ import threading
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，输出的符号会抛 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 VERSION_MANAGER = PROJECT_ROOT / "version" / "scripts" / "version_manager.py"
 ELECTRON_PKG = PROJECT_ROOT / "electron" / "package.json"
@@ -126,7 +133,14 @@ class Handler(BaseHTTPRequestHandler):
             vtype = body.get("vtype", "patch")
             cmd = [sys.executable, str(VERSION_MANAGER), vtype]
 
-            r = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+            # 子进程输出统一走 UTF-8：Windows 下管道默认 GBK，会让 ✓/❌ 编码失败。
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=PROJECT_ROOT,
+                env=env, encoding="utf-8", errors="replace",
+            )
             if r.returncode == 0:
                 subprocess.run(
                     ["git", "add", "electron/package.json", "pyproject.toml"],

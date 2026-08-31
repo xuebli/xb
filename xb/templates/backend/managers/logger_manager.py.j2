@@ -16,6 +16,12 @@ class LoggerManager:
 
     def _setup_logger(self):
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        # Windows 控制台默认使用系统代码页，统一 stdout 为 UTF-8，避免日志文件混入 GBK。
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
         logger.remove()
 
         logger.add(

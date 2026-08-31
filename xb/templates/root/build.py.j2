@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# 可直接执行：Linux/macOS 用 ./build.py -a，Windows 用 .\build.py -a（依赖 .py 文件关联）。
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# 所有构建命令都从项目根目录执行，保证相对路径与 Electron 配置一致。
+ROOT = Path(__file__).resolve().parent
+# -f 前端、-b 后端、-e Electron、-a 全量构建。
+TARGETS = set(sys.argv[1:] or ["-a"])
+NPM = "npm.cmd" if sys.platform == "win32" else "npm"
+PYTHON = ROOT / (".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python")
+
+
+def run(
+    command: list[str],
+    cwd: Path = ROOT,
+    environment_updates: dict[str, str] | None = None,
+) -> None:
+    """运行构建命令；任何阶段失败都立即停止并返回非零状态。"""
+    environment = os.environ.copy()
+    if environment_updates:
+        environment.update(environment_updates)
+    subprocess.run(command, cwd=cwd, env=environment, check=True)
+
+
+def clean(path: Path) -> None:
+    """删除上一次构建目录，避免旧产物被误打包。"""
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def require(path: Path, label: str) -> None:
+    """校验构建产物是否生成。"""
+    if not path.exists():
+        raise SystemExit(f"{label}构建失败，未找到产物: {path}")
+
+
+if "-f" in TARGETS or "-a" in TARGETS:
+    # 前端：安装依赖后生成 frontend/dist。
+    frontend = ROOT / "frontend"
+    clean(frontend / "dist")
+    run([NPM, "install"], frontend)
+    run([NPM, "run", "build"], frontend)
+    require(frontend / "dist", "前端")
+if "-b" in TARGETS or "-a" in TARGETS:
+    # 后端：使用当前平台虚拟环境调用 PyInstaller。
+    clean(ROOT / "dist")
+    run(["uv", "sync", "--extra", "dev"])
+    run([str(PYTHON), "backend/backend_build.py"])
+    require(ROOT / "dist" / ("server.exe" if sys.platform == "win32" else "server"), "后端")
+if "-e" in TARGETS or "-a" in TARGETS:
+    # Electron：根据平台生成 DEB 或 NSIS 安装包。
+    electron = ROOT / "electron"
+    electron_environment = {
+        "ELECTRON_MIRROR": "https://mirrors.huaweicloud.com/electron/",
+        "ELECTRON_BUILDER_BINARIES_MIRROR": (
+            "https://npmmirror.com/mirrors/electron-builder-binaries/"
+        ),
+    }
+    run([NPM, "install"], electron, electron_environment)
+    run([NPM, "run", "build"], electron, electron_environment)
+    packages = list((electron / "dist").glob("*.exe")) + list((electron / "dist").glob("*.deb"))
+    if not packages:
+        raise SystemExit("Electron 构建失败，未找到安装包")
