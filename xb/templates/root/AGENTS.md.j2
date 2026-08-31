@@ -12,16 +12,17 @@
 
 ### 平台边界
 
-- **Linux/Ubuntu**：Unix PTY 启动 bash；安装产物为 DEB；配置位于
+- **Linux/Ubuntu**：[% if enable_terminal %]内置终端使用 Unix PTY 启动 bash；[% endif %]安装产物为 DEB；配置位于
   `~/.config/[[ package_name]]/`，运行数据和日志位于
   `~/.local/share/[[ package_name]]/datas/`，用户脚本位于
   `~/.local/share/[[ package_name]]/scripts/`。
-- **Windows**：ConPTY 启动 PowerShell；使用 Windows 专用依赖 `pywinpty`；安装产物为
+- **Windows**：[% if enable_terminal %]内置终端使用 ConPTY 启动 PowerShell，并安装 Windows 专用依赖 `pywinpty`；[% endif %]安装产物为
   NSIS `.exe`；配置位于 `%APPDATA%\[[ package_name]]\`，运行数据和日志位于
   `%LOCALAPPDATA%\[[ package_name]]\datas\`，用户脚本位于
   `%LOCALAPPDATA%\[[ package_name]]\scripts\`。
-- 平台分支必须由 `os.name`、`sys.platform` 或 Electron 的 `process.platform` 判断；
-  不要改变 Unix PTY 分支来适配 Windows。
+- 平台分支必须由 `os.name`、`sys.platform` 或 Electron 的 `process.platform` 判断。
+[% if enable_terminal %]- 终端平台实现必须保持独立，不要改变 Unix PTY 分支来适配 Windows。
+[% endif %]
 
 ## STRUCTURE
 
@@ -65,6 +66,8 @@
 | 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
+[% if enable_terminal %]| 改内置终端 | 后端 `backend/api/terminal/` + 前端 `TerminalPanel.vue` / `TerminalView.vue` / `useTerminalSessions.js` | Linux/macOS 使用 bash + Unix PTY；Windows 使用 PowerShell + ConPTY |
+[% endif %]
 | 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
 | 改安装/卸载副作用 | `electron/resources/postinst.py` / `postrm.py` / `uninstaller.nsh` | Linux DEB 使用 Python 钩子；Windows NSIS 卸载复选项在 `uninstaller.nsh` |
 | 改 Electron 窗口尺寸/菜单 | `electron/main.js` | `BrowserWindow` 构造参数 |
@@ -117,8 +120,7 @@
 
 # 跨模块约定（CONVENTIONS）
 
-- **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。Windows 终端额外使用
-  `pywinpty`，仅在 `win32` 安装。新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
+- **Python 3.10+**, fastapi / uvicorn / loguru / pyyaml 全部锁死。[% if enable_terminal %]Windows 终端额外使用 `pywinpty`，仅在 `win32` 安装。[% endif %]新增依赖必须改 `pyproject.toml` 后 `uv sync --extra dev`。
 - **包名 `backend` 而非 `src`**：`pyproject.toml` 配置 `packages = ["backend"]`，导入用 `from managers import ...` / `from api.config import ...`（即 `backend` 内相对当前包根，**不要写 `from backend.managers import ...`**）。managers 包内部互相依赖时用相对导入（`from .path_manager import path_manager`）。
 - **新增代码必须模块化**：按业务域拆目录和文件，优先采用 `api/<feature>/routes.py` + `services/<feature>/...` + `schemas/<feature>.py`。`api` 只放 HTTP 路由，`services` 放业务编排，`schemas` 放 Pydantic 模型，`managers` 只放跨模块基础设施单例。不要把所有 API 都堆进 `backend/api/*.py`，也不要把普通业务类都塞进 `backend/managers/`。
 - **单文件单职责**：一个文件只承载一个明确模块/角色。文件开始变大、同时包含路由/模型/业务/工具函数/外部接口时，必须拆分；不要写几千行的"万能文件"。经验阈值：超过约 400 行或出现 2 个以上业务域时，先拆模块再继续加代码。
@@ -129,12 +131,13 @@
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
 - **Electron 快捷键必须保留**：`electron/main.js` 隐藏菜单后要显式支持 `F12` / `Ctrl+Shift+I` 打开 DevTools、`F11` 全屏、`Ctrl/Cmd + +/-/0` 缩放/重置、`Ctrl/Cmd + 鼠标滚轮` 缩放。改窗口或菜单逻辑时不要破坏这些桌面基础能力。
-- **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。终端 PTY、PowerShell/bash 及其业务子进程都必须随应用退出。
+- **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。[% if enable_terminal %]终端 PTY、PowerShell/bash 及其[% endif %]业务子进程都必须随应用退出。
 - **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `%APPDATA%\[[ package_name]]\` 与 `%LOCALAPPDATA%\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
 - **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 `dev.py` 注入的 `VITE_BACKEND_PORT` / `VITE_DEV_PORT` 环境变量拿到，Vite 将 `/api`（含 WebSocket）代理到 FastAPI，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.py / Electron 才能换监听端口。
 - **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。密钥类配置在"🔐 密钥管理"面板（调 `POST /api/secrets/save`），普通配置在"🌐 应用配置"面板。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
-- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
+[% if enable_terminal %]- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
+[% endif %]
 - **开发服务进程隔离**：`dev.py` 将后端和 Vite 的 stdout/stderr 写入 `datas/logs/`；Windows 使用隐藏控制台与 `stdin=DEVNULL`，不能继承或占用用户当前 PowerShell 输入。首次同步 `uv`/`npm` 依赖必须有超时和明确提示。
 - **进程托管走 Python 子进程 + PID 文件**：`dev.py` 把 PID 写到 `datas/pids/backend.pid` 与 `datas/pids/frontend.pid`，日志写入 `datas/logs/`；Linux 使用进程组结束服务，Windows 使用 `taskkill /PID ... /T /F`。不要用模糊的 `pkill -f` 作为正常流程。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。

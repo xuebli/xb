@@ -9,6 +9,9 @@
 - 智能路径管理（开发/生产自动切换）
 - 版本管理（提交时更新版本号）
 - 全局亮色/暗色主题切换
+[% if enable_terminal %]
+- 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
+[% endif %]
 [% if enable_sudo %]
 - Sudo 免密配置
 [% endif %]
@@ -47,7 +50,9 @@
 - Node.js 16+
 - uv（Python 包管理器）
 - Windows 10/11 或 Ubuntu/Debian
+[% if enable_terminal %]
 - Windows 终端自动安装 `pywinpty`，提供 PowerShell 原生交互能力
+[% endif %]
 
 ```bash
 # 安装 uv（若已有可跳过）
@@ -87,12 +92,14 @@ xb dev status
 - 安装 Git Hooks（版本管理）
 - 检查端口占用
 - 启动后端（FastAPI）和前端（Vite dev server，支持热更新）
-- 开发态通过 Vite 代理转发 `/api` 和 WebSocket 到 FastAPI
+- 开发态通过 Vite 代理转发 `/api`[% if enable_terminal %] 和 WebSocket[% endif %] 到 FastAPI
 
+[% if enable_terminal %]
 Windows 终端使用 PowerShell + ConPTY，支持命令历史、方向键、复制粘贴、
 Tab 补全和 Ctrl+C。Ubuntu/Linux 继续使用 bash + Unix PTY。
 Windows `cmd.exe` 没有 `ls` 内置命令；PowerShell 中 `ls` 是 `Get-ChildItem`
 的别名，Ubuntu/Linux 中可直接使用 `ls`。
+[% endif %]
 
 **访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports` 段修改）：**
 
@@ -276,6 +283,9 @@ self.commands = [
 |------|------|------|
 | GET | `/api` | 欢迎信息 |
 | GET | `/api/health` | 健康检查 |
+[% if enable_terminal %]
+| WS | `/api/terminal/ws` | 本地交互式终端 |
+[% endif %]
 [% if enable_sudo %]
 | GET | `/api/config/check` | 检查配置 |
 | POST | `/api/config/save` | 保存配置 |

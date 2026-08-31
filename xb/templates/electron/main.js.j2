@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu[% if enable_terminal %], ipcMain[% endif %] } = require('electron');
 const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -53,7 +53,9 @@ let backend;
 let backendPid;
 let backendShutdownStarted = false;
 let zoomFactor = 1;
+[% if enable_terminal %]
 let terminalFocused = false;
+[% endif %]
 
 function sleepSync(ms) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -77,7 +79,7 @@ function shutdownBackendTree() {
 
     if (process.platform === 'win32') {
         try {
-            // /T 递归结束 server.exe 拉起的 PowerShell、ConPTY 和业务子进程。
+            // /T 递归结束 server.exe 拉起的所有业务子进程。
             // /F 保证 Electron 退出前命令已经完成，避免孤儿进程继续运行。
             execFileSync(
                 'taskkill',
@@ -109,9 +111,11 @@ function shutdownBackendTree() {
     }
 }
 
+[% if enable_terminal %]
 ipcMain.on('terminal-focus', (_event, focused) => {
     terminalFocused = !!focused;
 });
+[% endif %]
 
 function clampZoom(value) {
     return Math.min(3, Math.max(0.3, value));
@@ -196,6 +200,7 @@ app.whenReady().then(() => {
                     return;
                 }
 
+[% if enable_terminal %]
                 // 终端聚焦时把 Ctrl +/-/0 让给 xterm 调字号：整页 setZoomFactor 会缩放
                 // canvas 导致字体发虚、鼠标选区错位，终端场景只应改 fontSize。
                 // terminalFocused 由 preload 经 IPC 上报（见 preload.js）
@@ -204,6 +209,7 @@ app.whenReady().then(() => {
                 if (isZoomKey && terminalFocused) {
                     return;
                 }
+[% endif %]
 
                 if (ctrlOrCmd && (input.key === '+' || input.key === '=')) {
                     applyZoom(0.1);
@@ -229,7 +235,9 @@ app.whenReady().then(() => {
 
             // Ctrl/Cmd + 鼠标滚轮触发 Chromium zoom-changed，这里接管缩放幅度。
             win.webContents.on('zoom-changed', (event, zoomDirection) => {
+[% if enable_terminal %]
                 if (terminalFocused) return;
+[% endif %]
                 event.preventDefault();
                 applyZoom(zoomDirection === 'in' ? 0.1 : -0.1);
             });

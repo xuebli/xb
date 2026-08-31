@@ -31,6 +31,7 @@ class TemplateEngine:
         target_dir: Path,
         package_name: str,
         enable_sudo: bool = False,
+        enable_terminal: bool = False,
         sudo_password: str = "",
         icon_path: Path | None = None,
     ):
@@ -41,6 +42,7 @@ class TemplateEngine:
             "package_name_upper": package_name.upper(),
             "package_name_capitalized": package_name.capitalize(),
             "enable_sudo": enable_sudo,
+            "enable_terminal": enable_terminal,
             "sudo_password": sudo_password,
             "icon_path": icon_path,
         }
@@ -58,7 +60,6 @@ class TemplateEngine:
         backend_dir.mkdir(exist_ok=True)
 
         (backend_dir / "api").mkdir(exist_ok=True)
-        (backend_dir / "api" / "terminal").mkdir(exist_ok=True)
         (backend_dir / "managers").mkdir(exist_ok=True)
 
         self._render_template("backend/main.py.j2", backend_dir / "main.py", context)
@@ -76,17 +77,19 @@ class TemplateEngine:
             "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
         )
 
-        # 终端模块
-        self._render_template(
-            "backend/api/terminal/__init__.py.j2",
-            backend_dir / "api" / "terminal" / "__init__.py",
-            context,
-        )
-        self._render_template(
-            "backend/api/terminal/routes.py.j2",
-            backend_dir / "api" / "terminal" / "routes.py",
-            context,
-        )
+        if context["enable_terminal"]:
+            terminal_dir = backend_dir / "api" / "terminal"
+            terminal_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/api/terminal/__init__.py.j2",
+                terminal_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/api/terminal/routes.py.j2",
+                terminal_dir / "routes.py",
+                context,
+            )
 
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
@@ -167,21 +170,22 @@ class TemplateEngine:
             components_dir / "FileManager.vue",
             context,
         )
-        self._render_template(
-            "frontend/src/components/TerminalView.vue.j2",
-            components_dir / "TerminalView.vue",
-            context,
-        )
-        self._render_template(
-            "frontend/src/components/TerminalPanel.vue.j2",
-            components_dir / "TerminalPanel.vue",
-            context,
-        )
-        self._render_template(
-            "frontend/src/composables/useTerminalSessions.js.j2",
-            composables_dir / "useTerminalSessions.js",
-            context,
-        )
+        if context["enable_terminal"]:
+            self._render_template(
+                "frontend/src/components/TerminalView.vue.j2",
+                components_dir / "TerminalView.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/components/TerminalPanel.vue.j2",
+                components_dir / "TerminalPanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/composables/useTerminalSessions.js.j2",
+                composables_dir / "useTerminalSessions.js",
+                context,
+            )
 
     def _create_electron(self, target_dir: Path, context: Dict[str, Any]):
         electron_dir = target_dir / "electron"

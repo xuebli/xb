@@ -185,13 +185,19 @@ class XbGroup(click.Group):
     help="启用 sudo 免密配置 (需要输入密码)",
 )
 @click.option(
+    "--terminal",
+    is_flag=True,
+    default=False,
+    help="启用内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）",
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
     default=None,
     help="应用图标 PNG 路径；不传时自动查找 ./app-icon.png、./icon.png、./assets/icon.png 等约定路径",
 )
-def init_command(package: str, sudoers: bool, icon: str | None):
+def init_command(package: str, sudoers: bool, terminal: bool, icon: str | None):
     """
     初始化项目结构
 
@@ -202,6 +208,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
     示例:
         xb init demo
         xb init myapp --sudoers
+        xb init myapp --terminal
         xb init /home/user/projects/myapp
         xb init ../other_dir/demo
     """
@@ -274,6 +281,7 @@ def init_command(package: str, sudoers: bool, icon: str | None):
             target_dir=target_dir,
             package_name=package_name,
             enable_sudo=enable_sudo,
+            enable_terminal=terminal,
             sudo_password=sudo_password,
             icon_path=icon_path,
         )

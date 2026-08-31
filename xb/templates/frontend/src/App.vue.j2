@@ -1,7 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 import DashboardHome from './components/DashboardHome.vue'
+[% if enable_terminal %]
 import TerminalPanel from './components/TerminalPanel.vue'
+[% endif %]
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
@@ -17,7 +19,9 @@ const showIconFallback = ref(false)
 
 const navItems = [
   { id: 'home', label: '首页', icon: '🏠' },
+[% if enable_terminal %]
   { id: 'terminal', label: '终端', icon: '💻' },
+[% endif %]
   { id: 'settings', label: '配置', icon: '⚒' },
 ]
 
@@ -96,7 +100,9 @@ const openSettings = () => {
       >
         <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
         <FileManager v-else-if="currentPage === 'settings'" />
+[% if enable_terminal %]
         <TerminalPanel v-show="currentPage === 'terminal'" />
+[% endif %]
       </div>
     </main>
   </div>

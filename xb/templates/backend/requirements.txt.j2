@@ -3,4 +3,6 @@ uvicorn==0.44.0
 loguru==0.7.3
 pyyaml==6.0.2
 pyserial==3.5
+[% if enable_terminal %]
 pywinpty==2.0.15; sys_platform == "win32"
+[% endif %]

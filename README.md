@@ -13,6 +13,7 @@
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
 - 可选 sudo 免密配置（`--sudoers`）
+- 可选内置终端（`--terminal`）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
@@ -47,6 +48,12 @@ xb init demo
 # 带 sudo 免密配置
 xb init demo --sudoers
 
+# 带内置终端
+xb init demo --terminal
+
+# 同时启用终端和 sudo 免密配置
+xb init demo --terminal --sudoers
+
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
 
@@ -71,8 +78,8 @@ python .\dev.py status
 python .\dev.py stop
 ```
 
-Windows 下终端使用 PowerShell + ConPTY，支持上下箭头命令历史、复制粘贴、
-Tab 补全和 Ctrl+C；Ubuntu/Debian 继续使用 bash + Unix PTY。
+使用 `--terminal` 时，Windows 终端使用 PowerShell + ConPTY，支持上下箭头
+命令历史、复制粘贴、Tab 补全和 Ctrl+C；Ubuntu/Debian 使用 bash + Unix PTY。
 
 Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.npmrc`
 写 npm 不识别的自定义键。若安装过程被网络中断，生成项目的
@@ -91,7 +98,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.n
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--icon PATH]` | 初始化项目 |
+| `xb init <name> [--sudoers] [--terminal] [--icon PATH]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -178,7 +185,7 @@ xb/
 - **npm**: 8+
 - **uv**: 已安装
 - **OS**: Windows 10/11 或 Ubuntu/Debian
-- **Windows 终端**: 自动安装 Windows 专用 `pywinpty`，提供 PowerShell 原生交互能力
+- **Windows 终端**: 使用 `--terminal` 时自动安装 Windows 专用 `pywinpty`
 
 Windows 可使用 Python、Node.js、npm 和 uv 的官方安装方式或 `winget` 安装。
 Ubuntu/Debian 可使用系统包管理器或官方安装方式。
