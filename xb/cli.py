@@ -7,7 +7,6 @@ import click
 from rich.console import Console
 
 from . import __version__
-
 from .commands.build import build
 from .commands.dev import dev
 from .commands.doctor import doctor
@@ -18,6 +17,16 @@ from .utils.version_check import ensure_check, get_pending_upgrade_hint
 
 console = Console()
 COMMAND_ORDER = ["doctor", "init", "dev", "build", "version"]
+
+
+def _upgrade_callback(
+    ctx: click.Context, _param: click.Parameter, requested: bool
+) -> None:
+    """在 Click 校验子命令前处理全局升级选项。"""
+    if not requested or ctx.resilient_parsing:
+        return
+    run_upgrade()
+    ctx.exit()
 
 
 def _format_command_options(cmd: click.Command) -> str:
@@ -77,17 +86,20 @@ class ColorfulXbGroup(XbGroup):
 
 @click.group(cls=ColorfulXbGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(version=__version__, prog_name="xb")
-@click.option("--upgrade", "upgrade_requested", is_flag=True, is_eager=True, help="升级 xb 到 PyPI 最新版本并退出。")
-def main(upgrade_requested: bool):
+@click.option(
+    "--upgrade",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_upgrade_callback,
+    help="升级 xb 到 PyPI 最新版本并退出。",
+)
+def main():
     """
     xb - UV + FastAPI + Vue3 + Electron 桌面应用项目管理工具
 
     类似 uv，专为 Electron 桌面应用设计。
     """
-    if upgrade_requested:
-        run_upgrade()
-        raise click.exceptions.Exit()
-
     ensure_check(__version__)
     hint = get_pending_upgrade_hint(__version__)
     if hint:

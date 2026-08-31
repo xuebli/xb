@@ -15,10 +15,11 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from .. import __version__
-from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
+from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
 from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
 from ..utils.version_check import get_latest_if_newer
+from .upgrade import install_upgrade
 
 console = Console()
 
@@ -41,27 +42,13 @@ def _prompt_upgrade_before_init() -> None:
         console.print("[dim]跳过升级，使用当前版本继续。[/dim]\n")
         return
 
-    if not shutil.which("uv"):
-        console.print(
-            "[red]✗[/red] 未找到 uv 命令，无法升级。"
-            "请手动 [cyan]xb upgrade[/cyan] 或继续创建项目。"
-        )
-        if not Confirm.ask("继续用当前版本创建项目？", default=False):
-            raise click.Abort()
-        return
-
     console.print(f"[cyan]→[/cyan] 升级到 xb-init {latest} ...")
-    result = subprocess.run(
-        ["uv", "tool", "install", "xb-init@latest", "--reinstall"],
-        check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[red]✗[/red] 升级失败 (exit {result.returncode})")
+    if not install_upgrade(latest):
         if not Confirm.ask("继续用当前版本创建项目？", default=False):
             raise click.Abort()
         return
 
-    console.print("[green]✓[/green] 升级完成，正在用新版本重新执行 init...\n")
+    console.print("[green]✓[/green] 正在用新版本重新执行 init...\n")
     xb_entry = shutil.which("xb")
     if not xb_entry:
         console.print(
