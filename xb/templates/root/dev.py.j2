@@ -131,7 +131,11 @@ def port_is_free(port: int) -> bool:
     import socket
     with socket.socket() as sock:
         try:
+            # 服务关闭后 TCP 连接可能短暂保留在 TIME_WAIT。复用地址后再 listen，
+            # 可区分该回收状态与真正仍在监听的进程。
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("127.0.0.1", port))
+            sock.listen(1)
             return True
         except OSError:
             return False
