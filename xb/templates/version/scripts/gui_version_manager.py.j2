@@ -1,102 +1,382 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import sys
 import json
+import os
 import subprocess
-from pathlib import Path
+import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from pathlib import Path
+from tkinter import font as tkfont
+from tkinter import messagebox
 
 
 class GuiVersionManager:
+    WINDOW_WIDTH = 520
+    WINDOW_HEIGHT = 560
+
+    BACKGROUND = "#f4f6fa"
+    SURFACE = "#ffffff"
+    SURFACE_MUTED = "#f8fafc"
+    BORDER = "#dbe2ea"
+    TEXT = "#172033"
+    TEXT_MUTED = "#64748b"
+    ACCENT = "#2563eb"
+
+    VERSION_OPTIONS = (
+        {
+            "value": "patch",
+            "name": "修订版本",
+            "formula": "x.y.z  ->  x.y.(z+1)",
+            "description": "修复问题，保持现有功能兼容。",
+            "color": "#2563eb",
+            "tint": "#eff6ff",
+        },
+        {
+            "value": "minor",
+            "name": "次要版本",
+            "formula": "x.y.z  ->  x.(y+1).0",
+            "description": "加入向后兼容的新功能。",
+            "color": "#059669",
+            "tint": "#ecfdf5",
+        },
+        {
+            "value": "major",
+            "name": "主要版本",
+            "formula": "x.y.z  ->  (x+1).0.0",
+            "description": "包含不兼容的重大变更。",
+            "color": "#dc2626",
+            "tint": "#fef2f2",
+        },
+    )
+
     def __init__(self):
         self.project_root = Path(__file__).parent.parent.parent
         self.electron_pkg_path = self.project_root / "electron" / "package.json"
+        self.option_widgets = []
 
         self.root = tk.Tk()
-        self.root.title("🔖 版本管理")
-        self.root.resizable(True, True)
+        self.root.title("版本管理")
+        self.root.configure(bg=self.BACKGROUND)
+        self.root.resizable(False, False)
+
+        self.font_family = self.resolve_font_family()
+        self.configure_default_fonts()
+        self.fonts = self.create_fonts()
 
         self.root.protocol("WM_DELETE_WINDOW", self.cancel_commit)
         self.create_ui()
         self.center_window()
 
+    def resolve_font_family(self) -> str:
+        """Prefer a CJK sans-serif font that is actually installed on this host."""
+        installed_fonts = set(tkfont.families(self.root))
+        preferred_fonts = (
+            "Noto Sans CJK SC",
+            "Noto Sans SC",
+            "Source Han Sans SC",
+            "WenQuanYi Micro Hei",
+            "Microsoft YaHei",
+            "PingFang SC",
+            "Arial Unicode MS",
+        )
+        for family in preferred_fonts:
+            if family in installed_fonts:
+                return family
+        return tkfont.nametofont("TkDefaultFont").cget("family")
+
+    def configure_default_fonts(self) -> None:
+        """Use the selected font in native dialogs and standard Tk controls too."""
+        for font_name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
+            try:
+                tkfont.nametofont(font_name).configure(family=self.font_family)
+            except tk.TclError:
+                pass
+
+    def create_fonts(self):
+        return {
+            "title": tkfont.Font(root=self.root, family=self.font_family, size=17, weight="bold"),
+            "subtitle": tkfont.Font(root=self.root, family=self.font_family, size=9),
+            "eyebrow": tkfont.Font(root=self.root, family=self.font_family, size=9, weight="bold"),
+            "version": tkfont.Font(root=self.root, family=self.font_family, size=18, weight="bold"),
+            "section": tkfont.Font(root=self.root, family=self.font_family, size=11, weight="bold"),
+            "option_title": tkfont.Font(root=self.root, family=self.font_family, size=11, weight="bold"),
+            "option_detail": tkfont.Font(root=self.root, family=self.font_family, size=9),
+            "button": tkfont.Font(root=self.root, family=self.font_family, size=10, weight="bold"),
+        }
+
     def center_window(self):
         self.root.update_idletasks()
-        w = self.root.winfo_reqwidth()
-        h = self.root.winfo_reqheight()
-        x = (self.root.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.root.winfo_screenheight() // 2) - (h // 2)
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
-        self.root.minsize(w, h)
+        window_height = max(self.WINDOW_HEIGHT, self.root.winfo_reqheight())
+        x = (self.root.winfo_screenwidth() - self.WINDOW_WIDTH) // 2
+        y = max(0, (self.root.winfo_screenheight() - window_height) // 2)
+        self.root.geometry(f"{self.WINDOW_WIDTH}x{window_height}+{x}+{y}")
+        self.root.minsize(self.WINDOW_WIDTH, window_height)
 
     def create_ui(self):
-        main_frame = ttk.Frame(self.root, padding="30")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        content = tk.Frame(self.root, bg=self.SURFACE)
+        content.pack(fill=tk.BOTH, expand=True)
+        content.columnconfigure(0, weight=1)
 
-        ttk.Label(main_frame, text="🔖 版本管理", font=("Arial", 18, "bold")).grid(
-            row=0, column=0, pady=(0, 10)
-        )
+        self.create_header(content)
+        self.create_version_summary(content)
 
-        current_version = self.get_current_version()
-        ttk.Label(
-            main_frame,
-            text=f"[[ package_name]] 版本: {current_version}",
-            font=("Arial", 12),
-            foreground="#666",
-        ).grid(row=1, column=0, pady=(0, 30))
+        separator = tk.Frame(content, bg="#e9eef5", height=1)
+        separator.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=34, pady=(0, 14))
 
-        ttk.Label(main_frame, text="选择版本类型:", font=("Arial", 11, "bold")).grid(
-            row=2, column=0, sticky=tk.W, pady=(0, 15)
-        )
+        tk.Label(
+            content,
+            text="选择更新类型",
+            bg=self.SURFACE,
+            fg=self.TEXT,
+            font=self.fonts["section"],
+        ).grid(row=3, column=0, sticky=tk.W, padx=34)
+
+        tk.Label(
+            content,
+            text="根据本次变更选择要发布的版本级别",
+            bg=self.SURFACE,
+            fg=self.TEXT_MUTED,
+            font=self.fonts["subtitle"],
+        ).grid(row=4, column=0, sticky=tk.W, padx=34, pady=(3, 9))
 
         self.version_type = tk.StringVar(value="patch")
+        self.version_type.trace_add("write", self.update_option_styles)
 
-        type_frame = ttk.Frame(main_frame)
-        type_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 30))
+        options_frame = tk.Frame(content, bg=self.SURFACE)
+        options_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), padx=34)
+        options_frame.columnconfigure(0, weight=1)
+        for row, option in enumerate(self.VERSION_OPTIONS):
+            self.create_version_option(options_frame, row, option)
 
-        ttk.Radiobutton(
-            type_frame,
-            text="🔧 Patch (x.y.z+1) - Bug修复",
-            variable=self.version_type,
-            value="patch",
-        ).grid(row=0, column=0, sticky=tk.W, pady=5)
+        action_area = tk.Frame(content, bg=self.SURFACE_MUTED, height=74)
+        action_area.grid(row=6, column=0, sticky=(tk.W, tk.E, tk.S), pady=(12, 0))
+        action_area.grid_propagate(False)
+        action_area.columnconfigure(0, weight=1)
 
-        ttk.Radiobutton(
-            type_frame,
-            text="✨ Minor (x.y+1.0) - 新功能",
-            variable=self.version_type,
-            value="minor",
-        ).grid(row=1, column=0, sticky=tk.W, pady=5)
+        button_frame = tk.Frame(action_area, bg=self.SURFACE_MUTED)
+        button_frame.grid(row=0, column=0, sticky=tk.E, padx=34, pady=14)
+        self.create_button(
+            button_frame,
+            text="更新版本",
+            command=self.update_version,
+            background=self.ACCENT,
+            active_background="#1d4ed8",
+            foreground="#ffffff",
+            width=13,
+        ).grid(row=0, column=0, padx=(0, 8))
+        self.create_button(
+            button_frame,
+            text="跳过",
+            command=self.skip_version_update,
+            background="#e2e8f0",
+            active_background="#cbd5e1",
+            foreground="#334155",
+            width=8,
+        ).grid(row=0, column=1, padx=(0, 8))
+        self.create_button(
+            button_frame,
+            text="取消",
+            command=self.cancel_commit,
+            background=self.SURFACE_MUTED,
+            active_background="#e2e8f0",
+            foreground="#64748b",
+            width=8,
+        ).grid(row=0, column=2)
 
-        ttk.Radiobutton(
-            type_frame,
-            text="🎉 Major (x+1.0.0) - 重大更新",
-            variable=self.version_type,
-            value="major",
-        ).grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.update_option_styles()
 
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, pady=(20, 0))
+    def create_header(self, parent: tk.Misc) -> None:
+        header = tk.Frame(parent, bg=self.SURFACE)
+        header.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=34, pady=(20, 12))
+        header.columnconfigure(1, weight=1)
 
-        ttk.Button(
-            button_frame, text="🚀 更新版本", command=self.update_version, width=15
-        ).grid(row=0, column=0, padx=5)
+        accent = tk.Frame(header, bg="#ef4444", width=4, height=36)
+        accent.grid(row=0, column=0, rowspan=2, sticky=tk.NS, padx=(0, 13))
+        accent.grid_propagate(False)
 
-        ttk.Button(
-            button_frame, text="⏭️ 跳过", command=self.skip_version_update, width=15
-        ).grid(row=0, column=1, padx=5)
+        tk.Label(
+            header,
+            text="版本管理",
+            bg=self.SURFACE,
+            fg=self.TEXT,
+            font=self.fonts["title"],
+        ).grid(row=0, column=1, sticky=tk.W)
+        tk.Label(
+            header,
+            text="为本次提交选择语义化版本更新",
+            bg=self.SURFACE,
+            fg=self.TEXT_MUTED,
+            font=self.fonts["subtitle"],
+        ).grid(row=1, column=1, sticky=tk.W, pady=(2, 0))
 
-        ttk.Button(
-            button_frame, text="❌ 取消", command=self.cancel_commit, width=15
-        ).grid(row=0, column=2, padx=5)
+    def create_version_summary(self, parent: tk.Misc) -> None:
+        summary = tk.Frame(
+            parent,
+            bg="#f8fafc",
+            highlightbackground="#e2e8f0",
+            highlightthickness=1,
+        )
+        summary.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=34, pady=(0, 14))
+        summary.columnconfigure(1, weight=1)
 
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        tk.Label(
+            summary,
+            text="项目",
+            bg="#f8fafc",
+            fg=self.TEXT_MUTED,
+            font=self.fonts["eyebrow"],
+        ).grid(row=0, column=0, sticky=tk.W, padx=(16, 24), pady=(10, 0))
+        tk.Label(
+            summary,
+            text="当前版本",
+            bg="#f8fafc",
+            fg=self.TEXT_MUTED,
+            font=self.fonts["eyebrow"],
+        ).grid(row=0, column=1, sticky=tk.W, pady=(10, 0))
+
+        project_name = "[[ package_name]]"
+        tk.Label(
+            summary,
+            text=project_name,
+            bg="#f8fafc",
+            fg=self.TEXT,
+            font=self.fonts["option_title"],
+            anchor=tk.W,
+            justify=tk.LEFT,
+            wraplength=220,
+        ).grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(16, 24), pady=(2, 10))
+        tk.Label(
+            summary,
+            text=self.get_current_version(),
+            bg="#f8fafc",
+            fg=self.TEXT,
+            font=self.fonts["version"],
+        ).grid(row=1, column=1, sticky=tk.W, pady=(0, 8))
+
+    def create_version_option(self, parent: tk.Misc, row: int, option) -> None:
+        card = tk.Frame(
+            parent,
+            bg=self.SURFACE,
+            highlightbackground=self.BORDER,
+            highlightcolor=option["color"],
+            highlightthickness=1,
+            cursor="hand2",
+            takefocus=True,
+            height=60,
+        )
+        card.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=(0, 7))
+        card.grid_propagate(False)
+        card.columnconfigure(2, weight=1)
+
+        color_bar = tk.Frame(card, bg=option["color"], width=5)
+        color_bar.grid(row=0, column=0, rowspan=2, sticky=tk.NS)
+        color_bar.grid_propagate(False)
+
+        title = tk.Label(
+            card,
+            text=option["name"],
+            bg=self.SURFACE,
+            fg=self.TEXT,
+            font=self.fonts["option_title"],
+            cursor="hand2",
+        )
+        title.grid(row=0, column=1, sticky=tk.SW, padx=(16, 14), pady=(8, 0))
+
+        description = tk.Label(
+            card,
+            text=option["description"],
+            bg=self.SURFACE,
+            fg=self.TEXT_MUTED,
+            font=self.fonts["option_detail"],
+            cursor="hand2",
+        )
+        description.grid(row=1, column=1, sticky=tk.NW, padx=(16, 14), pady=(1, 8))
+
+        formula = tk.Label(
+            card,
+            text=option["formula"],
+            bg=self.SURFACE,
+            fg="#475569",
+            font=self.fonts["option_detail"],
+            cursor="hand2",
+        )
+        formula.grid(row=0, column=2, sticky=tk.SE, padx=(6, 14), pady=(8, 0))
+
+        selected = tk.Label(
+            card,
+            text="",
+            bg=self.SURFACE,
+            fg=option["color"],
+            font=self.fonts["eyebrow"],
+            cursor="hand2",
+        )
+        selected.grid(row=1, column=2, sticky=tk.NE, padx=(6, 14), pady=(1, 8))
+
+        for widget in (card, color_bar, title, description, formula, selected):
+            widget.bind("<Button-1>", lambda _event, value=option["value"]: self.select_option(value))
+        card.bind("<Return>", lambda _event, value=option["value"]: self.select_option(value))
+        card.bind("<space>", lambda _event, value=option["value"]: self.select_option(value))
+
+        self.option_widgets.append(
+            {
+                "value": option["value"],
+                "color": option["color"],
+                "tint": option["tint"],
+                "card": card,
+                "title": title,
+                "description": description,
+                "formula": formula,
+                "selected": selected,
+            }
+        )
+
+    def select_option(self, value: str) -> None:
+        self.version_type.set(value)
+
+    def update_option_styles(self, *_args) -> None:
+        selected_value = self.version_type.get()
+        for option in self.option_widgets:
+            is_selected = option["value"] == selected_value
+            background = option["tint"] if is_selected else self.SURFACE
+            option["card"].configure(
+                bg=background,
+                highlightbackground=option["color"] if is_selected else self.BORDER,
+            )
+            for widget in (option["title"], option["description"], option["formula"], option["selected"]):
+                widget.configure(bg=background)
+            option["title"].configure(fg=option["color"] if is_selected else self.TEXT)
+            option["formula"].configure(fg=option["color"] if is_selected else "#475569")
+            option["selected"].configure(text="已选择" if is_selected else "")
+
+    def create_button(
+        self,
+        parent: tk.Misc,
+        text: str,
+        command,
+        background: str,
+        active_background: str,
+        foreground: str,
+        width: int,
+    ) -> tk.Button:
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=background,
+            fg=foreground,
+            activebackground=active_background,
+            activeforeground=foreground,
+            relief=tk.FLAT,
+            overrelief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=12,
+            pady=8,
+            width=width,
+            font=self.fonts["button"],
+            cursor="hand2",
+        )
 
     def get_current_version(self) -> str:
         try:
@@ -129,8 +409,13 @@ class GuiVersionManager:
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUTF8"] = "1"
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=self.project_root,
-                env=env, encoding="utf-8", errors="replace",
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                env=env,
+                encoding="utf-8",
+                errors="replace",
             )
 
             if result.returncode == 0:
@@ -151,7 +436,7 @@ class GuiVersionManager:
     def cancel_commit(self):
         try:
             if messagebox.askyesno(
-                "确认取消", "确定要取消本次提交吗？\n这将中断Git提交流程。"
+                "确认取消", "确定要取消本次提交吗？\n这将中断 Git 提交流程。"
             ):
                 self.root.destroy()
                 sys.exit(1)
