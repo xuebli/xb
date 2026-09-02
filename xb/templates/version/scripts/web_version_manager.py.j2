@@ -4,13 +4,14 @@
 import sys
 import os
 import json
+import shlex
 import subprocess
 import socket
 import threading
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，输出的符号会抛 UnicodeEncodeError。
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，统一使用纯文本状态标记。
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -53,7 +54,10 @@ def build_html():
         ".type-opt:hover{border-color:#409eff;background:#ecf5ff}\n"
         ".type-opt input{display:none}\n"
         ".type-opt:has(input:checked){border-color:#409eff;background:#ecf5ff}\n"
-        ".icon{font-size:1.3rem}\n"
+        ".type-marker{width:4px;height:2.5rem;border-radius:2px;flex:none}\n"
+        ".marker-patch{background:#67c23a}\n"
+        ".marker-minor{background:#e6a23c}\n"
+        ".marker-major{background:#f56c6c}\n"
         ".type-text{flex:1}\n"
         ".type-name{font-weight:600;color:#303133}\n"
         ".type-desc{font-size:.82rem;color:#909399;margin-top:.2rem}\n"
@@ -67,28 +71,31 @@ def build_html():
         ".btn-cancel{background:#fef0f0;color:#f56c6c;border:1.5px solid #fbc4c4}\n"
         ".btn-cancel:hover{background:#f56c6c;color:#fff}\n"
         ".result{text-align:center;padding:2rem}\n"
-        ".result .icon{font-size:3rem;margin-bottom:1rem}\n"
+        ".result-mark{width:3rem;height:3rem;border-radius:50%;margin:0 auto 1rem;background:#67c23a;position:relative}\n"
+        ".result-mark::after{content:'';position:absolute;left:1rem;top:.75rem;width:.75rem;height:1.25rem;border:solid #fff;border-width:0 3px 3px 0;transform:rotate(45deg)}\n"
         ".result .msg{font-size:1.2rem;font-weight:600;margin-bottom:.5rem}\n"
         ".result .sub{font-size:.85rem;color:#909399}\n"
         ".result.ok .msg{color:#67c23a}\n"
+        ".result.fail .result-mark{background:#f56c6c}\n"
+        ".result.fail .result-mark::after{left:1.35rem;top:.8rem;width:.35rem;height:1.35rem;border:0;background:#fff;transform:rotate(45deg)}\n"
         ".result.fail .msg{color:#f56c6c}\n"
-        ".countdown{text-align:center;color:#909399;font-size:.75rem;margin-top:1rem}\n"
+        ".countdown{text-align:center;color:#909399;font-size:.75rem;margin-top:1rem;min-height:1.1em}\n"
         "@keyframes spin{to{transform:rotate(360deg)}}\n"
         ".loading{pointer-events:none;opacity:.6}\n"
         ".spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}\n"
         '</style>\n</head>\n<body>\n<div class="card" id="main">\n'
-        '  <div class="title">🔖 版本管理</div>\n'
+        '  <div class="title">版本管理</div>\n'
         f'  <div class="version">[[ package_name ]] 版本: {current_version}</div>\n'
         '  <div class="label">选择版本类型:</div>\n'
         '  <div class="type-group">\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="patch" checked><div class="icon">🔧</div><div class="type-text"><div class="type-name">Patch (x.y.z+1)</div><div class="type-desc">Bug修复</div></div></label>\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="minor"><div class="icon">✨</div><div class="type-text"><div class="type-name">Minor (x.y+1.0)</div><div class="type-desc">新功能</div></div></label>\n'
-        '    <label class="type-opt"><input type="radio" name="vtype" value="major"><div class="icon">🎉</div><div class="type-text"><div class="type-name">Major (x+1.0.0)</div><div class="type-desc">重大更新</div></div></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="patch" checked><span class="type-marker marker-patch"></span><div class="type-text"><div class="type-name">Patch (x.y.z+1)</div><div class="type-desc">Bug修复</div></div></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="minor"><span class="type-marker marker-minor"></span><div class="type-text"><div class="type-name">Minor (x.y+1.0)</div><div class="type-desc">新功能</div></div></label>\n'
+        '    <label class="type-opt"><input type="radio" name="vtype" value="major"><span class="type-marker marker-major"></span><div class="type-text"><div class="type-name">Major (x+1.0.0)</div><div class="type-desc">重大更新</div></div></label>\n'
         "  </div>\n"
         '  <div class="actions">\n'
-        '    <button class="btn btn-primary" id="btn-update" onclick="doUpdate()">🚀 更新版本</button>\n'
-        '    <button class="btn btn-secondary" onclick="doSkip()">⏭️ 跳过</button>\n'
-        '    <button class="btn btn-cancel" onclick="doCancel()">✖ 取消</button>\n'
+        '    <button class="btn btn-primary" id="btn-update" onclick="doUpdate()">更新版本</button>\n'
+        '    <button class="btn btn-secondary" onclick="doSkip()">跳过</button>\n'
+        '    <button class="btn btn-cancel" onclick="doCancel()">取消</button>\n'
         "  </div>\n"
         '  <div class="countdown" id="countdown"></div>\n'
         "</div>\n"
@@ -97,12 +104,11 @@ def build_html():
         "(function init(){\n"
         "  let left=TIMEOUT;\n"
         '  const cd=document.getElementById("countdown");\n'
-        '  const tick=setInterval(()=>{left--;if(left<=0){clearInterval(tick);cd.textContent="⏰ 已超时，自动跳过";return}if(left<=30)cd.textContent="⏳ "+left+"秒后自动跳过"},1000);\n'
+        '  const tick=setInterval(()=>{left--;if(left<=0){clearInterval(tick);cd.textContent="页面已超时，请重新执行提交";return}if(left<=30)cd.textContent="页面将在 "+left+" 秒后中止提交"},1000);\n'
         "})();\n"
         'function getType(){const r=document.querySelector("input[name=vtype]:checked");return r?r.value:"patch"}\n'
-        'function showResult(ok,msg,sub){document.getElementById("main").innerHTML=\'<div class="result \'+(ok?"ok":"fail")+\'"><div class="icon">\'+(ok?"✅":"❌")+"</div>"+'
-        '\'<div class="msg">\'+msg+"</div>"+(sub?\'<div class="sub">\'+sub+"</div>":"")+"</div>"}\n'
-        'function setLoading(on){const b=document.getElementById("btn-update");if(on){b.classList.add("loading");b.innerHTML=\'<span class="spinner"></span> 更新中...\'}else{b.classList.remove("loading");b.innerHTML="🚀 更新版本"}}\n'
+        'function showResult(ok,msg,sub){document.getElementById("main").innerHTML=\'<div class="result \'+(ok?"ok":"fail")+\'"><div class="result-mark"></div><div class="msg">\'+msg+"</div>"+(sub?\'<div class="sub">\'+sub+"</div>":"")+"</div>"}\n'
+        'function setLoading(on){const b=document.getElementById("btn-update");if(on){b.classList.add("loading");b.innerHTML=\'<span class="spinner"></span> 更新中...\'}else{b.classList.remove("loading");b.innerHTML="更新版本"}}\n'
         'async function post(action,body){const res=await fetch("/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});return res.json()}\n'
         'async function doUpdate(){setLoading(true);try{const r=await post("update",{vtype:getType()});if(r.ok)showResult(true,"版本更新成功","新版本：v"+r.version);else showResult(false,"更新失败",r.error)}catch(e){showResult(false,"请求异常",e.message)}}\n'
         'async function doSkip(){await post("skip",{});showResult(true,"已跳过版本更新","提交将继续执行")}\n'
@@ -133,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
             vtype = body.get("vtype", "patch")
             cmd = [sys.executable, str(VERSION_MANAGER), vtype]
 
-            # 子进程输出统一走 UTF-8：Windows 下管道默认 GBK，会让 ✓/❌ 编码失败。
+            # 子进程输出统一走 UTF-8，避免 Windows 默认代码页导致输出异常。
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUTF8"] = "1"
@@ -181,8 +187,13 @@ def open_browser(url):
     browser = os.environ.get("BROWSER", "")
     if browser:
         try:
+            command = shlex.split(browser)
+            if "%s" in command:
+                command[command.index("%s")] = url
+            else:
+                command.append(url)
             subprocess.Popen(
-                [browser, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             return True
         except Exception:
@@ -208,44 +219,62 @@ def open_browser(url):
     return False
 
 
+def is_ssh_session() -> bool:
+    return any(os.environ.get(name) for name in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"))
+
+
+def get_access_url(port: int) -> str:
+    """SSH 没有本地浏览器转发，优先公布 SSH 服务器地址供本地浏览器访问。"""
+    if is_ssh_session():
+        fields = os.environ.get("SSH_CONNECTION", "").split()
+        if len(fields) >= 3:
+            return f"http://{fields[2]}:{port}"
+    return f"http://127.0.0.1:{port}"
+
+
 def main():
     port = find_free_port()
-    url = f"http://127.0.0.1:{port}"
+    url = get_access_url(port)
 
     server = HTTPServer(("0.0.0.0", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     opened = open_browser(url)
 
-    print(f"\n🌐 版本管理页面已启动: {url}")
+    print(f"\n版本管理页面已启动: {url}")
     if not opened:
-        print(f"   👆 Ctrl+点击 上方链接打开页面（{TIMEOUT_SECONDS}秒后自动跳过）")
+        if is_ssh_session():
+            print("   请在本地浏览器打开上面的地址，完成版本选择。")
+        else:
+            print("   请在浏览器打开上面的地址，完成版本选择。")
     else:
-        print(f"   浏览器已打开（{TIMEOUT_SECONDS}秒后自动跳过）")
+        print("   浏览器已打开，请完成版本选择。")
     print()
 
     got_response = result_event.wait(timeout=TIMEOUT_SECONDS)
     server.shutdown()
 
     if not got_response:
-        sys.stdout.write(f"⚠️  等待超时（{TIMEOUT_SECONDS}秒），跳过版本更新\n")
+        sys.stderr.write(
+            f"等待版本选择超时（{TIMEOUT_SECONDS} 秒），已中止本次提交；请重新执行 git commit。\n"
+        )
         sys.stdout.flush()
-        sys.exit(0)
+        sys.exit(1)
 
     action = user_result["action"]
     if action == "cancel":
-        print("❌ 用户取消了提交")
+        print("[取消] 用户取消了提交")
         sys.exit(1)
     elif action == "skip":
-        print("✅ 跳过版本更新")
+        print("[跳过] 跳过版本更新")
         sys.exit(0)
     elif action == "update":
         data = user_result["data"]
         if data and data.get("ok"):
-            print(f"✅ 版本更新成功: {data.get('version', '?')}")
+            print(f"[完成] 版本更新成功: {data.get('version', '?')}")
             sys.exit(0)
         else:
-            print(f"❌ 版本更新失败: {data.get('error', 'unknown')}")
+            print(f"[失败] 版本更新失败: {data.get('error', 'unknown')}")
             sys.exit(1)
     else:
         sys.exit(0)

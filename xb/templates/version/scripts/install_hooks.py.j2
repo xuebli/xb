@@ -9,9 +9,24 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 # 从版本目录安装 hook，不依赖 bash、cp 或 chmod 命令。
 source_dir = root / "version" / "hooks"
-target_dir = root / ".git" / "hooks"
 if not (root / ".git").exists():
     raise SystemExit("不是 Git 仓库")
+
+
+def hooks_path() -> Path:
+    """遵循 Git 的 core.hooksPath，避免 hook 已安装但 Git 实际不读取。"""
+    configured = subprocess.run(
+        ["git", "rev-parse", "--git-path", "hooks"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    path = Path(configured)
+    return path if path.is_absolute() else root / path
+
+
+target_dir = hooks_path()
 
 
 def check_dependency(command: str, package: str) -> None:

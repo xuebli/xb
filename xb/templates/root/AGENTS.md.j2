@@ -317,7 +317,7 @@ class FeishuBitableManager:
 
 - **Electron 启动序**：先 `spawn(server)`，监听 stdout 直到出现 `应用启动完成` 才创建 BrowserWindow。**这是 `electron/main.js` 与 `backend/main.py` lifespan 日志的字面字符串耦合，不能动**。
 - **Vite 注入 git 日志**：`frontend/vite.config.js` 在构建期 `execSync('git log -10 ...')` 把 commit 历史塞进 `__GIT_COMMITS__` 全局常量供 `GitVersionBadge.vue` 渲染；非 git 仓库降级为 `[]`。
-- **pre-commit 三模态**：远程 IDE → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。退出码契约：`0` = 完成或跳过（继续 commit），`1` = 用户取消（中断 commit），其他 = 异常（继续 commit + warning）。
+- **pre-commit 三模态**：远程 IDE/SSH → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。SSH 页面会输出可从本地浏览器访问的地址；页面超时或启动失败会中断 commit。退出码契约：`0` = 完成或主动跳过（继续 commit），`1` = 用户取消或交互失败（中断 commit），其他 = 异常（继续 commit + warning）。
 - **`electron/package.json` 是版本号 single source of truth**：`pyproject.toml` 的 version 跟着它走，**不是反过来**。
 - **DEB 用户感知安装**：`postinst` 通过 `$SUDO_USER` / `$PKEXEC_UID` 反查真实用户，把配置初始化到 *该用户* 的 `~/.config/`，而非 root。
 - **`LoggerManager` 是类级单次初始化**：`_initialized` 类变量；多次 `get_logger(name)` 只换 `bind(module=name)`，不会重复 `logger.add`。
@@ -442,11 +442,11 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 跳过 hook = 这三件事都不做 = 版本号失同步、日志缺记录、提交语义模糊。
 
 **如果 hook 看起来"卡住"**，正确做法（按优先级）：
-1. **检查环境变量**：`echo "DISPLAY=$DISPLAY SSH_CLIENT=$SSH_CLIENT VSCODE_IPC_HOOK_CLI=$VSCODE_IPC_HOOK_CLI"`，确认 hook 走的是哪条三模态分支（参考 `.git/hooks/pre-commit` 末段）
+1. **检查环境变量**：`echo "DISPLAY=$DISPLAY SSH_CLIENT=$SSH_CLIENT SSH_CONNECTION=$SSH_CONNECTION VSCODE_IPC_HOOK_CLI=$VSCODE_IPC_HOOK_CLI"`，确认 hook 走的是哪条分支（参考 `version/hooks/pre-commit.py`）
 2. **本地图形环境**（DISPLAY 非空、非 SSH）：弹窗在你的物理屏幕上，**到屏幕上完成它**
-3. **远程 IDE**（VSCODE_IPC_HOOK_CLI 非空）：浏览器开 localhost 页面完成它
-4. **纯终端 + 无 X11**：hook 自动 `exit 0` 静默跳过（不影响 commit），不需要任何操作
-5. **真的解决不了**：**问用户**，不要自作主张 `--no-verify`
+3. **远程 IDE/SSH**：终端会输出 Web 地址；远程 SSH 不能自动打开本地 Windows 浏览器，请在本地浏览器访问该地址
+4. **纯终端 + 无 SSH/X11**：hook 自动 `exit 0` 静默跳过（不影响 commit），不需要任何操作
+5. **页面启动失败或超时**：commit 会中止；修复交互环境后重新执行，不要自作主张 `--no-verify`
 
 **AI 在 OpenCode/Claude Code 等环境里跑 `git commit`**：bash 工具会等 hook 弹窗结束才返回。如果用户没及时点弹窗，可能超时——这种情况下应**告诉用户去操作弹窗**，**不是**用 `--no-verify` 绕过。
 
@@ -457,6 +457,6 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 | 现象 | 第一步看哪 |
 |---|---|
 | DEB 安装后配置写到 `/root/.config/` 而非用户家目录 | `electron/resources/postinst` 是否用 `$SUDO_USER` 反查家目录 |
-| `git commit` 卡住没反应 | hook 三模态判错,GUI 弹窗可能在屏外;在屏幕上完成弹窗,**不要** `--no-verify`(见 §G) |
+| `git commit` 卡住没反应 | hook 三模态判错；SSH 场景检查终端输出的 Web 地址，本地图形场景检查弹窗；**不要** `--no-verify`(见 §G) |
 | `from managers import xxx` 开发态 OK 打包后 ImportError | `backend/backend_build.py` 加 `--hidden-import=managers.xxx` |
 | YAML 改了但应用读到旧值 | 调用方漏了 `path_manager.reload_config("xxx.yaml")` |

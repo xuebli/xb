@@ -23,12 +23,21 @@ changed = [item for item in changed if not any(key in item for key in excluded)]
 if not changed:
     raise SystemExit(0)
 
-# 远程 IDE 使用 Web 管理器；本地图形环境使用 GUI 管理器。
+# 远程 IDE 和普通 SSH 都使用 Web 管理器。
+# SSH_CONNECTION/SSH_CLIENT/SSH_TTY 由 sshd 注入，即使 ssh -X 没有成功建立 DISPLAY，
+# 也不能误判成本地图形环境或直接跳过版本选择。
 remote_ide = bool(os.getenv("VSCODE_IPC_HOOK_CLI")) or "server" in os.getenv("BROWSER", "")
-target = web if remote_ide else gui
-graphical = bool(os.getenv("DISPLAY")) or os.name == "nt"
-if target.exists() and (remote_ide or graphical):
-    arguments = [sys.executable, str(target)]
-    if target == gui:
-        arguments.append("--check-changes")
+remote_ssh = any(os.getenv(name) for name in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"))
+
+if remote_ide or remote_ssh:
+    if not web.exists():
+        print("版本管理器缺少 Web 脚本，已中止提交", file=sys.stderr)
+        raise SystemExit(1)
+    raise SystemExit(subprocess.run([sys.executable, str(web)]).returncode)
+
+# 仅本地 X11/Windows 使用 Tk；SSH 场景已经在上面的 Web 分支处理。
+if gui.exists() and (bool(os.getenv("DISPLAY")) or os.name == "nt"):
+    arguments = [sys.executable, str(gui), "--check-changes"]
     raise SystemExit(subprocess.run(arguments).returncode)
+
+# 纯终端提交保持兼容：没有可交互界面时跳过版本选择。

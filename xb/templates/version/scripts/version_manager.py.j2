@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，
-# ✓ / ❌ 会抛 UnicodeEncodeError（且异常分支里的 print 会再次抛出）。
+# stdout 被重定向为管道/文件时，Windows 上默认按 GBK 编码，统一使用纯文本状态标记。
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -59,7 +58,7 @@ class VersionManager:
         with open(self.pyproject_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-        print("✓ [[ package_name ]] version updated")
+        print("[OK] [[ package_name ]] version updated")
 
     def update_version(self, bump_type: str) -> str:
         if not self.electron_pkg_path.exists():
@@ -79,7 +78,7 @@ class VersionManager:
 
         self.update_pyproject_version(new_version)
 
-        print(f"✓ Version updated: {current_version} -> {new_version}")
+        print(f"[OK] Version updated: {current_version} -> {new_version}")
         return new_version
 
     def get_current_version(self) -> str:
@@ -111,7 +110,7 @@ def main():
         manager = VersionManager(args.project_dir)
         manager.update_version(args.bump_type)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
         sys.exit(1)
 
 
