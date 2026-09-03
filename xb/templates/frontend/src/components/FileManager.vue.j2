@@ -4,9 +4,7 @@
       <nav class="settings-tabs">
         <button :class="{ active: activeMode === 'form' }" @click="activeMode = 'form'">🌐 应用配置</button>
         <button :class="{ active: activeMode === 'secrets' }" @click="activeMode = 'secrets'">🔐 密钥管理</button>
-        <button :class="{ active: activeMode === 'yaml' }" @click="activeMode = 'yaml'">📄 YAML 文件</button>
       </nav>
-      <span v-if="dirtyHint" class="dirty-hint">● 未保存</span>
     </div>
 
     <div class="page-body">
@@ -66,6 +64,7 @@
                 <input
                   v-model="secretsForm.sudo_password"
                   type="password"
+                  :disabled="sudoPasswordLocked"
                   placeholder="不修改请留空"
                   autocomplete="current-password"
                 />
@@ -73,59 +72,13 @@
             </section>
             [% endif %]
 
-            <p v-if="requiresSudo" class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
-            <p v-else class="section-hint">当前平台无需配置 Sudo 密码。后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
+            <p v-if="sudoPasswordLocked" class="section-hint">Sudo 密码已验证正确，当前已锁定，不允许修改。</p>
+            <p v-if="requiresSudo && !sudoPasswordLocked" class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
+            <p v-if="!requiresSudo" class="section-hint">当前平台无需配置 Sudo 密码。后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
 
             <div v-if="secretsMessage" class="settings-message">{{ secretsMessage }}</div>
             <div v-if="secretsError" class="validation-error">{{ secretsError }}</div>
-          </div>
-        </section>
-
-        <section v-else class="yaml-panel">
-          <div class="content-header">
-            <div>
-              <h3>📄 YAML 文件</h3>
-              <p>高级兜底入口。常规配置应优先使用表单。</p>
-            </div>
-            <button class="save-top" @click="saveFile" :disabled="saving || !hasChanges || !selectedFile">
-              {{ saving ? '保存中...' : '保存 YAML' }}
-            </button>
-          </div>
-
-          <div class="yaml-layout">
-            <aside class="yaml-files">
-              <div v-if="loading" class="state-text">加载中...</div>
-              <div v-else-if="error" class="validation-error">{{ error }}</div>
-              <div v-else-if="files.length === 0" class="state-text">暂无配置文件</div>
-              <button
-                v-for="file in files"
-                v-else
-                :key="file.filename"
-                class="file-item"
-                :class="{ active: selectedFile?.filename === file.filename }"
-                @click="loadFile(file.filename)"
-              >
-                <span>📄</span>
-                <strong>{{ file.filename }}</strong>
-                <small>{{ formatSize(file.size) }}</small>
-              </button>
-            </aside>
-
-            <div class="yaml-editor">
-              <div v-if="!selectedFile" class="editor-placeholder">选择一个 YAML 文件开始编辑</div>
-              <template v-else>
-                <div v-if="fileError" class="validation-error">YAML 格式错误: {{ fileError }}</div>
-                <div v-if="fileMessage" class="settings-message">{{ fileMessage }}</div>
-                <textarea
-                  :key="selectedFile.filename"
-                  v-model="fileContent"
-                  class="code-editor"
-                  spellcheck="false"
-                  @input="onContentChange"
-                ></textarea>
-                <div class="path-strip">{{ selectedFile.path }}</div>
-              </template>
-            </div>
+            <div v-if="secretsPath" class="path-strip">{{ secretsPath }}</div>
           </div>
         </section>
       </main>
@@ -134,27 +87,19 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 // 后端基地址：开发态走 dev.py 注入的 VITE_API_BASE；
 // 打包态由 backend 直接当静态服务器返回页面，同源访问用相对路径即可
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const activeMode = ref('form')
-const loading = ref(false)
-const error = ref('')
-const files = ref([])
-const selectedFile = ref(null)
-const fileContent = ref('')
-const originalContent = ref('')
-const saving = ref(false)
-const fileError = ref('')
-const fileMessage = ref('')
 const settingsLoading = ref(false)
 const settingsSaving = ref(false)
 const settingsError = ref('')
 const settingsMessage = ref('')
 const settingsPath = ref('')
+const secretsPath = ref('')
 const settingsForm = ref({
   ports: {
     backend: 8000,
@@ -167,17 +112,27 @@ const secretsForm = ref({
   [% endif %]
 })
 const secretsSaving = ref(false)
+[% if enable_sudo %]
 const requiresSudo = ref(true)
+[% endif %]
+const sudoPasswordLocked = ref(false)
 const secretsMessage = ref('')
 const secretsError = ref('')
+let settingsMessageTimer
+let secretsMessageTimer
 
-const hasChanges = computed(() => fileContent.value !== originalContent.value)
-const dirtyHint = computed(() => activeMode.value === 'yaml' && hasChanges.value)
+const showSavedMessage = (messageRef, type) => {
+  const timer = type === 'settings' ? settingsMessageTimer : secretsMessageTimer
+  clearTimeout(timer)
+  messageRef.value = '已保存'
+  const nextTimer = setTimeout(() => { messageRef.value = '' }, 3000)
+  if (type === 'settings') settingsMessageTimer = nextTimer
+  else secretsMessageTimer = nextTimer
+}
 
 const loadSettings = async () => {
   settingsLoading.value = true
   settingsError.value = ''
-  settingsMessage.value = ''
 
   try {
     const response = await fetch(`${API_BASE}/api/settings`)
@@ -185,7 +140,9 @@ const loadSettings = async () => {
     if (!response.ok) throw new Error(data.detail || '读取应用配置失败')
 
     settingsPath.value = data.config_path || ''
+    secretsPath.value = data.secrets_path || ''
     requiresSudo.value = data.requires_sudo !== false
+    sudoPasswordLocked.value = data.sudo_password_locked === true
     settingsForm.value = {
       ports: {
         backend: data.ports?.backend || 8000,
@@ -214,9 +171,8 @@ const saveSettings = async () => {
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '保存应用配置失败')
 
-    settingsMessage.value = '配置已保存。可热重载配置已立即生效；端口变更需重启 dev.py 或 Electron。'
-    await loadFileList()
     await loadSettings()
+    showSavedMessage(settingsMessage, 'settings')
   } catch (e) {
     settingsError.value = e.message
     console.error('保存应用配置失败:', e)
@@ -231,7 +187,6 @@ const saveSecrets = async () => {
   secretsMessage.value = ''
 
   try {
-    [% if enable_sudo %]
     const password = (secretsForm.value.sudo_password || '').trim()
     if (password) {
       const response = await fetch(`${API_BASE}/api/config/save`, {
@@ -243,9 +198,8 @@ const saveSecrets = async () => {
       if (!response.ok) throw new Error(data.detail || '保存密钥失败')
       secretsForm.value.sudo_password = ''
     }
-    [% endif %]
 
-    secretsMessage.value = '密钥已保存。'
+    showSavedMessage(secretsMessage, 'secrets')
   } catch (e) {
     secretsError.value = e.message
     console.error('保存密钥失败:', e)
@@ -254,93 +208,13 @@ const saveSecrets = async () => {
   }
 }
 
-const loadFileList = async () => {
-  loading.value = true
-  error.value = ''
-
-  try {
-    const response = await fetch(`${API_BASE}/api/files/list`)
-    if (!response.ok) throw new Error('获取文件列表失败')
-
-    const data = await response.json()
-    files.value = data.files || []
-  } catch (e) {
-    error.value = e.message
-    console.error('加载文件列表失败:', e)
-  } finally {
-    loading.value = false
-  }
-}
-
-const loadFile = async (filename) => {
-  fileMessage.value = ''
-  try {
-    const response = await fetch(`${API_BASE}/api/files/read/${filename}`)
-    if (!response.ok) throw new Error('读取文件失败')
-
-    const data = await response.json()
-    selectedFile.value = data
-    fileContent.value = data.content
-    originalContent.value = data.content
-    fileError.value = data.is_valid ? '' : data.error
-  } catch (e) {
-    fileError.value = `加载文件失败: ${e.message}`
-    console.error('加载文件失败:', e)
-  }
-}
-
-const onContentChange = () => {
-  fileError.value = ''
-  fileMessage.value = ''
-}
-
-const saveFile = async () => {
-  if (!selectedFile.value || !hasChanges.value) return
-
-  saving.value = true
-  fileError.value = ''
-  fileMessage.value = ''
-
-  try {
-    const response = await fetch(`${API_BASE}/api/files/write`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filename: selectedFile.value.filename,
-        content: fileContent.value
-      })
-    })
-
-    const data = await response.json()
-    if (!response.ok) {
-      throw new Error(data.detail || '保存失败')
-    }
-
-    // 重新拉一次 read 接口刷新 selectedFile / fileContent / originalContent，
-    // 与磁盘对齐——之前是"前端自己 originalContent = fileContent"假定一致，
-    // 但 path_manager.reload_config 后磁盘内容可能被规整化（YAML round-trip），
-    // 不重读会让"再次点同一文件"出现微妙的状态分裂
-    const savedFilename = selectedFile.value.filename
-    await loadFileList()
-    await loadFile(savedFilename)
-    fileMessage.value = '保存成功'
-  } catch (e) {
-    fileError.value = `保存失败: ${e.message}`
-    console.error('Save error:', e)
-  } finally {
-    saving.value = false
-  }
-}
-
-const formatSize = (bytes) => {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 onMounted(() => {
   loadSettings()
-  loadFileList()
+})
+
+onUnmounted(() => {
+  clearTimeout(settingsMessageTimer)
+  clearTimeout(secretsMessageTimer)
 })
 </script>
 
@@ -367,7 +241,6 @@ onMounted(() => {
   gap: 12px;
   border-bottom: 1px solid #e5eaf2;
 }
-.dirty-hint { margin-left: auto; color: #b45309; font-size: 0.82rem; flex-shrink: 0; }
 .settings-tabs {
   display: flex;
   gap: 2px;
@@ -400,7 +273,7 @@ onMounted(() => {
 }
 
 .settings-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.settings-panel, .yaml-panel { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.settings-panel { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .content-header {
   flex: 0 0 auto;
   min-height: 76px;
@@ -458,7 +331,7 @@ onMounted(() => {
   border-radius: 7px;
   background: #fff;
 }
-.field-row input:focus, .code-editor:focus { outline: 3px solid rgba(139, 92, 246, 0.16); border-color: #a78bfa; }
+.field-row input:focus { outline: 3px solid rgba(139, 92, 246, 0.16); border-color: #a78bfa; }
 
 .settings-message {
   margin-bottom: 14px;
@@ -486,57 +359,7 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.yaml-layout {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-}
-.yaml-files {
-  padding: 12px;
-  border-right: 1px solid #e5eaf2;
-  overflow-y: auto;
-}
-.file-item {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  padding: 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #263244;
-  text-align: left;
-  cursor: pointer;
-}
-.file-item:hover, .file-item.active { background: #eef2f8; }
-.file-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
-.file-item small { color: #8a94a6; }
-
-.yaml-editor { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.editor-placeholder { flex: 1; display: grid; place-items: center; color: #8a94a6; }
-.code-editor {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 16px;
-  border: 0;
-  border-radius: 0;
-  background: #fbfcfe;
-  color: #111827;
-  font-family: var(--mono);
-  font-size: 0.88rem;
-  line-height: 1.65;
-  resize: none;
-}
-
-@media (max-width: 760px) {
-  .yaml-layout { grid-template-columns: 1fr; }
-  .settings-tabs button { padding: 0 10px; font-size: 0.82rem; }
-  .yaml-files { max-height: 180px; border-right: 0; border-bottom: 1px solid #e5eaf2; }
-  .field-row { grid-template-columns: 1fr; }
+@media (max-width: 760px) {  .settings-tabs button { padding: 0 10px; font-size: 0.82rem; }  .field-row { grid-template-columns: 1fr; }
 }
 
 /* === 暗色模式 === */
@@ -548,7 +371,6 @@ onMounted(() => {
 :root[data-theme='dark'] .page-head {
   border-bottom-color: rgba(139, 92, 246, 0.2);
 }
-:root[data-theme='dark'] .dirty-hint { color: #fbbf24; }
 
 :root[data-theme='dark'] .settings-tabs button { color: #94a3b8; }
 :root[data-theme='dark'] .settings-tabs button:hover { color: #e2e8f0; }
@@ -593,22 +415,11 @@ onMounted(() => {
 
 :root[data-theme='dark'] .state-text { color: #94a3b8; }
 :root[data-theme='dark'] .path-strip {
-  background: rgba(15, 18, 25, 0.5);
+  background: #151923;
+  border-top: 1px solid rgba(139, 92, 246, 0.16);
   color: #94a3b8;
 }
 
-:root[data-theme='dark'] .yaml-files { border-right-color: rgba(139, 92, 246, 0.16); }
-:root[data-theme='dark'] .file-item { color: #e2e8f0; }
-:root[data-theme='dark'] .file-item:hover,
-:root[data-theme='dark'] .file-item.active { background: rgba(139, 92, 246, 0.14); }
-:root[data-theme='dark'] .file-item small { color: #64748b; }
-
-:root[data-theme='dark'] .code-editor {
-  background: rgba(15, 18, 25, 0.7);
-  color: #f1f5f9;
-}
-
-:root[data-theme='dark'] .editor-placeholder { color: #64748b; }
 
 :root[data-theme='dark'] .save-top {
   background: #a78bfa;

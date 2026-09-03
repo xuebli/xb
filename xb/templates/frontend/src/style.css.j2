@@ -462,6 +462,7 @@ code {
 /* 首页内容按需滚动并居中；终端 / 配置页需要撑满且自行处理内部滚动 */
 .page-content--centered {
   overflow: auto;
+  align-items: center;
 }
 
 .page-content--centered > * {
@@ -481,6 +482,7 @@ code {
 .intro-shell {
   width: min(940px, 100%);
   margin: 0 auto;
+  align-self: center;
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
   gap: 24px;

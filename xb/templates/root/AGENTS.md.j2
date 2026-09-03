@@ -148,6 +148,7 @@
 - **前端新增代码必须模块化**：`App.vue` 只做应用壳、顶栏、全局弹窗挂载和页面编排；页面级内容放 `views/`，可复用 UI 放 `components/<feature>/`，API 调用放 `services/` 或 `composables/`，纯函数放 `utils/`。不要把一个功能的模板、状态、请求、格式化、弹窗、表格全塞进单个 `.vue`。
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
+- **密钥展示安全**：除非用户明确要求显示原文，任何其他密钥、密码、token、access key 等敏感值在前端、日志、接口响应和文档中都必须脱敏或加密显示，禁止明文展示。
 [% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。
 - **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password", config_file="secrets.yaml")`，密码明文存 `configs/secrets.yaml`，文件权限必须 `chmod 600`。
 - **sudo 配置流程**：用户首启（`ConfigSetup.vue`）→ 调 `/api/config/save` 写密码 → `sudoers_manager.setup()` 用密码以 `sudo -S` 安装 sudoers 文件 → 校验通过则永久免密。
