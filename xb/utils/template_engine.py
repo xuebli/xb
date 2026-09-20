@@ -32,6 +32,7 @@ class TemplateEngine:
         package_name: str,
         enable_sudo: bool = False,
         enable_terminal: bool = False,
+        enable_update: bool = False,
         sudo_password: str = "",
         icon_path: Path | None = None,
     ):
@@ -43,6 +44,7 @@ class TemplateEngine:
             "package_name_capitalized": package_name.capitalize(),
             "enable_sudo": enable_sudo,
             "enable_terminal": enable_terminal,
+            "enable_update": enable_update,
             "sudo_password": sudo_password,
             "icon_path": icon_path,
         }
@@ -91,6 +93,15 @@ class TemplateEngine:
                 context,
             )
 
+        if context["enable_update"]:
+            update_dir = backend_dir / "api" / "update"
+            update_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/api/update/__init__.py.j2",
+                update_dir / "__init__.py",
+                context,
+            )
+
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
         )
@@ -105,10 +116,37 @@ class TemplateEngine:
             context,
         )
 
-        if context["enable_sudo"]:
+        if context["enable_sudo"] or context["enable_update"]:
             self._render_template(
                 "backend/managers/sudoers_manager.py.j2",
                 backend_dir / "managers" / "sudoers_manager.py",
+                context,
+            )
+
+        if context["enable_update"]:
+            self._render_template(
+                "backend/managers/secret_obfuscator.py.j2",
+                backend_dir / "managers" / "secret_obfuscator.py",
+                context,
+            )
+            self._render_template(
+                "backend/app_version.py.j2", backend_dir / "app_version.py", context
+            )
+            services_dir = backend_dir / "services"
+            services_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/services/__init__.py.j2",
+                services_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/services/updater.py.j2",
+                services_dir / "updater.py",
+                context,
+            )
+            self._render_template(
+                "backend/services/feishu_client.py.j2",
+                services_dir / "feishu_client.py",
                 context,
             )
 
@@ -186,6 +224,25 @@ class TemplateEngine:
                 composables_dir / "useTerminalSessions.js",
                 context,
             )
+        if context["enable_update"]:
+            # 更新 UI 挂在 GitVersionBadge 的弹窗里（见 components/version/）
+            version_dir = components_dir / "version"
+            version_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "frontend/src/components/version/UpdatePanel.vue.j2",
+                version_dir / "UpdatePanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/components/version/CommitHistoryPanel.vue.j2",
+                version_dir / "CommitHistoryPanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/composables/useUpdate.js.j2",
+                composables_dir / "useUpdate.js",
+                context,
+            )
 
     def _create_electron(self, target_dir: Path, context: Dict[str, Any]):
         electron_dir = target_dir / "electron"
@@ -254,6 +311,12 @@ class TemplateEngine:
             self._render_template(
                 "configs/secrets.yaml.j2", configs_dir / "secrets.yaml", context
             )
+        if context["enable_update"]:
+            self._render_template(
+                "configs/config_changes.json.j2",
+                configs_dir / "config_changes.json",
+                context,
+            )
 
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):
         scripts_dir = target_dir / "scripts"
@@ -261,6 +324,13 @@ class TemplateEngine:
         self._render_template(
             "scripts/example.py.j2", scripts_dir / "example.py", context, executable=True
         )
+        if context["enable_update"]:
+            self._render_template(
+                "scripts/feishu_upload.py.j2",
+                scripts_dir / "feishu_upload.py",
+                context,
+                executable=True,
+            )
 
 
     def _create_version(self, target_dir: Path, context: Dict[str, Any]):

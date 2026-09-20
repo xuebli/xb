@@ -178,13 +178,26 @@ class XbGroup(click.Group):
     help="启用内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）",
 )
 @click.option(
+    "--update",
+    "update",
+    is_flag=True,
+    default=False,
+    help="启用应用内自动更新（飞书云盘发布 + 版本检查 + 下载安装）；默认附带 --sudoers 免密",
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
     default=None,
     help="应用图标 PNG 路径；不传时自动查找 ./app-icon.png、./icon.png、./assets/icon.png 等约定路径",
 )
-def init_command(package: str, sudoers: bool, terminal: bool, icon: str | None):
+def init_command(
+    package: str,
+    sudoers: bool,
+    terminal: bool,
+    icon: str | None,
+    update: bool,
+):
     """
     初始化项目结构
 
@@ -196,6 +209,7 @@ def init_command(package: str, sudoers: bool, terminal: bool, icon: str | None):
         xb init demo
         xb init myapp --sudoers
         xb init myapp --terminal
+        xb init myapp --update
         xb init /home/user/projects/myapp
         xb init ../other_dir/demo
     """
@@ -240,8 +254,16 @@ def init_command(package: str, sudoers: bool, terminal: bool, icon: str | None):
         console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
 
     # sudo 免密配置
+    # --update 默认附带 --sudoers：Ubuntu 下应用内安装更新依赖免密 dpkg
     enable_sudo = False
     sudo_password = ""
+
+    if update and not sudoers:
+        console.print(
+            "[cyan]ℹ[/cyan] 已启用 --update，自动附带 --sudoers "
+            "（Ubuntu 应用内安装更新需要 sudo 免密）"
+        )
+        sudoers = True
 
     if sudoers:
         console.print()
@@ -269,6 +291,7 @@ def init_command(package: str, sudoers: bool, terminal: bool, icon: str | None):
             package_name=package_name,
             enable_sudo=enable_sudo,
             enable_terminal=terminal,
+            enable_update=update,
             sudo_password=sudo_password,
             icon_path=icon_path,
         )

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # 可直接执行：Linux/macOS 用 ./build.py -a，Windows 用 .\build.py -a（依赖 .py 文件关联）。
+import atexit
 import os
 import shutil
 import subprocess
@@ -10,9 +11,36 @@ from pathlib import Path
 # 所有构建命令都从项目根目录执行，保证相对路径与 Electron 配置一致。
 ROOT = Path(__file__).resolve().parent
 # -f 前端、-b 后端、-e Electron、-a 全量构建。
+[% if enable_update %]
+USAGE = """用法: ./build.py [选项]（Windows: .\\build.py [选项]）
+  -a               全量构建（前端 + 后端 + 安装包）并发布
+  -f               仅前端
+  -b               仅后端
+  -e               仅 Electron 安装包
+  --upload-only    跳过构建，直接上传 electron/dist 最新安装包到飞书
+  -h, --help       显示本帮助"""
+[% else %]
+USAGE = """用法: ./build.py [选项]（Windows: .\\build.py [选项]）
+  -a               全量构建（前端 + 后端 + 安装包）
+  -f               仅前端
+  -b               仅后端
+  -e               仅 Electron 安装包
+  -h, --help       显示本帮助"""
+[% endif %]
+
 TARGETS = set(sys.argv[1:] or ["-a"])
 NPM = "npm.cmd" if sys.platform == "win32" else "npm"
 PYTHON = ROOT / (".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python")
+
+if "-h" in TARGETS or "--help" in TARGETS:
+    print(USAGE)
+    sys.exit(0)
+
+VALID_TARGETS = {"-a", "-f", "-b", "-e"[% if enable_update %], "--upload-only"[% endif %]}
+if unknown := TARGETS - VALID_TARGETS:
+    print(f"未知选项: {' '.join(sorted(unknown))}")
+    print(USAGE)
+    sys.exit(1)
 
 
 def run(
@@ -38,6 +66,286 @@ def require(path: Path, label: str) -> None:
     if not path.exists():
         raise SystemExit(f"{label}构建失败，未找到产物: {path}")
 
+[% if enable_update %]
+# ------------------------------ 发布（飞书云盘货架） ------------------------------
+# 真实凭证唯一来源是 configs/secrets.yaml（gitignore，发版者自己维护，保持明文不动）。
+# 打包前：把其中的内容自动生成到 secrets.yaml.example（随包分发的模板），随后的
+# 混淆步骤会把 example 里的敏感键变成密文；构建/上传结束（无论成败）atexit 恢复
+# example 为留空模板——真实值永远只在 secrets.yaml。
+import json
+import threading
+import time
+import yaml
+
+SECRETS_PATH = ROOT / "configs" / "secrets.yaml"
+EXAMPLE_PATH = ROOT / "configs" / "secrets.yaml.example"
+EXAMPLE_ORIGINAL = EXAMPLE_PATH.read_text(encoding="utf-8") if EXAMPLE_PATH.exists() else None
+
+
+def _restore_example():
+    if EXAMPLE_ORIGINAL is not None:
+        EXAMPLE_PATH.write_text(EXAMPLE_ORIGINAL, encoding="utf-8")
+        print("🔐 secrets.yaml.example 已恢复为留空模板（真实凭证仅存 secrets.yaml）")
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """overlay 的值覆盖 base 同名键；base 独有的键原样保留。"""
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _sync_example_from_secrets() -> None:
+    """用真实 secrets.yaml 更新 example 模板（sudo_password 强制留空）。
+
+    与 secrets.yaml 做**深度合并**而不是整体覆盖：真实键/值覆盖写入（随后
+    混淆步骤转密文），example 独有的占位键原样保留——它们是配置迁移条目
+    （add_items 不带 value）的取值来源，被冲掉会导致老用户升级时迁移跳过。
+    sudo_password 是发版者本机密码，绝不能随包分发（混淆也不行）——
+    每台客户端机器应通过配置界面设置自己的密码，这里强制留空。
+    """
+    original = {}
+    if EXAMPLE_PATH.exists():
+        original = yaml.safe_load(EXAMPLE_PATH.read_text(encoding="utf-8")) or {}
+
+    if not SECRETS_PATH.exists():
+        print("⚠️ 未找到 configs/secrets.yaml，跳过 example 更新（保留现有模板）")
+        return
+    real = yaml.safe_load(SECRETS_PATH.read_text(encoding="utf-8")) or {}
+    real["sudo_password"] = ""
+
+    merged = _deep_merge(original, real)
+    EXAMPLE_PATH.write_text(
+        yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+atexit.register(_restore_example)
+_sync_example_from_secrets()
+
+
+def _run_upload_script(args: list[str]) -> dict | None:
+    """跑上传脚本并解析它的 JSON 输出。
+
+    stdout 收 JSON 结果；stderr 直通终端让上传进度实时可见
+    （capture 住的话进度会憋到进程结束才一次性打出来）。
+    """
+    upload_script = ROOT / "scripts" / "feishu_upload.py"
+    result = subprocess.run(
+        [str(PYTHON), str(upload_script), *args, "--json"],
+        stdout=subprocess.PIPE,
+        stderr=None,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        print(f"❌ 无法解析上传脚本输出: {result.stdout[:500]}")
+        return None
+
+
+PROGRESS_FILE = ROOT / "datas" / "logs" / "upload_progress.json"
+
+
+def _render_upload_progress(stop_event: "threading.Event", state: dict) -> None:
+    """轮询飞书进度文件，周期性输出一行式进度。
+
+    上传脚本跑在子进程里，\\r 动态行会被 JSON 模式吃掉，
+    因此这里按 5 秒一行（带时间戳）汇总展示。
+    state["last"] 记录已打印的最后一行，供结束后补打最终进度时去重。
+    """
+    last_line = ""
+    while not stop_event.is_set():
+        line = _progress_line()
+        if line and line != last_line and line != state.get("last"):
+            print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
+            last_line = line
+            state["last"] = line
+        stop_event.wait(5)
+
+
+def _progress_line() -> str:
+    """读取上传子进程写的进度文件，返回一行式进度文本；无内容返回空串。"""
+    try:
+        if PROGRESS_FILE.exists():
+            fp = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+            sent, total = int(fp.get("sent", 0)), int(fp.get("total", 0))
+            if total:
+                return (
+                    f"上传进度: {sent / total * 100:.0f}% "
+                    f"({sent // 1048576}/{total // 1048576}MB)"
+                )
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def _print_final_progress(state: dict) -> None:
+    """上传子进程结束后补打一次最终进度。
+
+    轮询间隔 5 秒，可能刚好错过 100% 那一拍；子进程一退出就同步补打，
+    保证最终进度及时显示（与轮询已打印的内容去重，不重复刷行）。
+    """
+    line = _progress_line()
+    if line and line != state.get("last"):
+        print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
+        state["last"] = line
+
+
+def _upload_with_progress(args: list[str]) -> dict | None:
+    """跑上传子进程，期间由后台线程轮询渲染进度。
+
+    渲染线程的生命周期与上传子进程严格对齐：子进程一结束立即停渲染并
+    补打最终进度，避免上传结束后交互提示出现时进度还未到 100% 或滞后刷行。
+    """
+    PROGRESS_FILE.unlink(missing_ok=True)  # 清掉上一次残留，防止渲染出旧进度
+    state = {"last": ""}
+    stop_render = threading.Event()
+    render_thread = threading.Thread(
+        target=_render_upload_progress, args=(stop_render, state), daemon=True
+    )
+    render_thread.start()
+    try:
+        return _run_upload_script(args)
+    finally:
+        stop_render.set()
+        render_thread.join()
+        _print_final_progress(state)
+
+
+def _load_config_changes() -> dict:
+    """读取 configs/config_changes.json（全平台共享的配置迁移说明）。
+
+    文件内容为顶层版本块结构（{"1.0.0": {"files": [...]}}），build.py 只读不改。
+    该文件进 git、只存手工维护内容。
+    """
+    changes_file = ROOT / "configs" / "config_changes.json"
+    if changes_file.exists():
+        with open(changes_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _latest_commit_message() -> str:
+    """取最新一条 git 提交信息，作为版本更新说明的默认值。"""
+    try:
+        return subprocess.check_output(
+            ["git", "log", "-1", "--pretty=%B"], text=True
+        ).strip()
+    except Exception:
+        return ""
+
+
+def _build_release_info(platform: str, version: str, pkg: Path, entry: dict) -> None:
+    """生成 datas/update_<平台>.json 发布信息（build.py 产物，不入 git）。
+
+    configs/config_changes.json 只存手工维护的配置迁移说明（进 git）；
+    version/release_date/release_notes/package 等每次发布都变的动态字段写进
+    datas 版并上传飞书 —— 飞书侧是完整文件，仓库不产生发版 diff。
+    """
+    from datetime import datetime
+
+    manual = _load_config_changes()
+
+    # 询问更新说明：直接回车 = 采用最新一条提交信息
+    default_notes = _latest_commit_message()
+    print(f"\n   请输入 {platform} 版本更新说明（直接回车 = 采用最新提交信息）:")
+    if default_notes:
+        preview = default_notes.splitlines()[0]
+        print(f"   （默认: {preview}）")
+    notes = []
+    while True:
+        line = input("   > ").strip()
+        if not line:
+            break
+        notes.append(line)
+
+    release_info = {
+        "version": version,
+        "release_date": datetime.now().strftime("%Y-%m-%d"),
+        # 按行数组存储：json 文件里天然分行可读，客户端再拼回多行文本
+        "release_notes": notes if notes else default_notes.splitlines(),
+        # file_token 是应用内下载的唯一入口，url 只用于展示/手动下载
+        "package": {
+            "file_token": entry["token"],
+            "url": entry["url"],
+            "hash": entry["hash"],
+            "size": entry["size"],
+            "filename": pkg.name,
+        },
+        # 全平台共享的配置迁移说明（configs/config_changes.json 本体）
+        "config_changes": manual,
+    }
+
+    release_file = ROOT / "datas" / f"update_{platform}.json"
+    with open(release_file, "w", encoding="utf-8") as f:
+        json.dump(release_info, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+    print(f"   ✅ 发布信息已生成: {release_file}")
+
+
+def _upload_package(packages: list[Path]) -> None:
+    """调用上传脚本上传安装包并更新版本信息。"""
+    # 读取版本号（electron/package.json 是版本号 single source of truth）
+    electron_pkg = ROOT / "electron" / "package.json"
+    with open(electron_pkg, "r", encoding="utf-8") as f:
+        version = json.load(f).get("version", "0.0.0")
+
+    print("\n[1/2] 上传安装包...")
+    for pkg in packages:
+        platform = "windows" if pkg.suffix == ".exe" else "ubuntu"
+        output = _upload_with_progress(["upload", str(pkg)])
+        if not output or not output.get("results"):
+            print(f"❌ 上传 {pkg.name} 失败")
+            continue
+
+        entry = output["results"][0]
+        _build_release_info(platform, version, pkg, entry)
+
+    # 上传版本信息文件
+    print("\n[2/2] 上传版本信息文件...")
+    if _run_upload_script(["upload-info"]) is None:
+        print("❌ 上传版本信息文件失败——客户端将检查不到这个新版本")
+        return
+
+    print("\n" + "=" * 60)
+    print("上传完成！")
+    print("发布信息 datas/update_*.json 已上传飞书（不入 git）。")
+    print("=" * 60)
+
+
+def _upload_stage(packages: list[Path]) -> None:
+    """发布编排：询问上传 → 子进程跑上传脚本（进度由 _upload_with_progress 渲染）。"""
+    upload = input("\n是否上传安装包到飞书云文档？(y/N): ").strip().lower()
+    if upload != "y":
+        return
+
+    _upload_package(packages)
+
+
+# 仅上传现有安装包（不构建）：./build.py --upload-only
+if "--upload-only" in TARGETS:
+    pkgs = sorted(
+        list((ROOT / "electron/dist").glob("*.deb"))
+        + list((ROOT / "electron/dist").glob("*.exe")),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not pkgs:
+        raise SystemExit("未找到本地安装包（electron/dist 为空），请先构建")
+    pkg = pkgs[-1]
+    print(f"\n安装包: {pkg.name}")
+    print(f"大小: {pkg.stat().st_size:,} bytes")
+    _upload_stage([pkg])
+    sys.exit(0)
+[% endif %]
 
 if "-f" in TARGETS or "-a" in TARGETS:
     # 前端：安装依赖后生成 frontend/dist。
@@ -54,6 +362,24 @@ if "-b" in TARGETS or "-a" in TARGETS:
     require(ROOT / "dist" / ("server.exe" if sys.platform == "win32" else "server"), "后端")
 if "-e" in TARGETS or "-a" in TARGETS:
     # Electron：根据平台生成 DEB 或 NSIS 安装包。
+[% if enable_update %]
+    # 打包前把 secrets.yaml.example 里明文的敏感键自动混淆：
+    # 发版者直接把真实 app_secret 填进 example 也没关系，打进安装包的就是密文，
+    # 用户安装后打开文件看到的不是明文（混淆值可被软件自动还原，属防围观级别）。
+    try:
+        run(
+            [
+                str(PYTHON),
+                "-m",
+                "managers.secret_obfuscator",
+                "--file",
+                str(ROOT / "configs" / "secrets.yaml.example"),
+            ],
+            cwd=ROOT / "backend",
+        )
+    except Exception as e:
+        print(f"⚠️ 敏感键混淆步骤失败（继续构建，请人工检查 example 是否含明文）: {e}")
+[% endif %]
     electron = ROOT / "electron"
     electron_environment = {
         "ELECTRON_MIRROR": "https://mirrors.huaweicloud.com/electron/",
@@ -66,3 +392,10 @@ if "-e" in TARGETS or "-a" in TARGETS:
     packages = list((electron / "dist").glob("*.exe")) + list((electron / "dist").glob("*.deb"))
     if not packages:
         raise SystemExit("Electron 构建失败，未找到安装包")
+
+    # 只取最新的一个安装包
+    packages = [max(packages, key=lambda p: p.stat().st_mtime)]
+[% if enable_update %]
+
+    _upload_stage(packages)
+[% endif %]

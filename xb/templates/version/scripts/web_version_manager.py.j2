@@ -148,8 +148,26 @@ class Handler(BaseHTTPRequestHandler):
                 env=env, encoding="utf-8", errors="replace",
             )
             if r.returncode == 0:
+                # version_manager.update_version 会同步四个文件的版本号，
+                # 这里全部 stage 进本次 commit（文件可能因安装失败不存在，过滤之）
+                version_files = [
+                    "electron/package.json",
+                    "pyproject.toml",
+                    "electron/package-lock.json",
+[% if enable_update %]
+                    "backend/app_version.py",
+[% endif %]
+                ]
                 subprocess.run(
-                    ["git", "add", "electron/package.json", "pyproject.toml"],
+                    [
+                        "git",
+                        "add",
+                        *(
+                            f
+                            for f in version_files
+                            if (PROJECT_ROOT / f).exists()
+                        ),
+                    ],
                     cwd=PROJECT_ROOT,
                 )
                 resp["version"] = get_current_version()

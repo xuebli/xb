@@ -22,8 +22,8 @@ if os.name != "nt":
 homes = [Path.home()]
 if action == "purge" and os.name != "nt":
     # purge 时遍历普通用户和 root，清理所有用户的应用数据。
-    homes = [Path(entry.home_dir) for entry in __import__("pwd").getpwall()
-             if entry.home_dir.startswith(("/home/", "/root"))]
+    homes = [Path(entry.pw_dir) for entry in __import__("pwd").getpwall()
+             if entry.pw_dir.startswith(("/home/", "/root"))]
 for home in homes:
     paths = [home / ".config" / "[[ package_name]]",
              home / ".local" / "share" / "[[ package_name]]",

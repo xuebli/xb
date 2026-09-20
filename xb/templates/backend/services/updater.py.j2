@@ -1,0 +1,712 @@
+"""更新服务 —— 远程版本信息拉取、安装包下载校验、配置备份合并、安装执行。
+
+版本信息文件（`update_ubuntu.json` / `update_windows.json`）由 `build.py` 上传到
+飞书云文档的固定文件夹。客户端「列举文件夹 → 按文件名取最新 → 下载」拿到它；
+`configs/` 里的同名文件只在拿不到远程时作为离线兜底（它是安装时拷过去的，
+永远等于当前版本，单独靠它检测不到任何新版本）。
+"""
+
+import copy
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+from app_version import APP_VERSION
+from managers import get_logger, path_manager, secret_obfuscator, sudoers_manager
+from services.feishu_client import feishu_client
+
+logger = get_logger(__name__)
+
+# 版本信息文件与安装包所在的飞书云文档文件夹 token 配置在
+# secrets.yaml 的 feishu.update_folder_url（与 scripts/feishu_upload.py
+# 共用同一配置），不写入代码；未配置时远程检查降级为本地兜底。
+
+# 远程版本信息缓存时间（秒），避免手动点检查时反复打飞书接口
+REMOTE_CACHE_TTL = 300
+
+
+def parse_version(version: str) -> tuple[int, ...]:
+    """把版本号解析成可比较的整数元组；非数字后缀（如 2.5.0-beta）直接忽略。"""
+    parts: list[int] = []
+    for chunk in str(version or "0").split("."):
+        match = re.match(r"\d+", chunk.strip())
+        parts.append(int(match.group()) if match else 0)
+    return tuple(parts) or (0,)
+
+
+def compare_version(v1: str, v2: str) -> int:
+    """比较版本号，返回 1(v1>v2)、-1(v1<v2)、0(相等)。位数不同的按 0 补齐。"""
+    p1, p2 = parse_version(v1), parse_version(v2)
+    length = max(len(p1), len(p2))
+    p1 += (0,) * (length - len(p1))
+    p2 += (0,) * (length - len(p2))
+    if p1 > p2:
+        return 1
+    if p1 < p2:
+        return -1
+    return 0
+
+
+def release_notes_text(info: dict) -> str:
+    """把 release_notes 规范化成多行文本，兼容分行数组与纯字符串两种存储。"""
+    value = (info or {}).get("release_notes") or ""
+    if isinstance(value, list):
+        return "\n".join(str(v) for v in value)
+    return str(value)
+
+
+class UpdateService:
+    """更新服务类。"""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._download_thread: Optional[threading.Thread] = None
+        self._download_state: dict = self._idle_state()
+        self._remote_cache: Optional[dict] = None
+        self._remote_cache_at: float = 0.0
+
+    # ------------------------------------------------------------------ 基础信息
+
+    @staticmethod
+    def _idle_state() -> dict:
+        return {
+            "status": "idle",  # idle | downloading | verifying | done | error
+            "progress": 0,
+            "downloaded": 0,
+            "total": 0,
+            "filename": "",
+            "path": "",
+            "error": "",
+        }
+
+    def get_platform(self) -> str:
+        """获取当前平台。"""
+        return "windows" if sys.platform == "win32" else "ubuntu"
+
+    def get_current_version(self) -> str:
+        """获取当前应用版本号（由 version_manager 同步到 app_version.py）。"""
+        return APP_VERSION
+
+    def get_config_dir(self) -> Path:
+        """配置目录（打包态是用户目录，开发态是项目 configs/）。"""
+        return path_manager.get_config_dir()
+
+    def get_backup_dir(self) -> Path:
+        """配置备份目录（datas/ 下，不混进 configs/）。"""
+        return path_manager.get_data_path("config_backups")
+
+    def get_download_dir(self) -> Path:
+        """安装包下载目录。"""
+        return path_manager.get_data_path("updates")
+
+    def _folder_token(self) -> str:
+        """从 secrets.yaml 读取上传文件夹链接或 token，解析出 folder token。
+
+        支持完整链接（https://xxx.feishu.cn/drive/folder/<token>）或裸 token。
+        """
+        value = (
+            path_manager.get_config_value(
+                "feishu.update_folder_url",
+                default="",
+                config_file="secrets.yaml",
+            )
+            or ""
+        ).strip()
+        if not value:
+            return ""
+        # 链接形态：取路径最后一段；裸 token（无 / 无 .）原样返回
+        value = value.split("?")[0].rstrip("/")
+        if "/" in value or "." in value:
+            value = value.rsplit("/", 1)[-1]
+        return value
+
+    # ------------------------------------------------------------------ 版本信息
+
+    def fetch_update_info(self, force: bool = False) -> tuple[dict, str]:
+        """获取版本信息，返回 (info, source)。source 为 remote / local / none。
+
+        远程优先；远程失败（无网络、未配置飞书、接口报错）时回落到本地文件，
+        保证离线环境下检查更新只是「查不到新版本」而不是报错。
+        """
+        if not force and self._remote_cache is not None:
+            if time.time() - self._remote_cache_at < REMOTE_CACHE_TTL:
+                return self._remote_cache, "remote"
+
+        try:
+            info = self._fetch_remote_update_info()
+            if info is not None:
+                self._remote_cache = info
+                self._remote_cache_at = time.time()
+                return info, "remote"
+        except Exception as e:
+            logger.warning(f"拉取远程版本信息失败，回落本地文件: {e}")
+
+        local = self._load_local_update_info()
+        return (local, "local") if local else ({}, "none")
+
+    def _fetch_remote_update_info(self) -> Optional[dict]:
+        """从飞书云文档拉取版本信息文件。未配置飞书时返回 None。"""
+        if not feishu_client.app_id or not feishu_client.app_secret:
+            logger.debug("未配置飞书 app_id/app_secret，跳过远程版本检查")
+            return None
+
+        folder_token = self._folder_token()
+        if not folder_token:
+            logger.warning(
+                "未配置 feishu.update_folder_url（secrets.yaml），跳过远程版本检查"
+            )
+            return None
+
+        filename = f"update_{self.get_platform()}.json"
+        files = feishu_client.list_folder_files(folder_token)
+        # 同名文件每次上传都生成新 token，取 modified_time 最大的那个
+        candidates = [f for f in files if f.get("name") == filename]
+        if not candidates:
+            logger.warning(f"飞书文件夹中未找到版本信息文件: {filename}")
+            return None
+
+        latest = max(candidates, key=lambda f: int(f.get("modified_time") or 0))
+        cache_path = path_manager.get_data_path(f"updates/{filename}")
+        feishu_client.download_file(latest["token"], cache_path)
+
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _load_local_update_info(self) -> dict:
+        """读取本地兜底的配置迁移说明（全平台共享的 configs/config_changes.json）。
+
+        文件内容为顶层版本块结构（{"1.0.0": {"files": [...]}}）。离线时版本
+        信息缺失 → has_update 恒为 False，这里只保证「配置变更」提示仍可用；
+        文件不存在返回空 dict。
+        """
+        local_path = path_manager.get_config_path("config_changes.json")
+        if not local_path.exists():
+            return {}
+        try:
+            with open(local_path, "r", encoding="utf-8") as f:
+                changes = json.load(f) or {}
+            return {"config_changes": changes} if changes else {}
+        except Exception as e:
+            logger.warning(f"读取本地配置迁移说明失败: {e}")
+            return {}
+
+    @staticmethod
+    def _is_empty_change(item: dict) -> bool:
+        """判断是否为「本次未修改该文件」的占位条目：无描述、无任何操作项。"""
+        if item.get("description"):
+            return False
+        if (item.get("overwrite_items") or item.get("add_items")
+                or item.get("delete_items") or item.get("keep_items")):
+            return False
+        if str(item.get("content") or "").strip():
+            return False
+        return True
+
+    def filter_config_changes(
+        self, changes: dict, current_version: str, target_version: str
+    ) -> list[dict]:
+        """按版本区间收集需要应用的配置迁移条目，按块版本升序返回。
+
+        changes 即 configs/config_changes.json 的内容：顶层 key 是**变更生效前
+        用户所处的最后版本号**（该版本及更早的用户配置还是旧结构），value 为
+        {"files": [...]}。
+
+        某版本块被应用的条件（两条同时满足）：
+        - 用户当前版本 <= 块版本（1.0.0 及之前结构的配置都需要迁移）
+        - 要安装的包版本 >  块版本（例：块 "1.0.0" 表示变更随 1.1.0 发布，
+          1.0.0 升 1.1.0 会应用，1.1.0 升 1.2.0 不再应用）
+
+        非法版本号的块与块内占位条目（无描述且无任何操作项）静默跳过。
+        """
+        result = []
+        # 按块版本升序遍历，保证多版本迁移的执行与展示顺序正确
+        ordered_blocks = sorted(
+            (changes or {}).items(),
+            key=lambda kv: [int(x) for x in re.findall(r"\d+", str(kv[0]))] or [0],
+        )
+        for block_version, block in ordered_blocks:
+            block_version = str(block_version).strip()
+            if not re.match(r"^\d+(\.\d+)*$", block_version):
+                logger.warning(f"config_changes 顶层版本块非法，已忽略: {block_version!r}")
+                continue
+            if compare_version(block_version, current_version) < 0:
+                continue  # 用户当前版本已晚于该迁移所属版本，配置必是新结构
+            if compare_version(target_version, block_version) <= 0:
+                continue  # 要安装的包必须严格晚于该版本块
+            for file_change in (block or {}).get("files") or []:
+                if self._is_empty_change(file_change):
+                    continue  # 占位条目：不执行也不展示
+                entry = dict(file_change)
+                entry["block_version"] = block_version
+                result.append(entry)
+        return result
+
+    # ------------------------------------------------------------------ 下载
+
+    def get_download_state(self) -> dict:
+        with self._lock:
+            return dict(self._download_state)
+
+    def start_download(self, info: dict) -> dict:
+        """启动后台下载。重复调用时若已在下载中则直接返回当前状态。"""
+        package = info.get("package") or {}
+        file_token = package.get("file_token") or ""
+        filename = package.get("filename") or ""
+
+        if not file_token:
+            raise ValueError("版本信息缺少 package.file_token，无法下载安装包")
+        if not filename:
+            raise ValueError("版本信息缺少 package.filename，无法下载安装包")
+
+        with self._lock:
+            if self._download_state["status"] in ("downloading", "verifying"):
+                return dict(self._download_state)
+
+            target = self.get_download_dir() / filename
+            # 已经下载过且校验通过就不重复下载
+            expected_hash = package.get("hash") or ""
+            if target.exists() and self._verify_hash(target, expected_hash):
+                self._download_state = {
+                    **self._idle_state(),
+                    "status": "done",
+                    "progress": 100,
+                    "downloaded": target.stat().st_size,
+                    "total": target.stat().st_size,
+                    "filename": filename,
+                    "path": str(target),
+                }
+                return dict(self._download_state)
+
+            self._download_state = {
+                **self._idle_state(),
+                "status": "downloading",
+                "total": package.get("size") or 0,
+                "filename": filename,
+            }
+
+        self._download_thread = threading.Thread(
+            target=self._download_worker,
+            args=(file_token, target, package.get("hash") or ""),
+            daemon=True,
+            name="update-download",
+        )
+        self._download_thread.start()
+        return self.get_download_state()
+
+    def _download_worker(self, file_token: str, target: Path, expected_hash: str):
+        def on_progress(downloaded: int, total: int):
+            with self._lock:
+                # Content-Length 缺失时退回用版本信息里的 size 估算
+                total = total or self._download_state.get("total") or 0
+                self._download_state["downloaded"] = downloaded
+                self._download_state["total"] = total
+                self._download_state["progress"] = (
+                    int(downloaded * 100 / total) if total else 0
+                )
+
+        try:
+            feishu_client.download_file(file_token, target, progress_cb=on_progress)
+
+            with self._lock:
+                self._download_state["status"] = "verifying"
+
+            if not self._verify_hash(target, expected_hash):
+                target.unlink(missing_ok=True)
+                raise RuntimeError("安装包哈希校验失败，文件可能已损坏或被篡改")
+
+            with self._lock:
+                self._download_state["status"] = "done"
+                self._download_state["progress"] = 100
+                self._download_state["path"] = str(target)
+            logger.info(f"安装包下载完成: {target}")
+        except Exception as e:
+            logger.error(f"下载安装包失败: {e}", exc_info=True)
+            with self._lock:
+                self._download_state["status"] = "error"
+                self._download_state["error"] = str(e)
+
+    def _verify_hash(self, path: Path, expected: str) -> bool:
+        """校验文件哈希。期望值格式为 "sha256:<hex>"；未提供时跳过校验。"""
+        if not expected:
+            logger.warning(f"版本信息未提供哈希，跳过校验: {path.name}")
+            return True
+
+        algo, _, digest = expected.partition(":")
+        if not digest:
+            algo, digest = "sha256", algo
+
+        try:
+            hasher = hashlib.new(algo)
+        except ValueError:
+            logger.warning(f"不支持的哈希算法: {algo}，跳过校验")
+            return True
+
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        actual = hasher.hexdigest()
+        if actual.lower() != digest.strip().lower():
+            logger.error(f"哈希不匹配: 期望 {digest}，实际 {actual}")
+            return False
+        return True
+
+    # ------------------------------------------------------------------ 配置备份 / 合并
+
+    def create_backup(self, version: str) -> Path:
+        """把整个配置目录备份一份（backup 子目录本身除外）。
+
+        Args:
+            version: 当前版本号，用于备份目录命名
+
+        Returns:
+            备份目录路径
+        """
+        config_dir = self.get_config_dir()
+        backup_dir = self.get_backup_dir()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{version}_{timestamp}"
+        backup_path.mkdir(parents=True, exist_ok=True)
+
+        count = 0
+        for src in config_dir.rglob("*"):
+            if not src.is_file():
+                continue
+            # 不要把备份目录自己备份进去
+            if backup_dir in src.parents:
+                continue
+            rel = src.relative_to(config_dir)
+            dst = backup_path / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            count += 1
+
+        logger.info(f"配置备份完成({count} 个文件): {backup_path}")
+        return backup_path
+
+    def apply_config_changes(self, changes: list[dict]) -> list[dict]:
+        """按顺序应用配置变更，返回每项的处理结果。"""
+        results = []
+        for change in changes:
+            filename = change.get("filename", "")
+            try:
+                ok = self.merge_config(filename, change)
+                results.append({"filename": filename, "success": ok, "error": ""})
+            except Exception as e:
+                logger.error(f"应用配置变更失败: {filename} - {e}", exc_info=True)
+                results.append({"filename": filename, "success": False, "error": str(e)})
+        self.reload_all_configs()
+        return results
+
+    def merge_config(self, filename: str, change_info: dict) -> bool:
+        """合并单个配置文件。
+
+        Args:
+            filename: 配置文件名
+            change_info: 变更信息，含 action / keep_items / overwrite_items / add_items / content
+
+        Returns:
+            是否成功
+        """
+        if not filename:
+            logger.warning("配置变更条目缺少 filename")
+            return False
+        if self._is_empty_change(change_info):
+            return True  # 未修改文件的占位条目，静默跳过
+
+        action = change_info.get("action", "merge")
+        config_path = self.get_config_dir() / filename
+
+        if action == "create":
+            return self._create_config(config_path, change_info)
+        if action == "merge":
+            return self._merge_config(config_path, change_info)
+        if action == "overwrite":
+            return self._overwrite_config(config_path, change_info)
+
+        logger.warning(f"未知的配置变更 action: {action}")
+        return False
+
+    def _create_config(self, config_path: Path, change_info: dict) -> bool:
+        """新建配置文件；已存在则跳过，绝不覆盖用户已有配置。"""
+        content = change_info.get("content")
+        if content is None:
+            logger.warning(f"create 动作缺少 content: {config_path.name}")
+            return False
+
+        if config_path.exists():
+            logger.info(f"配置文件已存在，跳过创建: {config_path.name}")
+            return True
+
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            if isinstance(content, str):
+                f.write(content)
+            else:
+                yaml.safe_dump(content, f, allow_unicode=True, sort_keys=False)
+        logger.info(f"已创建新配置文件: {config_path.name}")
+        return True
+
+    def _overwrite_config(self, config_path: Path, change_info: dict) -> bool:
+        """用 content 整文件覆盖用户配置（csv 等无法增量合并的文件专用）。
+
+        content 为空串/缺失时视为「本次未修改该文件」，静默跳过；
+        覆盖前按同样约定留一份 .bak 备份。
+        """
+        content = change_info.get("content")
+        if not str(content or "").strip():
+            logger.info(f"{config_path.name} 的 content 为空，视为未修改，跳过覆盖")
+            return True
+
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        if config_path.exists():
+            shutil.copy2(config_path, config_path.with_suffix(config_path.suffix + ".bak"))
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            if isinstance(content, str):
+                f.write(content)
+            else:
+                json.dump(content, f, ensure_ascii=False, indent=2)
+        logger.info(f"已整文件覆盖配置: {config_path.name}")
+        return True
+
+    def _merge_config(self, config_path: Path, change_info: dict) -> bool:
+        """合并现有 YAML 配置。
+
+        以现有配置为基底做增量修改 —— 没被提及的配置项一律原样保留。
+        - keep_items：保护名单，名单内的键不会被 overwrite/add 动到
+        - overwrite_items：{key, value} 用新值覆盖；只给 key 字符串则删除该项，
+          让应用回落到代码里的默认值
+        - add_items：{key, value} 仅在键不存在时补齐，已有值不动
+        """
+        if config_path.suffix.lower() not in (".yaml", ".yml"):
+            logger.warning(f"merge 只支持 YAML 配置文件: {config_path.name}")
+            return False
+        if not config_path.exists():
+            logger.warning(f"配置文件不存在，无法合并: {config_path.name}")
+            return False
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            existing_config = yaml.safe_load(f) or {}
+
+        new_config = copy.deepcopy(existing_config)
+        protected = set(change_info.get("keep_items") or [])
+
+        # 删除项：纯 key 字符串数组
+        for raw_key in change_info.get("delete_items") or []:
+            key = str(raw_key).strip()
+            if not key or key in protected:
+                continue
+            self._delete_nested_key(new_config, key)
+
+        # 修改值项：{key, value} 写新值；{key}（无 value）与包内模板对齐；
+        # 旧约定的字符串项（删除）已废弃，兼容转删除并告警
+        for raw in change_info.get("overwrite_items") or []:
+            if isinstance(raw, str):
+                key = raw.strip()
+                if not key or key in protected:
+                    continue
+                logger.warning(
+                    f"{config_path.name}: overwrite_items 中的字符串项已废弃，"
+                    f"请改用 delete_items 表达删除: {key}"
+                )
+                self._delete_nested_key(new_config, key)
+                continue
+            if not isinstance(raw, dict) or not raw.get("key"):
+                continue
+            key = raw["key"]
+            if key in protected:
+                logger.info(f"{config_path.name}: {key} 在保留名单中，跳过覆盖")
+                continue
+            if "value" in raw:
+                self._set_nested_value(new_config, key, raw["value"])
+            else:
+                value = self._value_from_template(config_path.name, key)
+                if value is None:
+                    logger.info(
+                        f"{config_path.name}: {key} 未携带值且模板中不存在，跳过"
+                    )
+                    continue
+                self._set_nested_value(new_config, key, value)
+
+        for item in self._normalize_items(change_info.get("add_items")):
+            key = item["key"]
+            if key in protected:
+                continue
+            if self._has_nested_key(new_config, key):
+                continue
+            value = item.get("value")
+            if value in (None, ""):
+                # 条目不携带值（secrets 类条目的规范写法，避免真实值进仓库）：
+                # 从包内 <filename>.example 模板取，用户落盘的仍是混淆形态。
+                # 迁移发生在新包安装前，读到的是当前已安装版本的模板；新版本
+                # 新增的占位键这里取不到属正常现象，升级后首次启动
+                # init_user_configs 会用新包模板自动补齐——因此静默跳过，
+                # 不打日志干扰升级过程。
+                value = self._value_from_template(config_path.name, key)
+                if value is None:
+                    continue
+            self._set_nested_value(new_config, key, value)
+
+        if new_config == existing_config:
+            # 无变化静默返回：升级场景下"新增键交给启动补齐"走到这里属正常，
+            # 打 INFO 会让人误以为迁移失败了
+            return True
+
+        # 落盘前把敏感键（键名含 secret/password/token）的明文值混淆，
+        # 避免迁移条目里携带的真实凭证以明文写进用户 secrets.yaml
+        new_config, _ = secret_obfuscator.obfuscate_plain_secrets(new_config)
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+
+        logger.info(f"已合并配置文件: {config_path.name}")
+        return True
+
+    @staticmethod
+    def _value_from_template(filename: str, key: str):
+        """从包内 <filename>.example 模板取嵌套键的值；取不到返回 None。
+
+        迁移条目（add_items/overwrite_items）不携带值时使用——secrets.yaml
+        的真实值只维护在 example（构建时自动混淆），不进 config_changes.json。
+        """
+        src_root = path_manager.bundled_configs_dir
+        if not src_root:
+            return None
+        template_path = Path(src_root) / f"{filename}.example"
+        if not template_path.exists():
+            return None
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError) as e:
+            logger.warning(f"读取模板 {template_path.name} 失败: {e}")
+            return None
+        node = data
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return None
+            node = node[part]
+        return node
+
+    @staticmethod
+    def _normalize_items(items) -> list[dict]:
+        """把 ["a.b"] 和 [{"key": "a.b", "value": 1}] 两种写法统一成 dict 列表。"""
+        normalized = []
+        for item in items or []:
+            if isinstance(item, str):
+                normalized.append({"key": item})
+            elif isinstance(item, dict) and item.get("key"):
+                normalized.append(item)
+        return normalized
+
+    def _has_nested_key(self, config: dict, key: str) -> bool:
+        """判断嵌套键是否存在（区别于「值为 None」）。"""
+        target = config
+        for part in key.split("."):
+            if not isinstance(target, dict) or part not in target:
+                return False
+            target = target[part]
+        return True
+
+    def _set_nested_value(self, config: dict, key: str, value):
+        """设置嵌套配置值，支持点路径。"""
+        parts = key.split(".")
+        target = config
+        for part in parts[:-1]:
+            if part not in target or not isinstance(target[part], dict):
+                target[part] = {}
+            target = target[part]
+        target[parts[-1]] = value
+
+    def _delete_nested_key(self, config: dict, key: str):
+        """删除嵌套配置项，不存在时静默返回。"""
+        parts = key.split(".")
+        target = config
+        for part in parts[:-1]:
+            if not isinstance(target, dict) or part not in target:
+                return
+            target = target[part]
+        if isinstance(target, dict):
+            target.pop(parts[-1], None)
+
+    def reload_all_configs(self):
+        """清空配置缓存，下次读取时重新从磁盘加载。"""
+        path_manager.reload_config()
+
+    # ------------------------------------------------------------------ 安装
+
+    def get_install_command(self, package_path: str) -> list[str]:
+        """获取安装命令。"""
+        if self.get_platform() == "ubuntu":
+            # -n：非交互，依赖 sudoers 免密白名单；没配好就直接失败而不是卡住等密码
+            return ["sudo", "-n", "/usr/bin/dpkg", "-i", package_path]
+        return [package_path, "/S"]
+
+    def install(self, package_path: str) -> dict:
+        """脱离当前进程启动安装程序，接口立刻返回，前端随后关闭应用。
+
+        两个平台的时序约束相反，不能共用一套逻辑：
+
+        - Windows：exe 文件被运行中的进程锁定，必须等应用退出后再装
+          （detached 子进程先 timeout 再跑安装器）。
+        - Ubuntu：sudo 免密规则是应用启动时写入、**退出时由 main.cleanup()
+          删除**的（见 sudoers_manager），所以 sudo 必须在应用还活着的时候
+          立刻执行——sudo 在 exec 时校验规则，之后 dpkg 作为 root 进程继续跑，
+          应用退不退出都无所谓。dpkg 替换正在运行的程序文件在 Linux 上是
+          安全的（运行中的进程持有旧 inode）。
+        """
+        package = Path(package_path)
+        if not package.exists():
+            raise FileNotFoundError(f"安装包不存在: {package}")
+
+        log_path = path_manager.get_log_path("update_install.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.get_platform() == "windows":
+            command = f'timeout /t 5 /nobreak >nul & "{package}" /S'
+            args = ["cmd", "/c", command]
+            kwargs = {
+                "creationflags": (
+                    subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                ),
+            }
+            delay_seconds = 5
+        else:
+            # sudoers 免密规则只在应用运行期间存在，装之前先确认它真的在
+            if not sudoers_manager.is_configured():
+                raise RuntimeError(
+                    f"sudo 免密未配置，无法自动安装；请手动执行: sudo dpkg -i {package}"
+                )
+            command = f'sudo -n /usr/bin/dpkg -i "{package}"'
+            args = ["/bin/bash", "-c", command]
+            kwargs = {"start_new_session": True}
+            delay_seconds = 0
+
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"\n=== {datetime.now().isoformat()} 安装 {package.name} ===\n")
+            log_file.flush()
+            subprocess.Popen(
+                args,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                **kwargs,
+            )
+
+        logger.info(f"已启动安装程序: {package.name}，日志: {log_path}")
+        return {"success": True, "log_path": str(log_path), "delay_seconds": delay_seconds}
+
+
+# 全局服务实例
+update_service = UpdateService()

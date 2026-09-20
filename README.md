@@ -14,6 +14,7 @@
 - 内置全局亮色/暗色主题切换
 - 可选 sudo 免密配置（`--sudoers`）
 - 可选内置终端（`--terminal`）
+- 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
@@ -53,6 +54,9 @@ xb init demo --terminal
 
 # 同时启用终端和 sudo 免密配置
 xb init demo --terminal --sudoers
+
+# 启用应用内自动更新（自动附带 --sudoers 免密，输入 sudo 密码即可）
+xb init demo --update
 
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
@@ -98,7 +102,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.n
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--terminal] [--icon PATH]` | 初始化项目 |
+| `xb init <name> [--sudoers] [--terminal] [--update] [--icon PATH]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -116,6 +120,39 @@ xb init demo --icon ./my-icon.png
 # ./app-icon.png, ./icon.png, ./<package>.png,
 # ./assets/app-icon.png, ./assets/icon.png, ./resources/icon.png
 ```
+
+## 应用内自动更新（`--update`）
+
+`xb init demo --update` 会让生成的项目内置与 [leo_stm32_board_test](../leo_stm32_board_test) 同源的自动更新能力，
+以飞书云盘的一个文件夹作为发布"货架"：
+
+**生成内容：**
+
+| 位置 | 职责 |
+|------|------|
+| `backend/api/update/` | 更新接口（检查 / 信息 / 下载 / 进度 / 安装） |
+| `backend/services/updater.py` | 版本比较、信息拉取、下载校验、配置备份迁移、安装 |
+| `backend/services/feishu_client.py` | 飞书接口封装（文件夹列举、并发下载） |
+| `backend/managers/secret_obfuscator.py` | 敏感值混淆（`obf1:`，防围观级别） |
+| `backend/app_version.py` | 后端版本号（version_manager 提交时自动同步） |
+| `frontend/src/components/UpdateChecker.vue` | 版本号徽章 + 更新弹窗 + 进度条 |
+| `frontend/src/composables/useUpdate.js` | 定时检查 / 下载进度轮询 |
+| `scripts/feishu_upload.py` | 发版端：安装包与版本信息上传飞书 |
+| `configs/config_changes.json` | 配置迁移清单（顶层 key 是版本号） |
+| `build.py` | 增加 `--upload-only` 与构建后发布编排 |
+
+**发版流程：** 在 `configs/secrets.yaml` 填 `feishu.app_id` / `app_secret` /
+`update_folder_url` → `./build.py -a` → 确认上传。构建时敏感键自动混淆进
+`secrets.yaml.example` 随包分发，构建结束 example 恢复为留空模板。
+
+**客户端：** 启动时 / 每小时 / 点版本号徽章时检查更新；发现新版本后下载
+（4 线程分块 + SHA256 校验 + `.part` 防半截包）→ 备份配置 → 按
+`config_changes.json` 迁移 → Ubuntu 趁应用存活时免密 `sudo dpkg -i`
+（`--update` 默认附带 `--sudoers` 免密），Windows 等退出后静默安装。
+
+**飞书侧准备：** 开放平台建自建应用 → 开通 `drive:drive` 权限并发布 →
+建云盘文件夹，完整链接填入 `update_folder_url`。开发模式（源码运行）不支持
+应用内更新，检查接口返回 `packaged: false`。
 
 ## 生成的项目结构
 

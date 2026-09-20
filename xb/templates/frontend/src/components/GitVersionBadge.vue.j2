@@ -1,108 +1,77 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
+[% if enable_update %]
+import UpdatePanel from './version/UpdatePanel.vue'
+import CommitHistoryPanel from './version/CommitHistoryPanel.vue'
+[% endif %]
 
 const version = ref('v' + (__APP_VERSION__ || '0.0.0'))
 const commits = ref(__GIT_COMMITS__ || [])
 const showModal = ref(false)
-
-const parseCommitMessage = (message) => {
-  if (!message) return []
-  
-  const lines = message.split('\n')
-  const parsed = []
-  let isFirstLine = true
-  
-  for (const line of lines) {
-    if (!line.trim()) continue
-    
-    if (isFirstLine) {
-      parsed.push({ level: -1, text: line.trim() })
-      isFirstLine = false
-      continue
-    }
-    
-    const leadingSpaces = line.match(/^( *)/)[0].length
-    const level = Math.floor(leadingSpaces / 2)
-    const text = line.trim().replace(/^[-•○▪]\s*/, '')
-    
-    if (text) {
-      parsed.push({ level, text })
-    }
-  }
-  
-  return parsed
-}
-
-const processedCommits = computed(() => {
-  return commits.value.map(commit => ({
-    ...commit,
-    parsedMessage: parseCommitMessage(commit.message)
-  }))
-})
+[% if enable_update %]
+const updatePanelRef = ref(null)
+[% endif %]
 </script>
 
 <template>
-  <div class="git-version-wrapper">
-    <span 
-      class="git-version-badge" 
-      @click="showModal = commits.length > 0 && true"
-      :title="commits.length > 0 ? '点击查看提交记录' : '版本号'"
-    >
-      {{ version }}
-    </span>
+  <span
+    class="version-badge"
+[% if enable_update %]
+    :title="updatePanelRef?.hasUpdate ? '发现新版本，点击查看' : '点击查看更新与提交记录'"
+[% else %]
+    title="点击查看提交记录"
+[% endif %]
+    @click="showModal = true"
+  >
+    <span class="version-text">{{ version }}</span>
+[% if enable_update %]
+    <span v-if="updatePanelRef?.loading" class="loading-dot">...</span>
+    <span v-else-if="updatePanelRef?.hasUpdate" class="update-dot"></span>
+[% endif %]
+  </span>
 
-    <Teleport to="body">
-      <div v-if="showModal" class="git-modal" @click="showModal = false">
-        <div class="git-modal-content" @click.stop>
-          <div class="git-modal-header">
-            <h3>Git 提交记录</h3>
-            <button @click="showModal = false" class="git-close-btn">✕</button>
+[% if enable_update %]
+  <!-- 更新检查逻辑（不可见，仅承载更新弹窗与状态） -->
+  <UpdatePanel ref="updatePanelRef" />
+[% endif %]
+
+  <Teleport to="body">
+    <div v-if="showModal" class="version-modal" @click="showModal = false">
+      <div class="version-modal-content" @click.stop>
+        <div class="version-modal-header">
+          <div class="header-left">
+            <h3>版本 <span class="version-num">{{ version }}</span></h3>
+[% if enable_update %]
+            <button
+              class="check-btn"
+              :disabled="updatePanelRef?.loading"
+              :title="updatePanelRef?.hasUpdate ? `发现新版本 v${updatePanelRef?.latestVersion}` : '检查更新'"
+              @click="updatePanelRef?.handleCheckUpdate()"
+            >
+              {{ updatePanelRef?.loading ? '正在检查...' : '🔄 检查更新' }}
+            </button>
+[% endif %]
           </div>
-          
-          <div class="git-commits-container">
-            <div v-if="commits.length === 0" class="git-empty">
-              暂无提交记录
-            </div>
-            
-            <div v-else class="git-commits">
-              <div v-for="c in processedCommits" :key="c.hash" class="git-commit">
-                <div class="git-commit-header">
-                  <code class="git-hash">{{ c.hash }}</code>
-                  <span class="git-date">{{ c.date }}</span>
-                </div>
-                <div class="git-commit-body">
-                  <div 
-                    v-for="(line, idx) in c.parsedMessage" 
-                    :key="idx"
-                    :class="['git-msg-line', line.level === -1 ? 'level-title' : `level-${line.level}`]"
-                  >
-                    <span v-if="line.level === 0" class="git-bullet">•</span>
-                    <span v-else-if="line.level === 1" class="git-bullet sub">○</span>
-                    <span v-else-if="line.level >= 2" class="git-bullet sub">▪</span>
-                    <span class="git-msg-text">{{ line.text }}</span>
-                  </div>
-                </div>
-                <div class="git-author">{{ c.author }}</div>
-              </div>
-            </div>
-          </div>
+          <button @click="showModal = false" class="close-btn">✕</button>
+        </div>
+
+        <div class="version-modal-body">
+          <CommitHistoryPanel :commits="commits" />
         </div>
       </div>
-    </Teleport>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.git-version-wrapper {
-  display: inline-flex;
-  align-items: center;
-}
-
-.git-version-badge {
+.version-badge {
   height: 34px;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  margin-left: 6px;
   padding: 0 13px;
+  vertical-align: middle;
   border: 1px solid rgba(226, 232, 240, 0.9);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.82);
@@ -115,13 +84,37 @@ const processedCommits = computed(() => {
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 
-.git-version-badge:hover {
+.version-badge:hover {
   background: #fff;
   color: #334155;
   transform: translateY(-1px);
 }
 
-.git-modal {
+.loading-dot {
+  font-size: 0.75rem;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.update-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.2); }
+}
+
+/* 版本弹窗：左块检查更新 / 右块历史提交记录 */
+.version-modal {
   position: fixed;
   inset: 0;
   z-index: 20000;
@@ -134,9 +127,9 @@ const processedCommits = computed(() => {
   isolation: isolate;
 }
 
-.git-modal-content {
-  width: min(760px, calc(100vw - 48px));
-  max-height: min(78vh, 760px);
+.version-modal-content {
+  width: min(860px, calc(100vw - 48px));
+  height: min(70vh, 620px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -147,26 +140,64 @@ const processedCommits = computed(() => {
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
 }
 
-.git-modal-header {
+.version-modal-header {
   height: 56px;
   padding: 0 18px 0 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   flex: 0 0 auto;
   border-bottom: 1px solid #e5eaf2;
   background: #fff;
 }
 
-.git-modal-header h3 {
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.version-modal-header h3 {
   margin: 0;
   color: #111827;
   font-size: 1rem;
   font-weight: 800;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
-.git-close-btn {
+.version-num {
+  color: #2563eb;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 0.9375rem;
+}
+
+.check-btn {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #2563eb;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.check-btn:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.check-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.close-btn {
   width: 32px;
   height: 32px;
   display: grid;
@@ -180,180 +211,80 @@ const processedCommits = computed(() => {
   cursor: pointer;
 }
 
-.git-close-btn:hover { background: #f2f4f8; }
+.close-btn:hover {
+  background: #f2f4f8;
+}
 
-.git-commits-container {
+.version-modal-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding: 14px 20px 20px;
-  background: #fff;
-}
-
-.git-empty {
-  padding: 44px 20px;
-  color: #94a3b8;
-  text-align: center;
-}
-
-.git-commit {
-  padding: 14px 0;
-  border-bottom: 1px solid #eef2f7;
-}
-
-.git-commit:last-child { border-bottom: 0; }
-
-.git-commit-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px 20px 16px;
 }
 
-.git-hash {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  padding: 2px 8px;
-  border-radius: 3px;
-  background: #fef3c7;
-  color: #d97706;
-  font-family: 'Monaco', 'Menlo', monospace;
-  font-size: 0.75rem;
-  line-height: 1.4;
-}
-
-.git-date {
-  color: #9ca3af;
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.git-commit-body { margin-bottom: 8px; }
-
-.git-msg-line {
-  display: flex;
-  align-items: flex-start;
-  margin: 3px 0;
-  color: #374151;
-  font-size: 0.875rem;
-  line-height: 1.8;
-  text-align: left;
-}
-
-.git-msg-line.level-title {
-  margin-top: 0;
-  margin-bottom: 8px;
-  padding-left: 0;
-  color: #1f2937;
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.git-msg-line.level-0 {
-  padding-left: 0;
-  color: #374151;
-}
-
-.git-msg-line.level-1 {
-  padding-left: 24px;
-  color: #4b5563;
-  font-size: 0.8125rem;
-}
-
-.git-msg-line.level-2 {
-  padding-left: 48px;
-  color: #6b7280;
-  font-size: 0.8125rem;
-}
-
-.git-msg-line.level-3 {
-  padding-left: 72px;
-  color: #9ca3af;
-  font-size: 0.8125rem;
-}
-
-.git-bullet {
-  display: inline-block;
-  margin-right: 8px;
-  color: #667eea;
-  flex-shrink: 0;
-  font-size: 0.875rem;
-}
-
-.git-bullet.sub {
-  color: #9ca3af;
-  font-size: 0.75rem;
-}
-
-.git-msg-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.git-author {
-  color: #9ca3af;
-  font-size: 0.75rem;
-  text-align: left;
-}
-
-@media (max-width: 640px) {
-  .git-modal { padding: 14px; }
-  .git-modal-content { width: calc(100vw - 28px); max-height: 86vh; }
-  .git-commit-header { align-items: flex-start; flex-direction: column; }
+@media (max-width: 720px) {
+  .version-modal { padding: 14px; }
+  .version-modal-content {
+    width: calc(100vw - 28px);
+    height: min(86vh, 700px);
+  }
 }
 
 /* === 暗色模式 === */
-:root[data-theme='dark'] .git-version-badge {
+:root[data-theme='dark'] .version-badge {
   background: rgba(30, 35, 50, 0.82);
   border-color: rgba(139, 92, 246, 0.24);
   color: #94a3b8;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
-:root[data-theme='dark'] .git-version-badge:hover {
+
+:root[data-theme='dark'] .version-badge:hover {
   background: rgba(40, 48, 68, 0.9);
   color: #f1f5f9;
 }
 
-:root[data-theme='dark'] .git-modal { background: rgba(0, 0, 0, 0.6); }
+:root[data-theme='dark'] .version-modal {
+  background: rgba(0, 0, 0, 0.6);
+}
 
-:root[data-theme='dark'] .git-modal-content {
+:root[data-theme='dark'] .version-modal-content {
   background: #1a1f2e;
   border-color: rgba(139, 92, 246, 0.2);
   color: #e2e8f0;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 
-:root[data-theme='dark'] .git-modal-header {
+:root[data-theme='dark'] .version-modal-header {
   background: #1a1f2e;
   border-bottom-color: rgba(139, 92, 246, 0.16);
 }
-:root[data-theme='dark'] .git-modal-header h3 { color: #f8fafc; }
 
-:root[data-theme='dark'] .git-close-btn { color: #94a3b8; }
-:root[data-theme='dark'] .git-close-btn:hover { background: rgba(51, 65, 85, 0.6); }
-
-:root[data-theme='dark'] .git-commits-container { background: #1a1f2e; }
-:root[data-theme='dark'] .git-empty { color: #64748b; }
-
-:root[data-theme='dark'] .git-commit { border-bottom-color: rgba(139, 92, 246, 0.12); }
-
-:root[data-theme='dark'] .git-hash {
-  background: rgba(251, 146, 60, 0.15);
-  color: #fb923c;
+:root[data-theme='dark'] .version-modal-header h3 {
+  color: #f8fafc;
 }
 
-:root[data-theme='dark'] .git-date { color: #64748b; }
+:root[data-theme='dark'] .version-num {
+  color: #60a5fa;
+}
 
-:root[data-theme='dark'] .git-msg-line { color: #e2e8f0; }
-:root[data-theme='dark'] .git-msg-line.level-title { color: #f8fafc; }
-:root[data-theme='dark'] .git-msg-line.level-0 { color: #e2e8f0; }
-:root[data-theme='dark'] .git-msg-line.level-1 { color: #cbd5e1; }
-:root[data-theme='dark'] .git-msg-line.level-2 { color: #94a3b8; }
-:root[data-theme='dark'] .git-msg-line.level-3 { color: #64748b; }
+:root[data-theme='dark'] .check-btn {
+  background: rgba(51, 65, 85, 0.5);
+  border-color: rgba(139, 92, 246, 0.24);
+  color: #93c5fd;
+}
 
-:root[data-theme='dark'] .git-bullet { color: #a78bfa; }
-:root[data-theme='dark'] .git-bullet.sub { color: #64748b; }
-:root[data-theme='dark'] .git-author { color: #64748b; }
+:root[data-theme='dark'] .check-btn:hover {
+  background: rgba(51, 65, 85, 0.8);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+:root[data-theme='dark'] .close-btn {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .close-btn:hover {
+  background: rgba(51, 65, 85, 0.6);
+}
 </style>

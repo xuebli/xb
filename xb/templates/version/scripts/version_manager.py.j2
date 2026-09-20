@@ -23,6 +23,10 @@ class VersionManager:
             self.project_root = Path(__file__).parent.parent.parent
         self.electron_pkg_path = self.project_root / "electron" / "package.json"
         self.pyproject_path = self.project_root / "pyproject.toml"
+        self.package_lock_path = self.project_root / "electron" / "package-lock.json"
+[% if enable_update %]
+        self.app_version_path = self.project_root / "backend" / "app_version.py"
+[% endif %]
 
     def parse_version(self, version_str: str) -> Tuple[int, int, int]:
         match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version_str)
@@ -60,6 +64,58 @@ class VersionManager:
 
         print("[OK] [[ package_name ]] version updated")
 
+    def update_package_lock_version(self, new_version: str):
+        """同步 electron/package-lock.json 的版本号（根级 + packages[""]）。
+
+        npm 对 lock 文件与 package.json 的版本不一致会告警/改写，必须一起 bump，
+        否则下次 npm install 又会产生一次脏 diff。所有项目都需要，不限 update。
+        """
+        if not self.package_lock_path.exists():
+            return
+
+        with open(self.package_lock_path, "r", encoding="utf-8") as f:
+            lock = json.load(f)
+
+        changed = False
+        if lock.get("version") != new_version:
+            lock["version"] = new_version
+            changed = True
+        root_pkg = (lock.get("packages") or {}).get("")
+        if isinstance(root_pkg, dict) and root_pkg.get("version") != new_version:
+            root_pkg["version"] = new_version
+            changed = True
+
+        if not changed:
+            return
+
+        with open(self.package_lock_path, "w", encoding="utf-8") as f:
+            json.dump(lock, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+        print("[OK] package-lock version updated")
+[% if enable_update %]
+
+    def update_backend_version(self, new_version: str):
+        """同步 backend/app_version.py —— 打包态后端读不到 package.json。"""
+        if not self.app_version_path.exists():
+            return
+
+        with open(self.app_version_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        new_content = re.sub(
+            r'^APP_VERSION\s*=\s*"[^"]+"',
+            f'APP_VERSION = "{new_version}"',
+            content,
+            flags=re.MULTILINE,
+        )
+
+        with open(self.app_version_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        print("[OK] backend version updated")
+[% endif %]
+
     def update_version(self, bump_type: str) -> str:
         if not self.electron_pkg_path.exists():
             raise FileNotFoundError(
@@ -77,6 +133,10 @@ class VersionManager:
             json.dump(pkg_config, f, ensure_ascii=False, indent=2)
 
         self.update_pyproject_version(new_version)
+        self.update_package_lock_version(new_version)
+[% if enable_update %]
+        self.update_backend_version(new_version)
+[% endif %]
 
         print(f"[OK] Version updated: {current_version} -> {new_version}")
         return new_version

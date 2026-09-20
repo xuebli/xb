@@ -15,6 +15,9 @@
 [% if enable_sudo %]
 - Sudo 免密配置
 [% endif %]
+[% if enable_update %]
+- 应用内自动更新（飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
+[% endif %]
 
 ## 技术栈
 
@@ -40,6 +43,7 @@
 │   └── scripts/
 ├── configs/            # 配置文件
 ├── datas/              # 运行时数据
+├── scripts/            # 辅助脚本
 ├── dev.py              # 开发脚本
 └── build.py            # 打包脚本
 ```
@@ -247,6 +251,9 @@ Windows 卸载时会显示“删除用户数据（配置、日志和脚本）”
 ./build.py -f    # 仅前端 → frontend/dist
 ./build.py -b    # 仅后端 → dist/server（PyInstaller）
 ./build.py -e    # 仅 Electron → electron/dist/*.deb
+[% if enable_update %]
+./build.py --upload-only  # 不构建，直接上传 electron/dist 最新安装包到飞书
+[% endif %]
 ```
 
 ## 版本管理
@@ -258,6 +265,66 @@ Windows 卸载时会显示“删除用户数据（配置、日志和脚本）”
 # 提交代码时自动打开版本管理界面（SSH 会输出 Web 地址）
 git commit -m "feat: add new feature"
 ```
+[% if enable_update %]
+
+版本号 single source of truth 是 `electron/package.json`；提交时 bump 会自动
+同步 `pyproject.toml`、`electron/package-lock.json` 和 `backend/app_version.py`
+（打包态后端读不到 package.json，靠它取当前版本）。
+
+---
+
+## 软件自动更新
+
+应用内置「检查更新 → 下载校验 → 备份配置 → 自动安装」的完整闭环，
+以飞书云盘的一个文件夹作为发布"货架"。
+
+### 发版（开发电脑）
+
+1. 在 `configs/secrets.yaml` 填好 `feishu.app_id` / `app_secret` /
+   `update_folder_url`（飞书开放平台自建应用需开通 `drive:drive` 权限并发布生效）；
+2. `./build.py -a` 构建完成后按提示输入更新说明并确认上传；
+   也可用 `./build.py --upload-only` 只传已有安装包；
+3. 安装包与版本信息文件（`update_ubuntu.json` / `update_windows.json`）
+   上传到飞书文件夹，客户端只认版本信息文件。
+
+构建时会自动把 `secrets.yaml` 内容同步到 `secrets.yaml.example`，
+并把其中的敏感键（secret/password/token）混淆成 `obf1:` 密文随包分发；
+构建结束 example 自动恢复为留空模板，真实凭证只留在本地。
+
+### 客户端（产线电脑）
+
+- 软件启动时 / 每小时 / 点击界面顶部版本号徽章时自动检查更新；
+- 开发模式（源码运行）不支持应用内更新，检查接口会直接返回 `packaged: false`；
+- 发现新版本 → 弹窗展示更新说明与配置变更明细 → 下载（4 线程分块 +
+  SHA256 校验，`.part` 临时文件防半截包）→ 备份配置到
+  `datas/config_backups/` → 按 `configs/config_changes.json` 迁移配置 →
+  Ubuntu 趁应用存活时免密 `sudo dpkg -i`，Windows 等应用退出后静默安装。
+
+### 配置迁移清单（configs/config_changes.json）
+
+顶层 key 是**变更生效前用户所处的最后版本号**（即引入变更的 commit 之前
+`electron/package.json` 里的版本；该版本及更早的用户配置还是旧结构，需要迁移）。
+应用条件：`用户当前版本 <= 块版本 < 要安装的包版本`——块 `"1.0.0"` 的变更随
+1.1.0 发布时，1.0.0 升 1.1.0 会应用，1.1.0 升 1.2.0 不再应用。每个条目支持：
+
+| action | 说明 |
+|--------|------|
+| `merge` | YAML 增量合并：`add_items` 补齐缺失键、`overwrite_items` 覆盖/删除键、`delete_items` 删除键、`keep_items` 保护名单 |
+| `create` | 新建文件（已存在则跳过） |
+| `overwrite` | 整文件覆盖（启动时会自动用包内文件对齐，覆盖前留 `.bak`） |
+
+`add_items`/`overwrite_items` 条目不携带 `value` 时，值从包内
+`<filename>.example` 模板取——secrets 类条目规范写法，真实值不进仓库。
+
+### 飞书侧准备
+
+1. [飞书开放平台](https://open.feishu.cn) 创建企业自建应用，得到
+   `app_id` / `app_secret`；
+2. 开通 **`drive:drive`** 权限并**创建版本发布**（只开通不发布 = 没开通）；
+3. 建一个云盘文件夹，把浏览器地址栏完整链接（形如
+   `https://xxx.feishu.cn/drive/folder/一串字符`）填入
+   `configs/secrets.yaml` 的 `feishu.update_folder_url`。
+[% endif %]
 
 ## 主题切换
 
@@ -289,6 +356,13 @@ self.commands = [
 [% if enable_sudo %]
 | GET | `/api/config/check` | 检查配置 |
 | POST | `/api/config/save` | 保存配置 |
+[% endif %]
+[% if enable_update %]
+| GET | `/api/update/check` | 检查更新（`?force=true` 跳过缓存） |
+| GET | `/api/update/info` | 完整版本信息 |
+| POST | `/api/update/download` | 开始下载安装包 |
+| GET | `/api/update/download/progress` | 下载进度 |
+| POST | `/api/update/install` | 备份配置 → 迁移 → 安装 |
 [% endif %]
 
 ## 常见问题

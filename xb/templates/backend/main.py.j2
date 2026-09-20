@@ -6,11 +6,14 @@ from fastapi.responses import FileResponse
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from managers import get_logger[% if enable_sudo %], sudoers_manager[% endif %], path_manager
+from managers import get_logger[% if enable_sudo or enable_update %], sudoers_manager[% endif %], path_manager
 from api.config import router as config_router
 from api.ports import router as ports_router
 [% if enable_terminal %]
 from api.terminal import router as terminal_router
+[% endif %]
+[% if enable_update %]
+from api.update import router as update_router
 [% endif %]
 
 logger = get_logger(__name__)
@@ -22,7 +25,7 @@ def cleanup():
     if _cleanup_done:
         return
     _cleanup_done = True
-[% if enable_sudo %]
+[% if enable_sudo or enable_update %]
     sudoers_manager.remove()
 [% endif %]
     logger.info("应用关闭")
@@ -53,7 +56,24 @@ async def lifespan(app: FastAPI):
             logger.info(f"已初始化用户脚本: {copied}")
     except Exception as e:
         logger.warning(f"初始化用户脚本失败: {e}")
+[% if enable_update %]
+    try:
+        synced = path_manager.sync_declared_overwrites()
+        if synced:
+            logger.info(f"已按新版本对齐配置文件: {synced}")
+    except Exception as e:
+        logger.warning(f"对齐配置文件失败: {e}")
 
+    # 兜底（仅打包态）：用户 secrets.yaml 万一还有明文敏感键，自动混淆。
+    # 开发态不混淆——发版者本地填的明文保持原样。
+    if path_manager.is_packaged:
+        try:
+            from managers.secret_obfuscator import obfuscate_file_plain_secrets
+
+            obfuscate_file_plain_secrets(path_manager.get_config_path("secrets.yaml"))
+        except Exception as e:
+            logger.warning(f"敏感配置混淆失败: {e}")
+[% endif %]
     logger.info("应用启动完成")
 
     yield
@@ -82,6 +102,9 @@ app.include_router(config_router, prefix="/api")
 app.include_router(ports_router, prefix="/api")
 [% if enable_terminal %]
 app.include_router(terminal_router, prefix="/api")
+[% endif %]
+[% if enable_update %]
+app.include_router(update_router, prefix="/api")
 [% endif %]
 
 

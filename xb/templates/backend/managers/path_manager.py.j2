@@ -5,6 +5,28 @@ import sys
 import yaml
 from pathlib import Path
 
+[% if enable_update %]
+
+def _deep_merge_missing(dst: dict, src: dict, prefix: str = "") -> list:
+    """把 src 中 dst 缺失的键递归补入 dst（已有值一律不覆盖），返回补齐的键路径。
+
+    缺失的子树会递归展开到叶子再记录，日志能看到完整路径（如 test.test）。
+    """
+    added = []
+    for key, value in src.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            added.extend(_deep_merge_missing(dst[key], value, prefix=f"{path}."))
+        elif key not in dst:
+            if isinstance(value, dict):
+                dst[key] = {}
+                added.extend(_deep_merge_missing(dst[key], value, prefix=f"{path}."))
+            else:
+                dst[key] = value
+                added.append(path)
+    return added
+[% endif %]
+
 
 class PathManager:
     def __init__(self, app_name: str = "[[ package_name]]"):
@@ -128,7 +150,17 @@ class PathManager:
             else:
                 return default
 
+[% if enable_update %]
+        # 延迟导入：避免 -m 方式执行 secret_obfuscator 时与包初始化产生双导入警告
+        from .secret_obfuscator import deobfuscate
+
+        # 混淆值（obf1: 前缀）透明解密，业务代码无感知；明文值原样返回
+        if isinstance(config, str):
+            return deobfuscate(config)
         return config
+[% else %]
+        return config
+[% endif %]
 
     def reload_config(self, config_file: str | None = None) -> None:
         if config_file is None:
@@ -149,10 +181,17 @@ class PathManager:
         首次启动时把打包内置的 configs 目录递归拷贝到用户家目录。
 
         - 仅在打包态生效（开发态直接读项目目录的 configs/）
+        - 不存在的文件：整体拷贝（.example 去后缀）
+[% if enable_update %]
+        - 已存在的 yaml 文件：递归补齐新版 example 中「用户新增的键」，
+          已有的值一律不覆盖——新版本新增配置项时，老用户重启即自动获得
+          默认值，无需手动迁移
+[% else %]
         - 已存在的目标文件不覆盖（保留用户改动）
+[% endif %]
         - 文件名以 .example 结尾的，拷贝时去掉该后缀
 
-        返回本次新拷贝的文件相对路径列表。
+        返回本次发生变化的文件相对路径列表。
         """
         if not self.is_packaged:
             return []
@@ -185,6 +224,27 @@ class PathManager:
             dst_path = dst_root / rel.parent / dst_name
 
             if dst_path.exists():
+[% if enable_update %]
+                # 已存在的 yaml：补齐新版 example 中用户缺失的键（已有值不覆盖）
+                if dst_path.suffix.lower() in (".yaml", ".yml"):
+                    try:
+                        src_data = yaml.safe_load(src_path.read_text(encoding="utf-8")) or {}
+                        dst_data = yaml.safe_load(dst_path.read_text(encoding="utf-8")) or {}
+                    except yaml.YAMLError:
+                        continue
+                    if not isinstance(src_data, dict) or not isinstance(dst_data, dict):
+                        continue
+                    added = _deep_merge_missing(dst_data, src_data)
+                    if added:
+                        shutil.copy2(dst_path, dst_path.with_suffix(dst_path.suffix + ".bak"))
+                        dst_path.write_text(
+                            yaml.safe_dump(dst_data, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8",
+                        )
+                        copied.append(
+                            f"[补齐] {dst_path.relative_to(dst_root)}: {', '.join(added)}"
+                        )
+[% endif %]
                 continue
 
             dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +252,59 @@ class PathManager:
             copied.append(str(dst_path.relative_to(dst_root)))
 
         return copied
+[% if enable_update %]
+
+    def sync_declared_overwrites(self) -> list:
+        """按 config_changes.json 声明的 overwrite 条目，用包内配置对齐用户文件。
+
+        适用于「程序自带数据」类文件（如 csv）：内容以随包版本为权威，
+        不参与用户自定义。与用户文件内容不一致时才覆盖（覆盖前留 .bak）。
+        返回实际覆盖的文件名列表。
+        """
+        import json
+
+        changes_path = self.get_config_path("config_changes.json")
+        if not changes_path.exists():
+            return []
+        try:
+            with open(changes_path, "r", encoding="utf-8") as f:
+                changes = json.load(f) or {}
+        except (OSError, ValueError):
+            return []
+
+        declared = set()
+        for block in changes.values():
+            for item in (block or {}).get("files") or []:
+                if item.get("action") == "overwrite" and item.get("filename"):
+                    declared.add(item["filename"])
+
+        src_root = self.bundled_configs_dir
+        if src_root is None or not src_root.exists():
+            return []
+
+        overwritten = []
+        for name in sorted(declared):
+            src_path = src_root / name
+            dst_path = self.get_config_path(name)
+            if not src_path.exists():
+                continue
+            try:
+                # 包内与用户目录为同一位置时（项目目录直接跑二进制）无事可做
+                if src_path.resolve() == dst_path.resolve():
+                    continue
+                src_text = src_path.read_text(encoding="utf-8")
+                dst_text = dst_path.read_text(encoding="utf-8") if dst_path.exists() else None
+            except OSError:
+                continue
+            if src_text == dst_text:
+                continue
+            if dst_path.exists():
+                shutil.copy2(dst_path, dst_path.with_suffix(dst_path.suffix + ".bak"))
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            dst_path.write_text(src_text, encoding="utf-8")
+            overwritten.append(name)
+        return overwritten
+[% endif %]
 
     def init_user_scripts(self) -> list:
         """

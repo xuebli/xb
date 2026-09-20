@@ -363,6 +363,9 @@ class FeishuBitableManager:
 - ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.py` 分发。
 - ❌ 不要在 hook 里硬退出非 0 码 —— 除非确实是用户取消。误退会卡住整个 commit 流程。
 - ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— [% if enable_sudo %]必须注册到 `sudoers_manager.commands`，配置完成后无密执行[% else %]当前项目未启用 sudo；如确需，请重新生成项目时加 `--sudoers`[% endif %]。
+[% if enable_update %]
+- ❌ 不要改了 `configs/` 下配置结构却不动 `configs/config_changes.json` —— 已部署的旧版本升级后不会自动获得新配置键/新默认值，功能静默失效。只要暂存区出现配置文件修改，就必须先询问用户是否补迁移条目（见「AI 协作硬性约定 §H」）。
+[% endif %]
 
 ---
 
@@ -450,6 +453,66 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 5. **页面启动失败或超时**：commit 会中止；修复交互环境后重新执行，不要自作主张 `--no-verify`
 
 **AI 在 OpenCode/Claude Code 等环境里跑 `git commit`**：bash 工具会等 hook 弹窗结束才返回。如果用户没及时点弹窗，可能超时——这种情况下应**告诉用户去操作弹窗**，**不是**用 `--no-verify` 绕过。
+[% if enable_update %]
+
+## H. 配置文件变更必须同步迁移清单（`configs/config_changes.json`）
+
+项目启用了应用内自动更新。`configs/` 下任何**结构或默认值**变更都会影响已部署的旧版本——旧机器升级安装包后配置文件不会被重写，靠 `configs/config_changes.json` 的迁移条目在安装时自动补齐/修改。**AI 每次改配置相关文件都有义务维护这份清单。**
+
+### 触发规则（必须执行）
+
+1. **每次改动配置相关文件后、commit 前**，先检查暂存区与工作区：
+
+   ```bash
+   git status --short -- configs/
+   git diff --cached -- configs/
+   ```
+
+2. **只要检查到 `configs/` 下有文件修改或新增**（yaml/json/csv，含已 `git add` 进暂存区的），**必须向用户确认**：
+
+   > 「检测到配置文件变更（<列出文件与改动摘要>）。是否需要在 `configs/config_changes.json` 里为旧版本用户生成迁移条目？」
+
+   - 用户确认需要 → 按下方格式补条目
+   - 用户确认不需要（如项目还没发过版、纯开发期内部键）→ 说明原因后继续
+   - 用户已明确「配置变更默认直接维护迁移清单」→ 此后不再逐次询问，**直接修改** `config_changes.json` 并在回复中列出所加条目
+
+### 什么变更要写条目
+
+| 变更 | 处理 |
+|---|---|
+| yaml 新增配置键（业务配置） | `merge` + `add_items`；键**不带 value**（值自动取自 `<文件名>.example` 模板），无 example 的业务 yaml 直接带 value 写默认值 |
+| 新增 secrets 键 | 先在 `secrets.yaml.example` 留空占位，再 `merge` + `add_items`（**不带 value**） |
+| 删除 / 改名配置键 | `merge` + `delete_items` 删旧键；改名场景再加 `add_items` 补新键 |
+| 修改默认值 / 取值范围 | `merge` + `overwrite_items`（带 value） |
+| 新增整个配置文件 | `create`（已存在则自动跳过，不覆盖用户文件） |
+| csv 等程序数据文件内容更新 | `overwrite` + 完整 `content`（启动时还会由 `sync_declared_overwrites` 自动对齐，覆盖前留 `.bak`） |
+
+**不需要写条目**：仅注释/格式调整；代码内 `default=` 兜底值与用户已有 yaml 实际值同步变化的纯读逻辑调整。
+
+### 条目格式速查
+
+顶层 key = **变更生效前用户所处的最后版本号**（即本次变更 commit **之前** `electron/package.json` 里的版本；不确定时问用户）。应用条件是 `用户当前版本 <= 块版本 < 要安装的包版本`（见 `backend/services/updater.py` 的 `filter_config_changes`），**不要**写成"引入变更的新版本号"——否则从上一旧版本直升引入版本的更新会被条件二挡掉，迁移失效。例：块 `"1.0.0"` 表示 1.0.0 及更早的用户配置还是旧结构，1.0.0 升 1.1.0 会应用，1.1.0 升 1.2.0 不再应用：
+
+```json
+{
+  "1.0.0": {
+    "summary": "一句话说明（本次变更随 1.1.0 发布，1.0.0 及更早用户需迁移）",
+    "files": [
+      {
+        "filename": "global_config.yaml",
+        "action": "merge",
+        "description": "新增 xxx 配置",
+        "add_items": [{"key": "new_section.new_key"}],
+        "overwrite_items": [{"key": "ports.backend", "value": 9000}],
+        "delete_items": ["legacy.old_key"]
+      }
+    ]
+  }
+}
+```
+
+**禁止**把真实密钥写进迁移条目（该文件进 git）——secrets 键一律不带 value，运行时从 `secrets.yaml.example` 模板取（构建时自动混淆）。
+[% endif %]
 
 ---
 

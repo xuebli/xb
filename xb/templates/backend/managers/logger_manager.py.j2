@@ -30,15 +30,20 @@ class LoggerManager:
             level="INFO",
         )
 
-        logger.add(
-            self.log_file,
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[module]} | {message}",
-            level="DEBUG",
-            rotation="5 MB",
-            retention=10,
-            compression="zip",
-            encoding="utf-8",
-        )
+        try:
+            logger.add(
+                self.log_file,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[module]} | {message}",
+                level="DEBUG",
+                rotation="5 MB",
+                retention=10,
+                compression="zip",
+                encoding="utf-8",
+            )
+        except OSError as e:
+            # 日志文件不可写（如目录属主被 root 占用）时退化为仅控制台输出，
+            # 不能因为日志盘问题阻断整个应用启动。
+            logger.warning(f"日志文件不可写，仅输出到控制台: {self.log_file} ({e})")
 
     def get_logger(self):
         return logger.bind(module=self.name)

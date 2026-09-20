@@ -15,7 +15,21 @@ class SudoersManager:
         self.app_name = app_name
         self.required = sys.platform.startswith("linux")
         self.sudoers_file = f"/etc/sudoers.d/{app_name}_nopasswd"
+[% if enable_update %]
+        # 需要提权的固定系统命令。命令使用绝对路径，供首次配置 sudo 免密时写入
+        # /etc/sudoers.d/<app>_nopasswd；不在业务代码中临时弹 sudo 密码。
+        # dpkg 必须限定成「只装更新目录里的 deb」：裸的 /usr/bin/dpkg 免密
+        # 等同于免密 root（可安装任意带 postinst 脚本的包）。注意 sudoers 通配符
+        # 在命令行参数里可以匹配 /（含 ../），并非严格目录沙箱；这里的约束对象是
+        # 本应用自身的更新流程（updater 固定下载到该目录），残余风险与「用户在
+        # 自己家目录放 deb 自装」同级，可接受。
+        update_deb = path_manager.get_data_path("updates") / "*.deb"
+        self.commands = (
+            [f"/usr/bin/dpkg -i {update_deb}"] if self.required else []
+        )
+[% else %]
         self.commands = []
+[% endif %]
         self._is_setup = False
 
     def verify_password(self, password: str) -> bool:
