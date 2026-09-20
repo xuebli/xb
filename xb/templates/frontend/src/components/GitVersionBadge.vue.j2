@@ -10,6 +10,13 @@ const commits = ref(__GIT_COMMITS__ || [])
 const showModal = ref(false)
 [% if enable_update %]
 const updatePanelRef = ref(null)
+
+// 弹窗内检查更新：发现新版本时先关掉版本弹窗再显示更新弹窗，
+// 避免更新弹窗被版本弹窗挡住；无更新则留在提交记录页
+async function checkUpdateFromModal() {
+  const opened = await updatePanelRef?.handleCheckUpdate()
+  if (opened) showModal.value = false
+}
 [% endif %]
 </script>
 
@@ -46,7 +53,7 @@ const updatePanelRef = ref(null)
               class="check-btn"
               :disabled="updatePanelRef?.loading"
               :title="updatePanelRef?.hasUpdate ? `发现新版本 v${updatePanelRef?.latestVersion}` : '检查更新'"
-              @click="updatePanelRef?.handleCheckUpdate()"
+              @click="checkUpdateFromModal"
             >
               {{ updatePanelRef?.loading ? '正在检查...' : '🔄 检查更新' }}
             </button>

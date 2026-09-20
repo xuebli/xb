@@ -93,21 +93,25 @@ watch(hasUpdate, (newVal, oldVal) => {
 })
 
 // 手动检查更新：强制跳过后端缓存，有更新就开弹窗（不能依赖 watch，
-// 因为 hasUpdate 已经是 true 时值不变，watch 不会触发）
+// 因为 hasUpdate 已经是 true 时值不变，watch 不会触发）。
+// 返回 true 表示更新弹窗已打开，调用方（版本弹窗）据此关闭自己避免遮挡。
 async function handleCheckUpdate() {
-  if (loading.value) return
+  if (loading.value) return false
   const data = await checkUpdate(true)
   if (data && !data.packaged) {
     alert('当前为开发模式（源码运行），更新功能仅在打包安装版中可用')
-    return
+    return false
   }
   if (data && data.has_update) {
     showUpdateDialog.value = true
-  } else if (error.value) {
+    return true
+  }
+  if (error.value) {
     alert(`检查更新失败：${error.value}`)
   } else {
     alert('当前已是最新版本')
   }
+  return false
 }
 
 // 关闭更新提示弹窗（稍后提醒）
@@ -316,7 +320,8 @@ defineExpose({ hasUpdate, loading, latestVersion, handleCheckUpdate })
 .update-modal {
   position: fixed;
   inset: 0;
-  z-index: 20000;
+  /* 高于版本弹窗(20000)：即使两者同时出现，更新弹窗也永远在最上层 */
+  z-index: 20100;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+import sys
 import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -11,6 +12,13 @@ from managers import sudoers_manager
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+# 运行平台标识（windows / macos / linux），前端据此隐藏平台无关的配置项
+_PLATFORM = (
+    "windows" if sys.platform == "win32"
+    else "macos" if sys.platform == "darwin"
+    else "linux"
+)
 
 
 [% if enable_sudo %]
@@ -111,9 +119,12 @@ async def get_settings():
             "config_path": str(config_file),
             "secrets_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
+            "platform": _PLATFORM,
 [% if enable_sudo %]
             "sudo_password_configured": bool(path_manager.get_config_value("sudo_password", config_file="secrets.yaml")),
             "sudo_password_locked": _sudo_password_locked(),
+            # Windows/macOS 上 sudoers_manager.required 为 False，前端隐藏 Sudo 密码卡片
+            "requires_sudo": sudoers_manager.required,
 [% endif %]
             "ports": {
                 "backend": int(ports.get("backend") or 8000),
@@ -174,6 +185,9 @@ async def save_settings(req: AppSettingsRequest):
 @router.get("/config/check")
 async def check_config():
     secrets_file = path_manager.get_config_path("secrets.yaml")
+    # Windows/macOS 无 sudo 概念，前端据此隐藏配置入口、跳过首启弹窗
+    requires_sudo = sudoers_manager.required
+    platform = _PLATFORM
 
     if not secrets_file.exists():
         return {
@@ -182,6 +196,8 @@ async def check_config():
             "message": "密钥配置文件不存在",
             "config_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
+            "requires_sudo": requires_sudo,
+            "platform": platform,
         }
 
     try:
@@ -194,6 +210,8 @@ async def check_config():
                 "message": "密码未设置",
                 "config_path": str(secrets_file),
                 "is_packaged": path_manager.is_packaged,
+                "requires_sudo": requires_sudo,
+                "platform": platform,
             }
 
         if not sudoers_manager.verify_password(password):
@@ -203,6 +221,8 @@ async def check_config():
                 "message": "密码不正确",
                 "config_path": str(secrets_file),
                 "is_packaged": path_manager.is_packaged,
+                "requires_sudo": requires_sudo,
+                "platform": platform,
             }
 
         sudoers_manager.setup()
@@ -212,6 +232,8 @@ async def check_config():
             "message": "配置正常",
             "config_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
+            "requires_sudo": requires_sudo,
+            "platform": platform,
         }
     except HTTPException:
         raise

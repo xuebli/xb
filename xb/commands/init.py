@@ -328,19 +328,25 @@ def init_command(
         sudoers = True
 
     if sudoers:
-        console.print()
-        console.print(
-            Panel.fit(
-                "[bold cyan]Sudo 免密配置[/bold cyan]\n\n"
-                "启用 sudo 免密执行特定命令。\n"
-                "密码将以明文存储在 configs/secrets.yaml 中,\n"
-                "请确保该文件权限设置为 600 (仅所有者可读写)。",
-                border_style="cyan",
+        if sys.platform.startswith("win"):
+            # Windows 没有 sudo 概念：仍生成 sudoers_manager（运行时自动 no-op），
+            # 但不询问、不写入密码
+            console.print("[dim]Windows 无需 sudo 免密，跳过密码输入[/dim]")
+            enable_sudo = True
+        else:
+            console.print()
+            console.print(
+                Panel.fit(
+                    "[bold cyan]Sudo 免密配置[/bold cyan]\n\n"
+                    "启用 sudo 免密执行特定命令。\n"
+                    "密码将以明文存储在 configs/secrets.yaml 中,\n"
+                    "请确保该文件权限设置为 600 (仅所有者可读写)。",
+                    border_style="cyan",
+                )
             )
-        )
 
-        sudo_password = Prompt.ask("[cyan]请输入 sudo 密码[/cyan]", password=True)
-        enable_sudo = True
+            sudo_password = Prompt.ask("[cyan]请输入 sudo 密码[/cyan]", password=True)
+            enable_sudo = True
 
     # 创建项目
     console.print()

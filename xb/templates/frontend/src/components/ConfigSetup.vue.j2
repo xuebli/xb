@@ -1,17 +1,10 @@
 <template>
   <div v-if="showConfig && requiresSudo" class="config-overlay">
     <div class="config-dialog">
-      <aside class="config-sidebar">
-        <div class="dialog-brand">⚒</div>
-        <div class="sidebar-item active">🔐 Sudo 密码</div>
-        <div class="sidebar-item muted">🌐 服务端口</div>
-        <div class="sidebar-item muted">📄 YAML 配置</div>
-      </aside>
-
       <section class="dialog-main">
         <header class="dialog-header">
           <div>
-            <h2>配置中心</h2>
+            <h2>配置系统密码</h2>
             <p>{{ configMessage }}</p>
           </div>
         </header>
@@ -138,39 +131,15 @@ onMounted(() => {
 }
 
 .config-dialog {
-  width: min(860px, 96vw);
-  min-height: 500px;
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  width: min(640px, 96vw);
+  min-height: 380px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
 }
-
-.config-sidebar {
-  padding: 18px 0;
-  background: #f5f7fb;
-  border-right: 1px solid #e5eaf2;
-}
-
-.dialog-brand {
-  margin: 0 16px 14px;
-  font-size: 1.1rem;
-  font-weight: 800;
-}
-
-.sidebar-item {
-  height: 40px;
-  display: flex;
-  align-items: center;
-  padding: 0 18px;
-  color: #111827;
-  font-size: 0.92rem;
-  border-left: 3px solid transparent;
-}
-.sidebar-item.active { background: #eef2f8; border-left-color: #8b5cf6; }
-.sidebar-item.muted { color: #8a94a6; }
 
 .dialog-main { display: flex; flex-direction: column; min-width: 0; }
 .dialog-header {
@@ -253,8 +222,6 @@ onMounted(() => {
 .dialog-footer button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 720px) {
-  .config-dialog { grid-template-columns: 1fr; }
-  .config-sidebar { display: none; }
   .field-row, .meta-list div { grid-template-columns: 1fr; }
 }
 </style>

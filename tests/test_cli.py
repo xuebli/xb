@@ -75,3 +75,14 @@ def test_pick_fastest_from_nrm_output():
 def test_pick_fastest_from_nrm_output_all_failed():
     output = "  npmMirror ---- 1265 ms (Fetch error, if this is your private registry, please ignore)\n"
     assert init_module._pick_fastest_from_nrm_output(output) == ("", None)
+
+
+def test_windows_skips_sudo_password(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_module.sys, "platform", "win32")
+    captured, output = _invoke_init(
+        monkeypatch, tmp_path, ["--sudoers"], "should-not-be-used"
+    )
+
+    assert captured["enable_sudo"] is True
+    assert captured["sudo_password"] == ""
+    assert "跳过密码输入" in output
