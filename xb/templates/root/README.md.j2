@@ -397,14 +397,21 @@ npm install
 
 **npm install 慢或超时**
 
-`frontend/.npmrc` 与 `electron/.npmrc` 已配置华为云镜像。若仍然慢，可换源重试：
+项目的 npm 源由 [nrm](https://github.com/Pana/nrm) 全局管理。`./build.py` 在
+npm install 前会自动 `nrm test` 测速所有内置源并切换到最快的；没有 nrm 时会
+自动 `npm install -g nrm`。手动操作：
 
 ```bash
-cd frontend && npm install --registry=https://registry.npmjs.org/
+nrm ls          # 查看所有内置源（* 为当前源）
+nrm test        # 测速所有源
+nrm use taobao  # 手动切换（示例）
+nrm current     # 查看当前源
 ```
 
-Electron 的二进制镜像由初始化流程、`build.py` 和 `electron/prepare.js`
-通过 `ELECTRON_MIRROR` 环境变量注入，不再向 `.npmrc` 写 npm 不识别的自定义键。
+项目不放 `.npmrc`，npm 源完全由 nrm 全局管理（构建时自动测速切换）。
+
+Electron 的二进制镜像由 `build.py` 和 `electron/prepare.js`
+通过 `ELECTRON_MIRROR` 环境变量注入。
 若安装 Electron npm 包后网络中断，`npm start` / `npm run build` 会在
 `prestart` / `prebuild` 阶段检查 `node_modules/electron/dist/` 和 `path.txt`，
 缺失时自动重新下载。

@@ -4,6 +4,7 @@ xb init 命令实现
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -138,6 +139,67 @@ def remove_existing_project(path: Path) -> None:
         func(filename)
 
     shutil.rmtree(path, onexc=clear_readonly)
+
+
+def _pick_fastest_from_nrm_output(output: str) -> tuple[str, int | None]:
+    """解析 `nrm test` 输出，返回 (最快源名, 毫秒)；无可用源返回 ("", None)。
+
+    输出形如 "  huawei ------- 96 ms"，不可用源带 "(Fetch error ...)" 标记。
+    """
+    best_name, best_ms = "", None
+    for line in output.splitlines():
+        match = re.match(r"^\s*\*?\s*(\S+)\s+-+\s+(\d+)\s+ms\b(.*)$", line)
+        if not match or "Fetch error" in match.group(3):
+            continue
+        elapsed = int(match.group(2))
+        if best_ms is None or elapsed < best_ms:
+            best_name, best_ms = match.group(1), elapsed
+    return best_name, best_ms
+
+
+def nrm_speedtest(console: Console, npm_command: str) -> None:
+    """npm install 前用 nrm 测速所有内置源并自动切换到最快的源。
+
+    - 未安装 nrm 时自动全局安装（npm install -g nrm）
+    - nrm use 修改全局 npm 配置（~/.npmrc），对本机所有项目生效
+    - 任何失败只告警，不阻塞项目创建（沿用当前源继续安装）
+    """
+    nrm_command = "nrm.cmd" if os.name == "nt" and shutil.which("nrm.cmd") else "nrm"
+    try:
+        if not shutil.which(nrm_command):
+            console.print("[dim]未检测到 nrm，自动安装（npm install -g nrm）...[/dim]")
+            subprocess.run(
+                [npm_command, "install", "-g", "nrm"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=True,
+            )
+
+        console.print("[dim]正在测速 npm 镜像源（nrm test）...[/dim]")
+        result = subprocess.run(
+            [nrm_command, "test"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=True,
+        )
+    except Exception as e:
+        console.print(f"[yellow]⚠[/yellow]  nrm 测速不可用（沿用当前 npm 源）: {e}")
+        return
+
+    best_name, best_ms = _pick_fastest_from_nrm_output(result.stdout)
+    if not best_name:
+        console.print("[yellow]⚠[/yellow]  nrm 测速无可用结果（沿用当前 npm 源）")
+        return
+
+    console.print(f"[green]✓[/green] 最快 npm 源: [cyan]{best_name}[/cyan]（{best_ms} ms），切换中...")
+    try:
+        subprocess.run(
+            [nrm_command, "use", best_name], capture_output=True, text=True, check=True
+        )
+    except Exception as e:
+        console.print(f"[yellow]⚠[/yellow]  切换 npm 源失败（沿用当前源）: {e}")
 
 
 class ParamSummaryCommand(ChineseHelpCommand):
@@ -297,10 +359,13 @@ def init_command(
         )
 
         # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
-        # 镜像源由各子目录的 .npmrc 提供；electron 需下载约 200MB 二进制，超时给足 10 分钟
+        # npm 源由 nrm 全局管理；--no-audit/--no-fund 减少安装期网络请求
+        # electron 需下载约 200MB 二进制，超时给足 10 分钟
         if shutil.which("npm"):
             # Windows 上 npm 通常是 npm.cmd，CreateProcess 不能可靠地直接解析裸 npm。
             npm_command = "npm.cmd" if os.name == "nt" and shutil.which("npm.cmd") else "npm"
+            # 安装前测速切换最快 npm 源（nrm 缺失时自动安装；失败不阻塞创建）
+            nrm_speedtest(console, npm_command)
             for sub in ("frontend", "electron"):
                 sub_dir = target_dir / sub
                 if (sub_dir / "package.json").exists():
@@ -317,7 +382,7 @@ def init_command(
                                 ),
                             })
                         result = subprocess.run(
-                            [npm_command, "install"],
+                            [npm_command, "install", "--no-audit", "--no-fund"],
                             cwd=sub_dir,
                             env=environment,
                             capture_output=True,

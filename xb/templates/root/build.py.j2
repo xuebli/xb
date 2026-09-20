@@ -3,6 +3,7 @@
 # 可直接执行：Linux/macOS 用 ./build.py -a，Windows 用 .\build.py -a（依赖 .py 文件关联）。
 import atexit
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,48 @@ def require(path: Path, label: str) -> None:
     """校验构建产物是否生成。"""
     if not path.exists():
         raise SystemExit(f"{label}构建失败，未找到产物: {path}")
+
+
+def nrm_speedtest() -> None:
+    """用 nrm 一键测速所有内置 npm 源并自动切换到最快的源。
+
+    - 未安装 nrm 时自动全局安装（npm install -g nrm）
+    - nrm use 修改的是全局 npm 配置（~/.npmrc），对本机所有项目生效；
+      项目不放置 .npmrc，避免覆盖这里的选择
+    - 测速结果带 Fetch error 的源不可用，跳过；全部失败则沿用当前源
+    """
+    nrm = "nrm.cmd" if sys.platform == "win32" else "nrm"
+    if not shutil.which("nrm"):
+        print("未检测到 nrm，自动安装（npm install -g nrm）...")
+        run([NPM, "install", "-g", "nrm"])
+
+    try:
+        # nrm test 测全部内置源，输出形如 "  huawei ------- 96 ms"，
+        # 不可用源带 "(Fetch error ...)" 标记
+        result = subprocess.run(
+            [nrm, "test"], capture_output=True, text=True, check=True, timeout=180
+        )
+    except Exception as e:
+        print(f"⚠️ nrm 测速失败（沿用当前 npm 源）: {e}")
+        return
+
+    best_name, best_ms = "", None
+    for line in result.stdout.splitlines():
+        match = re.match(r"^\s*\*?\s*(\S+)\s+-+\s+(\d+)\s+ms\b(.*)$", line)
+        if not match or "Fetch error" in match.group(3):
+            continue
+        elapsed = int(match.group(2))
+        if best_ms is None or elapsed < best_ms:
+            best_name, best_ms = match.group(1), elapsed
+
+    if not best_name:
+        print("⚠️ nrm 测速无可用结果（沿用当前 npm 源）")
+        return
+
+    print(f">>> nrm 测速最快: {best_name} ({best_ms} ms)，切换中...")
+    run([nrm, "use", best_name])
+
+
 
 [% if enable_update %]
 # ------------------------------ 发布（飞书云盘货架） ------------------------------
@@ -347,11 +390,15 @@ if "--upload-only" in TARGETS:
     sys.exit(0)
 [% endif %]
 
+# 纯后端构建（-b）不经过 npm，无需测速；其余构建前先切换到最快 npm 源
+if TARGETS & {"-f", "-e", "-a"}:
+    nrm_speedtest()
+
 if "-f" in TARGETS or "-a" in TARGETS:
     # 前端：安装依赖后生成 frontend/dist。
     frontend = ROOT / "frontend"
     clean(frontend / "dist")
-    run([NPM, "install"], frontend)
+    run([NPM, "install", "--no-audit", "--no-fund"], frontend)
     run([NPM, "run", "build"], frontend)
     require(frontend / "dist", "前端")
 if "-b" in TARGETS or "-a" in TARGETS:
@@ -387,7 +434,7 @@ if "-e" in TARGETS or "-a" in TARGETS:
             "https://npmmirror.com/mirrors/electron-builder-binaries/"
         ),
     }
-    run([NPM, "install"], electron, electron_environment)
+    run([NPM, "install", "--no-audit", "--no-fund"], electron, electron_environment)
     run([NPM, "run", "build"], electron, electron_environment)
     packages = list((electron / "dist").glob("*.exe")) + list((electron / "dist").glob("*.deb"))
     if not packages:

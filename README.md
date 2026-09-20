@@ -85,14 +85,18 @@ python .\dev.py stop
 使用 `--terminal` 时，Windows 终端使用 PowerShell + ConPTY，支持上下箭头
 命令历史、复制粘贴、Tab 补全和 Ctrl+C；Ubuntu/Debian 使用 bash + Unix PTY。
 
-Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.npmrc`
-写 npm 不识别的自定义键。若安装过程被网络中断，生成项目的
+Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
+若安装过程被网络中断，生成项目的
 `electron/prepare.js` 会在 `npm start` 或 `npm run build` 前自动检查并补装
 缺失的 Electron 二进制。
 
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
->   - 生成的 `.npmrc` 已配好华为云镜像；electron 约 200MB 二进制也走镜像下载
+>   - 生成的项目用 [nrm](https://github.com/Pana/nrm) 管理 npm 源：`xb init`
+>     安装依赖前与 `build.py` 构建前都会自动 `nrm test` 测速所有内置源并切换
+>     到最快的（未安装 nrm 时自动全局安装）；项目不放 `.npmrc`，npm 源完全由
+>     nrm 全局管理
+>   - electron 约 200MB 二进制走华为云镜像下载
 >   - 若安装失败或超时，会打印提示但不中断项目创建，可稍后手动重试
 > - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
 > - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目
@@ -170,13 +174,11 @@ demo/
 ├── frontend/               # Vue 3 前端
 │   ├── package.json
 │   ├── package-lock.json
-│   ├── .npmrc              # npm 镜像源（华为云）
 │   ├── vite.config.js
 │   └── src/
 ├── electron/               # Electron 主进程
 │   ├── package.json
 │   ├── package-lock.json
-│   ├── .npmrc              # npm + electron 二进制镜像源
 │   ├── main.js
 │   └── resources/          # icon + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）

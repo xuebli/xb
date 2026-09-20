@@ -58,3 +58,20 @@ def test_plain_init_has_no_sudo(monkeypatch, tmp_path):
     assert captured["enable_update"] is False
     assert captured["enable_sudo"] is False
     assert captured["sudo_password"] == ""
+
+
+def test_pick_fastest_from_nrm_output():
+    output = """  npm ---------- 807 ms
+  yarn --------- 795 ms
+  tencent ------ 284 ms
+  cnpm --------- 803 ms
+* taobao ------- 163 ms
+  npmMirror ---- 1265 ms (Fetch error, if this is your private registry, please ignore)
+  huawei ------- 96 ms
+"""
+    assert init_module._pick_fastest_from_nrm_output(output) == ("huawei", 96)
+
+
+def test_pick_fastest_from_nrm_output_all_failed():
+    output = "  npmMirror ---- 1265 ms (Fetch error, if this is your private registry, please ignore)\n"
+    assert init_module._pick_fastest_from_nrm_output(output) == ("", None)
