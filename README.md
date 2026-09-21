@@ -130,6 +130,10 @@ xb init demo --icon ./my-icon.png
 
 ## 应用内自动更新（`--update`）
 
+> 详细原理与 AI 开发者注意事项见模板内
+> **[xb/templates/root/docs/自动更新说明.md](xb/templates/root/docs/自动更新说明.md)**
+> （生成的项目会自带 `docs/自动更新说明.md` 与配图）。
+
 `xb init demo --update` 会让生成的项目内置与 [leo_stm32_board_test](../leo_stm32_board_test) 同源的自动更新能力，
 以飞书云盘的一个文件夹作为发布"货架"：
 

@@ -377,6 +377,11 @@ class TemplateEngine:
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
+        # docs/：自动更新说明 + 配图，仅 --update 项目随模板分发（原样拷贝，不渲染变量）
+        if context["enable_update"]:
+            docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
+            if docs_src.exists():
+                shutil.copytree(docs_src, target_dir / "docs", dirs_exist_ok=True)
 
         (target_dir / "datas" / "logs").mkdir(parents=True, exist_ok=True)
         (target_dir / "datas" / "pids").mkdir(parents=True, exist_ok=True)
