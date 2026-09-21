@@ -395,6 +395,18 @@ Set-Location frontend
 npm install
 ```
 
+**Python 依赖同步慢或失败**
+
+uv 镜像源由 [chsrc](https://github.com/RubyMetric/chsrc) 自动管理：首次依赖同步
+（`dev.py`）与后端构建（`build.py -b/-a`）前会自动 `chsrc set uv first`
+测速并切换到最快源；没有 chsrc 时会自动安装
+（`curl https://chsrc.run/posix | sudo bash`）。手动操作：
+
+```bash
+chsrc set uv first    # 测速并切换最快 uv 源
+chsrc set uv reset    # 恢复默认源
+```
+
 **npm install 慢或超时**
 
 项目的 npm 源由 [nrm](https://github.com/Pana/nrm) 全局管理。`./build.py` 在

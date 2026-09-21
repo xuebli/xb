@@ -97,6 +97,9 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 >     到最快的（未安装 nrm 时自动全局安装）；项目不放 `.npmrc`，npm 源完全由
 >     nrm 全局管理
 >   - electron 约 200MB 二进制走华为云镜像下载
+>   - uv 源同样自动优化：首次依赖同步（dev.py）与后端构建（build.py -b/-a）
+>     前用 [chsrc](https://github.com/RubyMetric/chsrc) 测速切换最快镜像
+>     （`chsrc set uv first`，未安装 chsrc 时自动安装）
 >   - 若安装失败或超时，会打印提示但不中断项目创建，可稍后手动重试
 > - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
 > - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目

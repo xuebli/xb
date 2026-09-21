@@ -68,6 +68,110 @@ def require(path: Path, label: str) -> None:
         raise SystemExit(f"{label}构建失败，未找到产物: {path}")
 
 
+def _sudo_password() -> str:
+    """从 configs/secrets.yaml 读 sudo 密码；支持 obf1: 混淆形态（与后端同算法）。"""
+    import base64
+
+    import yaml
+
+    secrets_file = ROOT / "configs" / "secrets.yaml"
+    if not secrets_file.exists():
+        return ""
+    try:
+        data = yaml.safe_load(secrets_file.read_text(encoding="utf-8")) or {}
+        value = str(data.get("sudo_password") or "")
+    except Exception:
+        return ""
+    if value.startswith("obf1:"):
+        key = b"[[ package_name ]]$SecretObfuscation#2026"
+        try:
+            raw = base64.urlsafe_b64decode(value[len("obf1:"):].encode("ascii"))
+            return bytes(b ^ key[i % len(key)] for i, b in enumerate(raw)).decode("utf-8")
+        except Exception:
+            return ""
+    return value
+
+
+def _save_sudo_password(password: str) -> None:
+    """把 sudo 密码合并写进 configs/secrets.yaml（保留其他键；已 gitignore）。"""
+    import yaml
+
+    secrets_file = ROOT / "configs" / "secrets.yaml"
+    data = {}
+    if secrets_file.exists():
+        try:
+            data = yaml.safe_load(secrets_file.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {}
+    data["sudo_password"] = password
+    secrets_file.parent.mkdir(parents=True, exist_ok=True)
+    secrets_file.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    print("✓ sudo 密码已保存到 configs/secrets.yaml（已 gitignore），后续无需再输")
+
+
+def chsrc_set_uv() -> None:
+    """uv 换最优镜像源：chsrc set uv first（自动测速选最快）。
+
+    - 未安装 chsrc 时自动安装（curl https://chsrc.run/posix | sudo bash）：
+      sudo 密码优先取 configs/secrets.yaml；没有则提示输入一次并自动保存，
+      之后所有 sudo 环节免交互；非交互终端会提示先去补 secrets.yaml
+    - chsrc 写用户级 uv 配置（~/.config/uv/uv.toml），对本机所有项目生效
+    - 失败只告警，不阻塞构建（沿用当前源）
+    """
+    chsrc = "chsrc.exe" if sys.platform == "win32" else "chsrc"
+    if not shutil.which(chsrc):
+        if sys.platform == "win32":
+            print("⚠️ 未检测到 chsrc（https://chsrc.run），跳过 uv 换源")
+            return
+        print("→ 未检测到 chsrc，自动安装（curl https://chsrc.run/posix | sudo bash）...")
+        try:
+            password = _sudo_password()
+            interactive = sys.stdin is not None and sys.stdin.isatty()
+            if not password and interactive:
+                # 提示补上：输入一次自动保存进 secrets.yaml，后续 sudo 环节全部免交互
+                from getpass import getpass
+
+                password = getpass(
+                    "secrets.yaml 未配置 sudo_password，请输入本机 sudo 密码（输入后自动保存）: "
+                ).strip()
+                if password:
+                    _save_sudo_password(password)
+            if password:
+                subprocess.run(
+                    ["sudo", "-S", "-p", "", "-v"],
+                    input=password + "\n",
+                    text=True,
+                    check=True,
+                    timeout=30,
+                )
+            elif interactive:
+                pass  # 用户未保存：交给 sudo 在终端交互询问（仅本次有效）
+            else:
+                print("⚠️ 无法安装 chsrc：secrets.yaml 未配置 sudo_password，请补上后重试")
+                return
+            subprocess.run(
+                ["bash", "-c", "curl https://chsrc.run/posix | sudo bash"],
+                check=True,
+                timeout=180,
+            )
+        except Exception as e:
+            print(f"⚠️ chsrc 安装失败，跳过 uv 换源（检查 secrets.yaml 的 sudo_password）: {e}")
+            return
+    try:
+        print("→ 正在切换 uv 最优镜像源 (chsrc set uv first)...")
+        result = subprocess.run(
+            [chsrc, "set", "uv", "first"], capture_output=True, text=True, timeout=120
+        )
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        if output:
+            print(output)
+    except Exception as e:
+        print(f"⚠️ chsrc 设置 uv 源失败，沿用当前源: {e}")
+
+
 def nrm_speedtest() -> None:
     """用 nrm 一键测速所有内置 npm 源并自动切换到最快的源。
 
@@ -404,6 +508,7 @@ if "-f" in TARGETS or "-a" in TARGETS:
 if "-b" in TARGETS or "-a" in TARGETS:
     # 后端：使用当前平台虚拟环境调用 PyInstaller。
     clean(ROOT / "dist")
+    chsrc_set_uv()
     run(["uv", "sync", "--extra", "dev"])
     run([str(PYTHON), "backend/backend_build.py"])
     require(ROOT / "dist" / ("server.exe" if sys.platform == "win32" else "server"), "后端")
