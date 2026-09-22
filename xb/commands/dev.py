@@ -5,23 +5,11 @@ xb dev 命令实现
 
 import subprocess
 import sys
-from pathlib import Path
 
 import click
 
-from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
-
-
-def is_project_root(path: Path) -> bool:
-    return (path / "pyproject.toml").exists() and (path / "dev.py").exists()
-
-
-def find_project_root() -> Path | None:
-    cwd = Path.cwd()
-    for path in [cwd] + list(cwd.parents):
-        if is_project_root(path):
-            return path
-    return None
+from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
+from ..utils.project import find_project_root
 
 
 @click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
@@ -40,10 +28,14 @@ def dev(action: str):
         xb dev stop
         xb dev status
     """
-    project_root = find_project_root()
+    project_root = find_project_root("dev.py")
     if not project_root:
         click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 dev.py）")
         raise click.Abort()
 
     dev_script = project_root / "dev.py"
-    subprocess.run([sys.executable, str(dev_script), action.lower()], cwd=project_root)
+    result = subprocess.run(
+        [sys.executable, str(dev_script), action.lower()], cwd=project_root
+    )
+    # 透传 dev.py 的退出码，方便脚本化使用时感知失败
+    raise SystemExit(result.returncode)

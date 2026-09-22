@@ -92,6 +92,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
+>   离线环境可加 `--skip-install` 跳过，稍后手动安装
 >   - 生成的项目用 [nrm](https://github.com/Pana/nrm) 管理 npm 源：`xb init`
 >     安装依赖前与 `build.py` 构建前都会自动 `nrm test` 测速所有内置源并切换
 >     到最快的（未安装 nrm 时自动全局安装）；项目不放 `.npmrc`，npm 源完全由
@@ -109,7 +110,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--terminal] [--update] [--icon PATH]` | 初始化项目 |
+| `xb init <name> [--sudoers] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -134,7 +135,7 @@ xb init demo --icon ./my-icon.png
 > **[xb/templates/root/docs/自动更新说明.md](xb/templates/root/docs/自动更新说明.md)**
 > （生成的项目会自带 `docs/自动更新说明.md` 与配图）。
 
-`xb init demo --update` 会让生成的项目内置与 [leo_stm32_board_test](../leo_stm32_board_test) 同源的自动更新能力，
+`xb init demo --update` 会让生成的项目内置自动更新能力，
 以飞书云盘的一个文件夹作为发布"货架"：
 
 **生成内容：**
@@ -172,6 +173,7 @@ demo/
 ├── pyproject.toml          # Python 依赖（uv 管理）
 ├── AGENTS.md               # AI 编码助手协作约定
 ├── README.md               # 项目说明（含三种启动方式详解）
+├── LICENSE                 # MIT 许可证
 ├── .gitignore
 ├── backend/                # FastAPI 后端
 │   ├── main.py             # FastAPI 入口（lifespan / CORS / SPA 兜底）

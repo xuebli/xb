@@ -4,6 +4,7 @@
 
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -47,6 +48,7 @@ class TemplateEngine:
             "enable_update": enable_update,
             "sudo_password": sudo_password,
             "icon_path": icon_path,
+            "current_year": datetime.now().year,
         }
 
         self._create_backend(target_dir, context)
@@ -286,11 +288,19 @@ class TemplateEngine:
 
     @staticmethod
     def _resize_icon(src: Path, dst: Path, size: int = 256):
-        """将任意图片转换为 size x size 的 PNG 图标。"""
+        """将任意图片转换为 size x size 的 PNG 图标。
+
+        非正方形图片居中裁剪后再缩放，避免直接 resize 导致的拉伸变形。
+        """
         from PIL import Image
 
         with Image.open(src) as img:
             img = img.convert("RGBA")
+            width, height = img.size
+            side = min(width, height)
+            left = (width - side) // 2
+            top = (height - side) // 2
+            img = img.crop((left, top, left + side, top + side))
             img = img.resize((size, size), Image.LANCZOS)
             img.save(dst, "PNG")
 
@@ -305,9 +315,14 @@ class TemplateEngine:
             "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
         )
         if context["enable_sudo"] and context["sudo_password"]:
-            self._render_template(
-                "configs/secrets.yaml.j2", configs_dir / "secrets.yaml", context
-            )
+            secrets_path = configs_dir / "secrets.yaml"
+            self._render_template("configs/secrets.yaml.j2", secrets_path, context)
+            # 含明文 sudo 密码，收紧为仅所有者可读写；Windows 上 os.chmod 只影响
+            # 只读位，调用无害（真权限由 NTFS 继承的用户目录 ACL 兜底）。
+            try:
+                secrets_path.chmod(0o600)
+            except OSError:
+                pass
         if context["enable_update"]:
             self._render_template(
                 "configs/config_changes.json.j2",
@@ -373,6 +388,7 @@ class TemplateEngine:
         self._render_template("root/dev.py.j2", target_dir / "dev.py", context, executable=True)
         self._render_template("root/build.py.j2", target_dir / "build.py", context, executable=True)
         self._render_template("root/README.md.j2", target_dir / "README.md", context)
+        self._render_template("root/LICENSE.j2", target_dir / "LICENSE", context)
         self._render_template("root/.gitignore.j2", target_dir / ".gitignore", context)
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)

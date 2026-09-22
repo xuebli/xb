@@ -202,10 +202,6 @@ def nrm_speedtest(console: Console, npm_command: str) -> None:
         console.print(f"[yellow]⚠[/yellow]  切换 npm 源失败（沿用当前源）: {e}")
 
 
-class ParamSummaryCommand(ChineseHelpCommand):
-    pass
-
-
 class XbGroup(click.Group):
     def format_commands(self, ctx, formatter):
         commands = []
@@ -216,16 +212,11 @@ class XbGroup(click.Group):
             commands.append((subcommand, cmd.get_short_help_str()))
 
         if commands:
-            formatter.width - 6 - max(len(cmd[0]) for cmd in commands)
-            rows = []
-            for subcommand, help_text in commands:
-                rows.append((subcommand, help_text))
-
             with formatter.section("Commands"):
-                formatter.write_dl(rows)
+                formatter.write_dl(commands)
 
 
-@click.command(cls=ParamSummaryCommand, context_settings=HELP_CONTEXT)
+@click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
 @click.argument("package")
 @click.option(
     "--sudoers",
@@ -253,12 +244,20 @@ class XbGroup(click.Group):
     default=None,
     help="应用图标 PNG 路径；不传时自动查找 ./app-icon.png、./icon.png、./assets/icon.png 等约定路径",
 )
+@click.option(
+    "--skip-install",
+    "skip_install",
+    is_flag=True,
+    default=False,
+    help="跳过 frontend/electron 的 npm 依赖安装（离线环境或稍后手动 npm install）",
+)
 def init_command(
     package: str,
     sudoers: bool,
     terminal: bool,
     icon: str | None,
     update: bool,
+    skip_install: bool,
 ):
     """
     初始化项目结构
@@ -367,7 +366,12 @@ def init_command(
         # 安装前端和 Electron 依赖（生成 package-lock.json 纳入首次 commit）
         # npm 源由 nrm 全局管理；--no-audit/--no-fund 减少安装期网络请求
         # electron 需下载约 200MB 二进制，超时给足 10 分钟
-        if shutil.which("npm"):
+        if skip_install:
+            console.print(
+                "[dim]已按 --skip-install 跳过依赖安装"
+                "（稍后请手动 cd frontend/electron && npm install）[/dim]"
+            )
+        elif shutil.which("npm"):
             # Windows 上 npm 通常是 npm.cmd，CreateProcess 不能可靠地直接解析裸 npm。
             npm_command = "npm.cmd" if os.name == "nt" and shutil.which("npm.cmd") else "npm"
             # 安装前测速切换最快 npm 源（nrm 缺失时自动安装；失败不阻塞创建）

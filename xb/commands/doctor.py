@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .. import __version__
-from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
+from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
 
 console = Console()
 
@@ -26,6 +26,7 @@ class CheckResult:
     name: str
     ok: bool
     detail: str
+    optional: bool = False  # 缺失时可自动安装/稍后补装，不算阻塞项
 
 
 def _command_version(command: str, args: list[str] | None = None) -> str | None:
@@ -63,6 +64,21 @@ def _collect_checks() -> list[CheckResult]:
         version = _command_version(command)
         checks.append(CheckResult(label, version is not None, version or '未找到'))
 
+    # 源管理工具：缺失时 init / build / dev.py 会自动安装，只作提醒不阻塞
+    for label, command in (
+        ('nrm (npm 源测速)', 'nrm'),
+        ('chsrc (uv 源测速)', 'chsrc'),
+    ):
+        version = _command_version(command)
+        checks.append(
+            CheckResult(
+                label,
+                version is not None,
+                version or '未找到（首次安装依赖/构建时自动安装）',
+                optional=True,
+            )
+        )
+
     for port in (8000, 5173):
         free = _port_is_free(port)
         checks.append(CheckResult(f'端口 {port}', free, '可用' if free else '已被占用'))
@@ -82,10 +98,16 @@ def doctor() -> None:
 
     checks = _collect_checks()
     for item in checks:
-        status = '[green]通过[/green]' if item.ok else '[red]需要处理[/red]'
+        if item.ok:
+            status = '[green]通过[/green]'
+        elif item.optional:
+            status = '[yellow]可自动安装[/yellow]'
+        else:
+            status = '[red]需要处理[/red]'
         table.add_row(item.name, status, item.detail)
 
     console.print(table)
 
-    if not all(item.ok for item in checks):
+    blocking_failed = any(not item.ok and not item.optional for item in checks)
+    if blocking_failed:
         console.print('[yellow]提示:[/yellow] 端口占用可先停止相关服务，或修改生成项目的 configs/global_config.yaml。')
