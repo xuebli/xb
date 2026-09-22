@@ -27,4 +27,16 @@ jobs:
         run: uv run ruff check xb tests
 
       - name: Test (pytest)
-        run: uv run pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -v --tb=line -ra 2>&1 | tee pytest-output.txt
+
+      - name: Expose failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^(FAILED|ERROR)" pytest-output.txt | while IFS= read -r line; do
+            echo "::error::${line:0:250}"
+          done
+          grep -E "^(FAILED|ERROR)" pytest-output.txt || echo "::error::no FAILED lines captured"

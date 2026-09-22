@@ -39,7 +39,7 @@ def test_init_without_update_skips_update_files(render_project):
 
     for rel in UPDATE_FILES:
         assert not (target / rel).exists(), f"不应生成 {rel}"
-    assert "update_router" not in (target / "backend" / "main.py").read_text()
+    assert "update_router" not in (target / "backend" / "main.py").read_text(encoding="utf-8")
 
 
 def test_init_with_update_renders_update_files(render_project):
@@ -49,29 +49,29 @@ def test_init_with_update_renders_update_files(render_project):
         assert (target / rel).exists(), f"缺少 {rel}"
 
     # 配置迁移清单是合法 JSON
-    json.loads((target / "configs" / "config_changes.json").read_text())
+    json.loads((target / "configs" / "config_changes.json").read_text(encoding="utf-8"))
 
     # main.py 注册了更新路由
-    assert "app.include_router(update_router" in (target / "backend" / "main.py").read_text()
+    assert "app.include_router(update_router" in (target / "backend" / "main.py").read_text(encoding="utf-8")
 
     # secret_obfuscator 与 feishu_upload 的混淆密钥保持一致
-    obf = (target / "backend" / "managers" / "secret_obfuscator.py").read_text()
-    upload = (target / "scripts" / "feishu_upload.py").read_text()
+    obf = (target / "backend" / "managers" / "secret_obfuscator.py").read_text(encoding="utf-8")
+    upload = (target / "scripts" / "feishu_upload.py").read_text(encoding="utf-8")
     key_line = next(line for line in obf.splitlines() if line.startswith("_KEY ="))
     key = key_line.split("=", 1)[1].strip()
     assert key in upload
 
     # version_manager 会同步 app_version.py 与 package-lock.json
-    vm = (target / "version" / "scripts" / "version_manager.py").read_text()
+    vm = (target / "version" / "scripts" / "version_manager.py").read_text(encoding="utf-8")
     assert "update_backend_version" in vm
     assert "update_package_lock_version" in vm
 
     # build.py 具备发布编排
-    build = (target / "build.py").read_text()
+    build = (target / "build.py").read_text(encoding="utf-8")
     assert "--upload-only" in build
     assert "_upload_stage" in build
 
     # App.vue 挂载的 GitVersionBadge 集成了更新面板
-    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text()
+    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(encoding="utf-8")
     assert "UpdatePanel" in badge
     assert "CommitHistoryPanel" in badge

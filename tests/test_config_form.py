@@ -1,11 +1,17 @@
-"""配置表单（ConfigForm）交互逻辑测试：不进键盘循环，直接驱动方法。"""
+"""配置表单（ConfigForm）交互逻辑测试：不进键盘循环，直接驱动方法。
+
+表单在 Windows 上会隐藏 sudoers 行，逻辑测试统一以 Linux 形态为准
+（mock os.name），Windows 隐藏行为由 test_sudoers_row_hidden_on_windows 覆盖。
+"""
+
+import unittest.mock as mock
 
 from xb.utils.config_form import ConfigForm, run_config_form
 
 
 def make_form(cli=None):
-    form = ConfigForm("demo", cli)
-    return form
+    with mock.patch("xb.utils.config_form.os.name", "posix"):
+        return ConfigForm("demo", cli)
 
 
 def _cursor_key(form, key):
@@ -97,10 +103,8 @@ def test_collect_invalid_port_falls_back_to_none():
 
 
 def test_sudoers_row_hidden_on_windows():
-    import unittest.mock as mock
-
     with mock.patch("xb.utils.config_form.os.name", "nt"):
-        form = make_form()
+        form = ConfigForm("demo")
     assert not form._has("sudoers")
     result = form.collect()
     assert result["sudoers"] is False

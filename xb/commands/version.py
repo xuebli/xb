@@ -17,7 +17,7 @@ from ..utils.project import find_project_root
 def get_package_name(project_root: Path) -> str:
     """从 pyproject.toml 读取包名"""
     pyproject_path = project_root / "pyproject.toml"
-    content = pyproject_path.read_text()
+    content = pyproject_path.read_text(encoding="utf-8")
     match = re.search(r'\[project\][^\[]*?name\s*=\s*"([^"]+)"', content, re.DOTALL)
     return match.group(1) if match else "unknown"
 
