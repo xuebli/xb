@@ -17,6 +17,7 @@ from rich.prompt import Confirm, Prompt
 
 from .. import __version__
 from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
+from ..utils.config_form import run_config_form
 from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
 from ..utils.version_check import get_latest_if_newer
@@ -297,6 +298,9 @@ def init_command(
         xb init /home/user/projects/myapp
         xb init ../other_dir/demo
     """
+    # 命令入口提示：所有参数都可跳过表单直接用 flag 传入
+    console.print("[dim]提示: 可使用 [cyan]xb init -h[/cyan] 查看各参数的用途[/dim]")
+
     # 检测到 PyPI 有新版 xb 时，先询问是否升级再创建项目，避免用旧模板生成项目
     _prompt_upgrade_before_init()
 
@@ -333,15 +337,28 @@ def init_command(
             raise click.Abort()
         remove_existing_project(target_dir)
 
+    # 交互式配置表单：CLI 传的参数预填，回车即确认；
+    # stdin 非 tty（脚本/CI 管道）时自动跳过，直接沿用 CLI 参数
+    form_result = run_config_form(package_name, {
+        "display_name": display_name,
+        "port": port,
+        "sudoers": sudoers,
+        "terminal": terminal,
+        "update": update,
+        "icon": icon,
+        "skip_install": skip_install,
+    })
+    display_name = form_result["display_name"]
+    port = form_result["port"]
+    sudoers = form_result["sudoers"]
+    terminal = form_result["terminal"]
+    update = form_result["update"]
+    icon = form_result["icon"]
+    skip_install = form_result["skip_install"]
+
     icon_path = resolve_icon_path(icon, package_name)
     if icon_path:
         console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
-
-    if port:
-        console.print(
-            f"[green]→[/green] 端口分配: 后端 [cyan]{port}[/cyan] / "
-            f"前端 [cyan]{port + 1}[/cyan]（写入 configs/global_config.yaml）"
-        )
 
     # sudo 免密配置
     # --update 默认附带 --sudoers：Ubuntu 下应用内安装更新依赖免密 dpkg

@@ -35,12 +35,11 @@ def _invoke_init(monkeypatch, tmp_path, args, password):
 
 
 def test_update_implies_sudoers(monkeypatch, tmp_path):
-    captured, output = _invoke_init(monkeypatch, tmp_path, ["--update"], "pw123")
+    captured, _output = _invoke_init(monkeypatch, tmp_path, ["--update"], "pw123")
 
     assert captured["enable_update"] is True
     assert captured["enable_sudo"] is True
     assert captured["sudo_password"] == "pw123"
-    assert "自动附带 --sudoers" in output
 
 
 def test_sudoers_alone_still_prompts(monkeypatch, tmp_path):
@@ -75,11 +74,9 @@ def test_display_name_defaults_to_none(monkeypatch, tmp_path):
 
 
 def test_port_passed_through(monkeypatch, tmp_path):
-    captured, output = _invoke_init(monkeypatch, tmp_path, ["--port", "9100"], "")
+    captured, _output = _invoke_init(monkeypatch, tmp_path, ["--port", "9100"], "")
 
     assert captured["backend_port"] == 9100
-    assert "9100" in output
-    assert "9101" in output
 
 
 def test_port_defaults_to_none(monkeypatch, tmp_path):
