@@ -7,6 +7,7 @@
 """
 
 import itertools
+import json
 import os
 
 import pytest
@@ -16,11 +17,12 @@ from xb.utils.template_engine import TemplateEngine
 COMBOS = list(itertools.product([False, True], repeat=3))
 
 
-def _render(tmp_path, enable_sudo, enable_terminal, enable_update):
+def _render(tmp_path, enable_sudo, enable_terminal, enable_update, display_name=None):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
         package_name="demo",
+        display_name=display_name,
         enable_sudo=enable_sudo,
         enable_terminal=enable_terminal,
         enable_update=enable_update,
@@ -90,3 +92,40 @@ def test_render_project_main_py_switches(tmp_path):
     assert "terminal_router" in main_full
     assert "update_router" in main_full
     assert "sudoers_manager" in main_full
+
+
+def test_display_name_defaults_to_capitalized_package(tmp_path):
+    target = _render(tmp_path, False, False, False)
+    assert "<title>Demo</title>" in (target / "frontend" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_display_name_with_quotes_and_chinese(tmp_path):
+    """显示名含引号/中文/空格时，各产物文件必须仍然合法。"""
+    display_name = '我的 "Cool" App'
+    target = _render(tmp_path, True, False, True, display_name=display_name)
+
+    # HTML 文案直接使用显示名
+    assert f"<title>{display_name}</title>" in (
+        target / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    # electron/package.json 必须是合法 JSON 且 description 正确
+    pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
+    assert pkg["description"] == display_name
+    # 技术标识不被显示名污染
+    assert pkg["name"] == "demo"
+    assert pkg["build"]["productName"] == "Demo"
+
+    # Python 产物可编译且标题正确（tojson 转义后的字面量）
+    main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    compile(main_py, "main.py", "exec")
+    assert f"title={json.dumps(display_name, ensure_ascii=False)}" in main_py
+
+    # pyproject 的 TOML description 合法（TOML basic string 与 JSON 转义兼容）
+    pyproject = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'description = "我的 \\"Cool\\" App' in pyproject
+
+    # README 标题使用显示名
+    assert f"# {display_name}" in (target / "README.md").read_text(encoding="utf-8")

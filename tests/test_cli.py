@@ -60,6 +60,20 @@ def test_plain_init_has_no_sudo(monkeypatch, tmp_path):
     assert captured["sudo_password"] == ""
 
 
+def test_display_name_passed_through(monkeypatch, tmp_path):
+    captured, _ = _invoke_init(
+        monkeypatch, tmp_path, ["--name", "我的应用"], ""
+    )
+
+    assert captured["display_name"] == "我的应用"
+
+
+def test_display_name_defaults_to_none(monkeypatch, tmp_path):
+    captured, _ = _invoke_init(monkeypatch, tmp_path, [], "")
+
+    assert captured["display_name"] is None
+
+
 def test_pick_fastest_from_nrm_output():
     output = """  npm ---------- 807 ms
   yarn --------- 795 ms

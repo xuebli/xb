@@ -110,7 +110,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--sudoers] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |

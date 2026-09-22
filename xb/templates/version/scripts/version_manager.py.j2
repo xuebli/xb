@@ -158,7 +158,7 @@ class VersionManager:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="[[ package_name_capitalized ]] Version Manager")
+    parser = argparse.ArgumentParser(description=[[ display_name | tojson ]] + " Version Manager")
     parser.add_argument("--project-dir", help="Project root directory")
     parser.add_argument(
         "bump_type", choices=["major", "minor", "patch"], help="Version bump type"

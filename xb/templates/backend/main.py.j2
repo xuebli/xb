@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
     logger.opt(raw=True).info("=" * 80 + "\n")
 
 
-app = FastAPI(title="[[ package_name_capitalized]] Backend", lifespan=lifespan)
+app = FastAPI(title=[[ display_name | tojson ]], lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -110,7 +110,7 @@ app.include_router(update_router, prefix="/api")
 
 @app.get("/api")
 async def root():
-    return {"message": "Hello from [[ package_name_capitalized]] Backend"}
+    return {"message": "Hello from " + [[ display_name | tojson ]] + " Backend"}
 
 
 @app.get("/api/health")

@@ -2,6 +2,7 @@
 模板引擎 - 负责生成项目文件
 """
 
+import json
 import os
 import shutil
 from datetime import datetime
@@ -26,11 +27,15 @@ class TemplateEngine:
             comment_start_string="[#",
             comment_end_string="#]",
         )
+        # 输出带引号的 JSON 字符串字面量，用于 JS/JSON/Python/TOML 字符串上下文，
+        # 保证显示名含引号、反斜杠时产物仍合法；中文保持原样不转 \u。
+        self.env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
 
     def render_project(
         self,
         target_dir: Path,
         package_name: str,
+        display_name: str | None = None,
         enable_sudo: bool = False,
         enable_terminal: bool = False,
         enable_update: bool = False,
@@ -39,10 +44,15 @@ class TemplateEngine:
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
 
+        # 显示名只用于窗口标题、README 等 UI 文案；包名/安装路径/sudoers 文件名
+        # 等标识符一律保持 ASCII 包名，不受显示名影响。
+        safe_display_name = (display_name or "").strip() or package_name.capitalize()
+
         context = {
             "package_name": package_name,
             "package_name_upper": package_name.upper(),
             "package_name_capitalized": package_name.capitalize(),
+            "display_name": safe_display_name,
             "enable_sudo": enable_sudo,
             "enable_terminal": enable_terminal,
             "enable_update": enable_update,

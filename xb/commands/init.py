@@ -219,6 +219,16 @@ class XbGroup(click.Group):
 @click.command(cls=ChineseHelpCommand, context_settings=HELP_CONTEXT)
 @click.argument("package")
 @click.option(
+    "--name",
+    "display_name",
+    default=None,
+    help=(
+        "应用显示名，用于窗口标题、README、应用描述等界面文案；"
+        "支持中文和空格。不传时默认用包名首字母大写。"
+        "包名、安装路径、sudoers 文件名等技术标识不受影响"
+    ),
+)
+@click.option(
     "--sudoers",
     is_flag=True,
     default=False,
@@ -253,6 +263,7 @@ class XbGroup(click.Group):
 )
 def init_command(
     package: str,
+    display_name: str | None,
     sudoers: bool,
     terminal: bool,
     icon: str | None,
@@ -356,6 +367,7 @@ def init_command(
         engine.render_project(
             target_dir=target_dir,
             package_name=package_name,
+            display_name=display_name,
             enable_sudo=enable_sudo,
             enable_terminal=terminal,
             enable_update=update,
