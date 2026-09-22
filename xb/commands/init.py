@@ -229,6 +229,17 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
+    "--port",
+    "port",
+    type=click.IntRange(min=1, max=65535),
+    default=None,
+    help=(
+        "后端端口，写入生成的 configs/global_config.yaml；"
+        "开发态前端端口自动取 +1（避免多个项目同时 dev 时撞 5173）。"
+        "不传时后端 8000 / 前端 5173"
+    ),
+)
+@click.option(
     "--sudoers",
     is_flag=True,
     default=False,
@@ -264,6 +275,7 @@ class XbGroup(click.Group):
 def init_command(
     package: str,
     display_name: str | None,
+    port: int | None,
     sudoers: bool,
     terminal: bool,
     icon: str | None,
@@ -325,6 +337,12 @@ def init_command(
     if icon_path:
         console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
 
+    if port:
+        console.print(
+            f"[green]→[/green] 端口分配: 后端 [cyan]{port}[/cyan] / "
+            f"前端 [cyan]{port + 1}[/cyan]（写入 configs/global_config.yaml）"
+        )
+
     # sudo 免密配置
     # --update 默认附带 --sudoers：Ubuntu 下应用内安装更新依赖免密 dpkg
     enable_sudo = False
@@ -368,6 +386,7 @@ def init_command(
             target_dir=target_dir,
             package_name=package_name,
             display_name=display_name,
+            backend_port=port,
             enable_sudo=enable_sudo,
             enable_terminal=terminal,
             enable_update=update,

@@ -36,6 +36,7 @@ class TemplateEngine:
         target_dir: Path,
         package_name: str,
         display_name: str | None = None,
+        backend_port: int | None = None,
         enable_sudo: bool = False,
         enable_terminal: bool = False,
         enable_update: bool = False,
@@ -48,11 +49,15 @@ class TemplateEngine:
         # 等标识符一律保持 ASCII 包名，不受显示名影响。
         safe_display_name = (display_name or "").strip() or package_name.capitalize()
 
+        # 端口：显式指定后端端口时，前端开发端口取 +1，避免多个生成项目
+        # 同时 dev 时都抢默认 5173（Vite strictPort 会直接启动失败）。
         context = {
             "package_name": package_name,
             "package_name_upper": package_name.upper(),
             "package_name_capitalized": package_name.capitalize(),
             "display_name": safe_display_name,
+            "backend_port": backend_port if backend_port else 8000,
+            "frontend_port": (backend_port + 1) if backend_port else 5173,
             "enable_sudo": enable_sudo,
             "enable_terminal": enable_terminal,
             "enable_update": enable_update,

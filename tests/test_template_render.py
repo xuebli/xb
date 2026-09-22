@@ -17,12 +17,16 @@ from xb.utils.template_engine import TemplateEngine
 COMBOS = list(itertools.product([False, True], repeat=3))
 
 
-def _render(tmp_path, enable_sudo, enable_terminal, enable_update, display_name=None):
+def _render(
+    tmp_path, enable_sudo, enable_terminal, enable_update, display_name=None,
+    backend_port=None,
+):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
         package_name="demo",
         display_name=display_name,
+        backend_port=backend_port,
         enable_sudo=enable_sudo,
         enable_terminal=enable_terminal,
         enable_update=enable_update,
@@ -99,6 +103,21 @@ def test_display_name_defaults_to_capitalized_package(tmp_path):
     assert "<title>Demo</title>" in (target / "frontend" / "index.html").read_text(
         encoding="utf-8"
     )
+
+
+def test_ports_written_to_global_config(tmp_path):
+    """--port 指定后端端口时，前端端口自动 +1；不传时用默认值。"""
+    target = _render(tmp_path, False, False, False, backend_port=9100)
+    config = (target / "configs" / "global_config.yaml").read_text(encoding="utf-8")
+    assert "backend: 9100" in config
+    assert "frontend: 9101" in config
+
+    default = _render(tmp_path / "d", False, False, False)
+    default_config = (default / "configs" / "global_config.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "backend: 8000" in default_config
+    assert "frontend: 5173" in default_config
 
 
 def test_display_name_with_quotes_and_chinese(tmp_path):

@@ -74,6 +74,30 @@ def test_display_name_defaults_to_none(monkeypatch, tmp_path):
     assert captured["display_name"] is None
 
 
+def test_port_passed_through(monkeypatch, tmp_path):
+    captured, output = _invoke_init(monkeypatch, tmp_path, ["--port", "9100"], "")
+
+    assert captured["backend_port"] == 9100
+    assert "9100" in output
+    assert "9101" in output
+
+
+def test_port_defaults_to_none(monkeypatch, tmp_path):
+    captured, _ = _invoke_init(monkeypatch, tmp_path, [], "")
+
+    assert captured["backend_port"] is None
+
+
+def test_port_out_of_range_rejected(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_module, "get_latest_if_newer", lambda _v: None)
+
+    result = CliRunner().invoke(
+        cli.main, ["init", str(tmp_path / "demo"), "--port", "70000"], input="\n"
+    )
+
+    assert result.exit_code != 0
+
+
 def test_pick_fastest_from_nrm_output():
     output = """  npm ---------- 807 ms
   yarn --------- 795 ms
