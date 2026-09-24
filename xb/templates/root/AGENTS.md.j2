@@ -37,7 +37,7 @@
 │   ├── api/            # API 路由层；按业务域拆子目录，不要把所有路由堆在一层
 │   ├── services/       # 业务编排层；每个业务域一个子目录/模块
 │   ├── schemas/        # Pydantic 请求/响应模型；按业务域拆分
-│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_sudo %] / sudoers_manager[% endif %]；不要堆业务代码
+│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_update %] / privileged_manager[% endif %]；不要堆业务代码
 ├── frontend/           # Vue3 + Vite SPA
 │   ├── vite.config.js  # 构建期注入 __APP_VERSION__ + __GIT_COMMITS__
 │   └── src/
@@ -78,8 +78,6 @@
 | 改后端 base URL（前端） | `frontend/src/components/FileManager.vue` | `import.meta.env.VITE_API_BASE` |
 | 改 pre-commit 行为 | `version/hooks/pre-commit.py` | `.git/hooks/pre-commit` 是转发脚本，改完立即生效；新增 hook 跑 `python version/scripts/install_hooks.py` |
 | 加被 bump 的文件 | `version/scripts/version_manager.py` | 仿 `update_pyproject_version` |
-[% if enable_sudo %]| 加 sudo 免密命令 | `backend/managers/sudoers_manager.py` 的 `self.commands = []` | 加完启动应用自动写 `/etc/sudoers.d/` |
-[% endif %]
 ## CODE MAP
 
 | 符号 | 位置 | 角色 |
@@ -92,8 +90,6 @@
 | `PathManager.init_user_data_dirs` | `backend/managers/path_manager.py` | 仅打包态生效，创建用户目录中的 `datas/logs` 与 `datas/reports` |
 | `PathManager.init_user_configs` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 configs 初始化到当前平台用户配置目录，已存在不覆盖 |
 | `PathManager.init_user_scripts` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 scripts 初始化到用户数据根目录的 `scripts/`，已存在不覆盖 |
-[% if enable_sudo %]| `sudoers_manager` | `backend/managers/sudoers_manager.py` 文件底部 | 单例，把 `self.commands` 列表写入 `/etc/sudoers.d/[[ package_name_capitalized]]_nopasswd` |
-[% endif %]
 ## COMMANDS
 
 ```bash
@@ -149,10 +145,19 @@
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
 - **密钥展示安全**：除非用户明确要求显示原文，任何其他密钥、密码、token、access key 等敏感值在前端、日志、接口响应和文档中都必须脱敏或加密显示，禁止明文展示。
-[% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。
-- **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password", config_file="secrets.yaml")`，密码明文存 `configs/secrets.yaml`，文件权限必须 `chmod 600`。
-- **sudo 配置流程**：用户首启（`ConfigSetup.vue`）→ 调 `/api/config/save` 写密码 → `sudoers_manager.setup()` 用密码以 `sudo -S` 安装 sudoers 文件 → 校验通过则永久免密。
-[% endif %]
+- **特权操作走 polkit 白名单执行器**：需要 root 的操作统一通过 `privileged_manager.run("<action>", ...)` 调用（pkexec → root 拥有的 `/usr/local/share/[[ package_name ]]/privileged-helper`；pkexec 判定固定走 `org.freedesktop.policykit.exec`，免密放行由 rules 按 program 白名单实现，由 DEB postinst 部署）。**新增特权操作 = 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 case 中加一个分支**（参数逐一校验、绝对路径、exec 执行），业务代码**禁止**直接 `subprocess.run(["sudo"/"pkexec", ...])` 弹密码，**禁止**把密码写入任何文件。
+- **如何判断一个命令需要特权**：实现功能时如果命令涉及以下任意一条，按"新增特权操作 SOP"处理，**不要先写成普通 subprocess 再等 PermissionError**：
+  - 写入系统目录或系统配置：`/etc`、`/usr`、`/opt`、`/boot`、`/var/lib`、其他用户的家目录；
+  - 包管理与系统服务：`apt`/`apt-get`/`dpkg`/`snap`/`systemctl start|stop|restart|enable`；
+  - 系统状态修改：`useradd`/`usermod`/`groupadd`、`hostnamectl`、`timedatectl`、`mount`/`umount`、`ufw`/`iptables`、`nmcli` 修改系统连接、`modprobe`；
+  - 监听 1024 以下特权端口、调整网络接口、修改内核参数（`sysctl`）。
+  不确定时也走 helper（白名单分支里校验失败会安全拒绝），**永远不要**退回裸 sudo。
+- **新增特权操作 SOP**（严格按顺序）：
+  1. 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 `case` 中加分支：每个参数独立校验（路径用 `realpath` + 目录白名单、取值用正则/枚举限定）、命令用**绝对路径**、以 `exec` 执行、绝不拼接未校验的输入；
+  2. 业务代码调用 `privileged_manager.run("<action>", *args)`，**必须处理 `ok=False` 分支**（`stderr` 里可能带 tar.gz 手动安装场景的部署指引，原样展示给用户）；
+  3. 更新 `electron/resources/polkit/privileged-helper.sh.j2` 头部的"可用 action"注释。
+  helper 的更新随 DEB 重装自动生效（postinst 重新部署），**不需要**额外的配置迁移条目。
+- **禁止的替代方案**（即使功能更"简单"也不允许）：裸 `sudo`/`pkexec 任意命令`（等于把免密 root 开放给任意进程）、把用户加进 sudoers、密码写文件、守护进程化绕过校验。
 ## 配置文件分级（关键约定）
 
 **核心原则**：**含密钥/密码 → `secrets.yaml`；不含密钥 → `global_config.yaml` 或独立 yaml 直接提交真值**。
@@ -172,8 +177,6 @@
 
 ```yaml
 # secrets.yaml（git 排除，含真实凭证）
-[% if enable_sudo %]sudo_password: "REAL_PASSWORD"
-[% endif %]
 mail:
   smtp:
     password: "REAL_MAIL_PASSWORD"
@@ -186,8 +189,6 @@ aliyun:
 `secrets.yaml.example`（**提交 git**，密钥**留空**）：
 
 ```yaml
-[% if enable_sudo %]sudo_password: ""
-[% endif %]
 mail:
   smtp:
     password: ""
@@ -332,13 +333,13 @@ class FeishuBitableManager:
 - ❌ 不要写只适配亮色的样式 —— 项目已启用全局亮/暗主题切换（`data-theme` 属性）。任何硬编码颜色都必须同时写暗色覆盖，或改用 CSS 变量。尤其注意 scoped 组件内要用 `:root[data-theme='dark'] .xxx` 而非全局 `[data-theme='dark'] .xxx`（后者穿透不了 scoped）。
 - ❌ 不要 `from backend.managers import ...` —— pyproject 把 `backend/` 当包根，应 `from managers import ...`。开发态可能能跑，PyInstaller 打包后 hidden-import 不匹配，运行时崩溃。
 - ❌ 不要把所有 API 都塞进 `backend/api/config.py`、`backend/api/main.py` 或单个 `<feature>.py` —— 按业务域拆 `api/<feature>/routes.py`，复杂域继续拆 `validators.py` / `dependencies.py` / 子 routes。
-- ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、sudo、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。
+- ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。
 - ❌ 不要把前端所有页面都塞进 `App.vue` 或 `components/DashboardHome.vue` —— `App.vue` 是壳，业务页面进 `views/`，复杂区域拆 `components/<feature>/`。
 - ❌ 不要在单个 `.vue` 里堆几百上千行，把表单、弹窗、列表、API 请求、格式化函数和状态管理全写一起 —— 拆子组件、`composables/useXxx.js`、`services/xxxApi.js`。
 - ❌ 不要写几千行大文件 —— 一个文件如果同时包含 API、Pydantic schema、业务逻辑、文件读写、第三方接口封装，或一个前端组件同时包含多个页面/弹窗/数据流程，说明职责已经混乱，必须拆到对应目录。
 - ❌ 不要在 `path_manager` 之外直接读平台用户配置目录 —— 开发态配置在 `./configs/`，打包态 Linux/Windows/macOS 路径不同。
 - ❌ 不要在 Electron 主进程里写死 `resources/server` —— 安装包后端统一位于 `process.resourcesPath/server-bin/server[.exe]`，Windows 文件名是 `server.exe`，Linux/macOS 是 `server`。
-- ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
+- ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除，提交会泄露密钥。
 - ❌ 不要把密钥/密码塞进 `global_config.yaml` —— 敏感信息只放 `secrets.yaml`，见上"配置文件分级"决策表。
 - ❌ 不要新增只有 yaml、没有 UI 的配置项 —— 用户必须能在界面里配置；原始 YAML 编辑器只能做高级兜底。
 - ❌ 不要保存配置后还要求用户手动刷新业务状态 —— 除明确标注必须重启的启动期配置外，保存接口必须 reload 对应配置缓存，让下次业务读取立即生效。
@@ -362,7 +363,7 @@ class FeishuBitableManager:
 - ❌ 不要直接编辑 `frontend/dist/` —— 打包产物，被 electron-builder 通过 `extraResources` 拉走。
 - ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.py` 分发。
 - ❌ 不要在 hook 里硬退出非 0 码 —— 除非确实是用户取消。误退会卡住整个 commit 流程。
-- ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— [% if enable_sudo %]必须注册到 `sudoers_manager.commands`，配置完成后无密执行[% else %]当前项目未启用 sudo；如确需，请重新生成项目时加 `--sudoers`[% endif %]。
+- ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— 特权操作走 polkit helper + policy action（见 `electron/resources/polkit/`），全程无密码。
 [% if enable_update %]
 - ❌ 不要改了 `configs/` 下配置结构却不动 `configs/config_changes.json` —— 已部署的旧版本升级后不会自动获得新配置键/新默认值，功能静默失效。只要暂存区出现配置文件修改，就必须先询问用户是否补迁移条目（见「AI 协作硬性约定 §H」）。
 [% endif %]
@@ -394,8 +395,6 @@ class FeishuBitableManager:
 | `frontend/src/components/RefreshButton.vue` | 视需要保留 |
 | `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
 | `frontend/src/components/FileManager.vue` | **保留**（配置中心：应用配置 / 密钥管理 / 原始 YAML 高级编辑） |
-[% if enable_sudo %]| `frontend/src/components/ConfigSetup.vue` | **保留**（sudo 模式下的首启密码配置 UI） |
-[% endif %]
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
 
 ## D. 启动 / 停止 / 状态:用 `dev.py`
@@ -423,7 +422,7 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 
 - ❌ 不要为了"完整性"加一堆用不到的辅助函数 / 抽象层。
 - ❌ 不要把简单的 `if-else` 改成"设计模式"。
-- ❌ 不要在没读 `path_manager`[% if enable_sudo %] / `sudoers_manager`[% endif %] 源码的情况下"猜"它的接口。
+- ❌ 不要在没读 `path_manager` 源码的情况下"猜"它的接口。
 - ❌ 不要写"防御性"代码塞满 `try/except`，让真实错误被吞掉。
 - ✅ 改动前**先读现有代码**，找到模式再写。
 - ✅ 不确定时**问用户**，不要瞎写。

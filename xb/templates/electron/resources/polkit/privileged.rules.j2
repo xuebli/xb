@@ -1,0 +1,22 @@
+// [[ display_name ]] 特权操作授权规则。
+// 由 DEB postinst（root 身份）安装到 /etc/polkit-1/rules.d/60-[[ package_name ]]-privileged.rules，
+// 卸载时由 postrm 清理。
+//
+// 关键机制：pkexec PROGRAM 的授权判定固定使用 action
+// org.freedesktop.policykit.exec（pkexec 无法指定自定义 action-id），
+// 因此免密放行必须写在这个 action 上，并用 program 属性限定
+// 只对特权执行器 privileged-helper 生效，不影响系统里其他 pkexec 使用。
+//
+// 效果：sudo/wheel 管理员组成员在本地活跃会话中通过 pkexec 执行
+// privileged-helper 时直接放行，无需输入密码。返回 YES 后 polkit
+// 不再需要认证代理，无桌面环境的会话同样生效。
+// 操作范围由 root 拥有的 helper 内部白名单限定，此处只做身份放行。
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "/usr/local/share/[[ package_name ]]/privileged-helper" &&
+        subject.local &&
+        subject.active &&
+        (subject.isInGroup("sudo") || subject.isInGroup("wheel"))) {
+        return polkit.Result.YES;
+    }
+});

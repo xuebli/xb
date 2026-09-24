@@ -22,56 +22,20 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
-def _sudo_password() -> str:
-    """从 configs/secrets.yaml 读 sudo 密码；支持 obf1: 混淆形态（与后端同算法）。"""
-    import base64
-
-    import yaml
-
-    secrets_file = ROOT / "configs" / "secrets.yaml"
-    if not secrets_file.exists():
+def _ask_sudo_password() -> str:
+    """终端询问本机 sudo 密码（仅本次使用，不落盘）。"""
+    if sys.stdin is None or not sys.stdin.isatty():
         return ""
-    try:
-        data = yaml.safe_load(secrets_file.read_text(encoding="utf-8")) or {}
-        value = str(data.get("sudo_password") or "")
-    except Exception:
-        return ""
-    if value.startswith("obf1:"):
-        key = b"[[ package_name ]]$SecretObfuscation#2026"
-        try:
-            raw = base64.urlsafe_b64decode(value[len("obf1:"):].encode("ascii"))
-            return bytes(b ^ key[i % len(key)] for i, b in enumerate(raw)).decode("utf-8")
-        except Exception:
-            return ""
-    return value
+    from getpass import getpass
 
-
-def _save_sudo_password(password: str) -> None:
-    """把 sudo 密码合并写进 configs/secrets.yaml（保留其他键；已 gitignore）。"""
-    import yaml
-
-    secrets_file = ROOT / "configs" / "secrets.yaml"
-    data = {}
-    if secrets_file.exists():
-        try:
-            data = yaml.safe_load(secrets_file.read_text(encoding="utf-8")) or {}
-        except Exception:
-            data = {}
-    data["sudo_password"] = password
-    secrets_file.parent.mkdir(parents=True, exist_ok=True)
-    secrets_file.write_text(
-        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    print("✓ sudo 密码已保存到 configs/secrets.yaml（已 gitignore），后续无需再输")
+    return getpass("请输入本机 sudo 密码（仅本次使用，不会保存）: ").strip()
 
 
 def chsrc_set_uv() -> None:
     """uv 换最优镜像源：chsrc set uv first（自动测速选最快）。
 
     - 未安装 chsrc 时自动安装（curl https://chsrc.run/posix | sudo bash）：
-      sudo 密码优先取 configs/secrets.yaml；没有则提示输入一次并自动保存，
-      之后所有 sudo 环节免交互；非交互终端会提示先去补 secrets.yaml
+      sudo 密码在终端询问（仅本次使用，不落盘）；非交互终端跳过换源
     - chsrc 写用户级 uv 配置（~/.config/uv/uv.toml），对本机所有项目生效
     - 失败只告警，不阻塞启动（沿用当前源）
     """
@@ -82,37 +46,24 @@ def chsrc_set_uv() -> None:
             return
         print("→ 未检测到 chsrc，自动安装（curl https://chsrc.run/posix | sudo bash）...")
         try:
-            password = _sudo_password()
-            interactive = sys.stdin is not None and sys.stdin.isatty()
-            if not password and interactive:
-                # 提示补上：输入一次自动保存进 secrets.yaml，后续 sudo 环节全部免交互
-                from getpass import getpass
-
-                password = getpass(
-                    "secrets.yaml 未配置 sudo_password，请输入本机 sudo 密码（输入后自动保存）: "
-                ).strip()
-                if password:
-                    _save_sudo_password(password)
-            if password:
-                subprocess.run(
-                    ["sudo", "-S", "-p", "", "-v"],
-                    input=password + "\n",
-                    text=True,
-                    check=True,
-                    timeout=30,
-                )
-            elif interactive:
-                pass  # 用户未保存：交给 sudo 在终端交互询问（仅本次有效）
-            else:
-                print("⚠️ 无法安装 chsrc：secrets.yaml 未配置 sudo_password，请补上后重试")
+            password = _ask_sudo_password()
+            if not password:
+                print("⚠️ 非交互终端无法询问密码，跳过 chsrc 安装（稍后在终端重跑 start）")
                 return
+            subprocess.run(
+                ["sudo", "-S", "-p", "", "-v"],
+                input=password + "\n",
+                text=True,
+                check=True,
+                timeout=30,
+            )
             subprocess.run(
                 ["bash", "-c", "curl https://chsrc.run/posix | sudo bash"],
                 check=True,
                 timeout=180,
             )
         except Exception as e:
-            print(f"⚠️ chsrc 安装失败，跳过 uv 换源（检查 secrets.yaml 的 sudo_password）: {e}")
+            print(f"⚠️ chsrc 安装失败，跳过 uv 换源: {e}")
             return
     try:
         print("→ 正在切换 uv 最优镜像源 (chsrc set uv first)...")
@@ -124,6 +75,104 @@ def chsrc_set_uv() -> None:
             print(output)
     except Exception as e:
         print(f"⚠️ chsrc 设置 uv 源失败，沿用当前源: {e}")
+
+
+# ---------------------------------------------------------------- polkit
+# 开发模式下没有 DEB postinst，特权入口需要手动部署一次；
+# 打包态由安装脚本自动处理，这里只服务开发调试场景。
+
+POLKIT_SRC = ROOT / "electron" / "resources" / "polkit"
+POLKIT_HELPER_DST = Path("/usr/local/share") / "[[ package_name ]]" / "privileged-helper"
+POLKIT_POLICY_DST = (
+    Path("/usr/share/polkit-1/actions") / "com.[[ package_name ]].privileged.policy"
+)
+POLKIT_RULES_DST = (
+    Path("/etc/polkit-1/rules.d") / "60-[[ package_name ]]-privileged.rules"
+)
+
+
+def _run_sudo_script(script: str) -> bool:
+    """以 root 执行一段 shell（sudo -S 从 stdin 读密码），失败返回 False。"""
+    password = _ask_sudo_password()
+    try:
+        if not password:
+            print("⚠️ 未输入 sudo 密码，无法提权（仅交互终端可询问）")
+            return False
+        result = subprocess.run(
+            ["sudo", "-S", "-p", "", "bash", "-c", script],
+            input=password + "\n",
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print((result.stderr or result.stdout).strip() or "执行失败")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ 执行失败: {e}")
+        return False
+
+
+def polkit_install_script() -> str:
+    """生成部署三件套的 root shell 脚本（文件拷贝而非符号链接——
+    root 拥有的链接指向用户可写的项目文件等于提权后门）。"""
+    return "\n".join(
+        [
+            "install -d -m755 /usr/share/polkit-1/actions /etc/polkit-1/rules.d",
+            f"install -d -m755 '/usr/local/share/[[ package_name ]]'",
+            f"install -m755 '{POLKIT_SRC}/privileged-helper.sh' '{POLKIT_HELPER_DST}'",
+            f"install -m644 '{POLKIT_SRC}/privileged.policy' '{POLKIT_POLICY_DST}'",
+            f"install -m644 '{POLKIT_SRC}/privileged.rules' '{POLKIT_RULES_DST}'",
+        ]
+    )
+
+
+def polkit_manage(sub: str) -> None:
+    """部署/卸载/查看 polkit 特权入口（开发调试用）。
+
+    注意：部署的是文件拷贝而非符号链接——root 拥有的链接指向用户可写的
+    项目文件等于提权后门。修改 helper 分支后需重新执行 install。
+    """
+    if os.name == "nt":
+        print("Windows 无 polkit，无需部署")
+        return
+    if not POLKIT_SRC.is_dir():
+        print(f"项目未生成 polkit 资源（未启用 --update）：{POLKIT_SRC} 不存在")
+        raise SystemExit(1)
+
+    if sub == "status":
+        for label, path in (
+            ("helper", POLKIT_HELPER_DST),
+            ("policy", POLKIT_POLICY_DST),
+            ("rules", POLKIT_RULES_DST),
+        ):
+            try:
+                deployed = path.exists()
+            except OSError:
+                # /etc/polkit-1/rules.d 等目录普通用户不可入，不可读视为未部署
+                deployed = False
+            state = "✓ 已部署" if deployed else "✘ 未部署"
+            print(f"{label:<8} {state}  {path}")
+        return
+
+    if sub == "install":
+        if _run_sudo_script(polkit_install_script()):
+            print("✓ polkit 特权入口已部署（管理员组成员免密生效）")
+            print(f"  修改 helper 分支后请重新执行本命令同步（{POLKIT_HELPER_DST}）")
+        else:
+            raise SystemExit(1)
+    elif sub == "remove":
+        script = "\n".join(
+            f"rm -f '{p}'" for p in (POLKIT_HELPER_DST, POLKIT_POLICY_DST, POLKIT_RULES_DST)
+        )
+        if _run_sudo_script(script):
+            print("✓ polkit 特权入口已卸载")
+        else:
+            raise SystemExit(1)
+    else:
+        print("用法: python dev.py polkit install|remove|status")
+        raise SystemExit(2)
 
 
 def stop_service(name: str) -> None:
@@ -284,11 +333,14 @@ def configured_port(name: str, default: int) -> int:
 
 PID_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-# start/stop/restart/status 与原开发脚本保持一致。
+# start/stop/restart/status/polkit 与原开发脚本保持一致。
 action = sys.argv[1].lower() if len(sys.argv) > 1 else "start"
+if action == "polkit":
+    polkit_manage(sys.argv[2].lower() if len(sys.argv) > 2 else "status")
+    raise SystemExit(0)
 if action not in {"start", "stop", "restart", "status"}:
     usage = ".\\dev.py" if os.name == "nt" else "./dev.py"
-    print(f"用法: {usage} {{start|stop|restart|status}}")
+    print(f"用法: {usage} {{start|stop|restart|status}} 或 {usage} polkit {{install|remove|status}}")
     raise SystemExit(2)
 backend_port = configured_port("backend", 8000)
 frontend_port = configured_port("frontend", 5173)
@@ -332,6 +384,26 @@ if action in {"start", "restart"}:
             )
     start_service("backend", [str(service_python), "backend/main.py"])
     print(f"✓ 后端已启动（PID 文件: {PID_DIR / 'backend.pid'}，端口: {backend_port}）")
+[% if enable_update %]
+    if os.name != "nt" and POLKIT_SRC.is_dir():
+        # 开发模式没有 DEB postinst，start 时自动部署特权入口；
+        # 项目内 helper 比 部署副本新（改过分支）或尚未部署时自动同步。
+        # 密码在终端询问（仅本次使用，不落盘）；非交互终端跳过不阻塞。
+        try:
+            polkit_stale = (
+                not POLKIT_HELPER_DST.exists()
+                or (POLKIT_SRC / "privileged-helper.sh").stat().st_mtime
+                > POLKIT_HELPER_DST.stat().st_mtime
+            )
+        except OSError:
+            polkit_stale = True
+        if polkit_stale:
+            if _run_sudo_script(polkit_install_script()):
+                print("✓ polkit 特权入口已自动部署/同步（管理员组免密生效）")
+            else:
+                print("ℹ polkit 特权入口未部署，应用内更新/特权功能不可用；"
+                      "可稍后执行 python dev.py polkit install 重试")
+[% endif %]
     if not wait_for_port(backend_port):
         stop_service("backend")
         raise SystemExit("后端启动失败，请查看 datas/logs/backend.log")

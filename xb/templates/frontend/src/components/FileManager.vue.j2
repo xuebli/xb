@@ -49,37 +49,12 @@
               <h3>🔐 密钥管理</h3>
               <p>敏感信息存储在 secrets.yaml，不会提交到 git。</p>
             </div>
-            <button class="save-top" @click="saveSecrets" :disabled="secretsSaving">
-              {{ secretsSaving ? '保存中...' : '保存密钥' }}
-            </button>
           </div>
 
           <div class="settings-content">
-            [% if enable_sudo %]
-            <section v-if="requiresSudo" class="settings-section">
-              <h4>🔑 Sudo 密码</h4>
-              <p class="section-hint">留空表示不修改当前密码；填写后会立即更新 sudo 免密配置。</p>
-              <label class="field-row">
-                <span>密码</span>
-                <input
-                  v-model="secretsForm.sudo_password"
-                  type="password"
-                  :disabled="sudoPasswordLocked"
-                  placeholder="不修改请留空"
-                  autocomplete="current-password"
-                />
-              </label>
-            </section>
-            [% endif %]
-
-            <p v-if="sudoPasswordLocked" class="section-hint">Sudo 密码已验证正确，当前已锁定，不允许修改。</p>
-            <p v-if="requiresSudo && !sudoPasswordLocked" class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
-            <p v-if="!requiresSudo" class="section-hint">当前平台无需配置 Sudo 密码。后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
-
-            <div v-if="secretsMessage" class="settings-message">{{ secretsMessage }}</div>
-            <div v-if="secretsError" class="validation-error">{{ secretsError }}</div>
-            <div v-if="secretsPath" class="path-strip">{{ secretsPath }}</div>
+            <p class="section-hint">后续接入的密钥（邮件、云服务等）可在此统一管理。</p>
           </div>
+          <div v-if="secretsPath" class="path-strip">{{ secretsPath }}</div>
         </section>
       </main>
     </div>
@@ -106,28 +81,12 @@ const settingsForm = ref({
     frontend: 5173
   }
 })
-const secretsForm = ref({
-  [% if enable_sudo %]
-  sudo_password: '',
-  [% endif %]
-})
-const secretsSaving = ref(false)
-[% if enable_sudo %]
-const requiresSudo = ref(true)
-[% endif %]
-const sudoPasswordLocked = ref(false)
-const secretsMessage = ref('')
-const secretsError = ref('')
 let settingsMessageTimer
-let secretsMessageTimer
 
-const showSavedMessage = (messageRef, type) => {
-  const timer = type === 'settings' ? settingsMessageTimer : secretsMessageTimer
-  clearTimeout(timer)
+const showSavedMessage = (messageRef) => {
+  clearTimeout(settingsMessageTimer)
   messageRef.value = '已保存'
-  const nextTimer = setTimeout(() => { messageRef.value = '' }, 3000)
-  if (type === 'settings') settingsMessageTimer = nextTimer
-  else secretsMessageTimer = nextTimer
+  settingsMessageTimer = setTimeout(() => { messageRef.value = '' }, 3000)
 }
 
 const loadSettings = async () => {
@@ -141,8 +100,6 @@ const loadSettings = async () => {
 
     settingsPath.value = data.config_path || ''
     secretsPath.value = data.secrets_path || ''
-    requiresSudo.value = data.requires_sudo !== false
-    sudoPasswordLocked.value = data.sudo_password_locked === true
     settingsForm.value = {
       ports: {
         backend: data.ports?.backend || 8000,
@@ -172,39 +129,12 @@ const saveSettings = async () => {
     if (!response.ok) throw new Error(data.detail || '保存应用配置失败')
 
     await loadSettings()
-    showSavedMessage(settingsMessage, 'settings')
+    showSavedMessage(settingsMessage)
   } catch (e) {
     settingsError.value = e.message
     console.error('保存应用配置失败:', e)
   } finally {
     settingsSaving.value = false
-  }
-}
-
-const saveSecrets = async () => {
-  secretsSaving.value = true
-  secretsError.value = ''
-  secretsMessage.value = ''
-
-  try {
-    const password = (secretsForm.value.sudo_password || '').trim()
-    if (password) {
-      const response = await fetch(`${API_BASE}/api/config/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sudo_password: password })
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || '保存密钥失败')
-      secretsForm.value.sudo_password = ''
-    }
-
-    showSavedMessage(secretsMessage, 'secrets')
-  } catch (e) {
-    secretsError.value = e.message
-    console.error('保存密钥失败:', e)
-  } finally {
-    secretsSaving.value = false
   }
 }
 
@@ -214,7 +144,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearTimeout(settingsMessageTimer)
-  clearTimeout(secretsMessageTimer)
 })
 </script>
 

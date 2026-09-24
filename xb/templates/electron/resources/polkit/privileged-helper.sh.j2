@@ -1,0 +1,58 @@
+#!/bin/bash
+# [[ display_name ]] 特权操作入口（polkit 白名单执行器）。
+#
+# 安全模型：
+# - 本脚本由 DEB postinst 以 root 身份安装到
+#   /usr/local/share/[[ package_name ]]/privileged-helper，
+#   属主 root:root 0755 —— 普通用户不可修改其内容；
+# - pkexec 的授权判定固定走 org.freedesktop.policykit.exec action
+#   （pkexec 无法指定自定义 action-id），管理员组免密放行由 rules
+#   按 program 白名单（仅本脚本）实现，见 /etc/polkit-1/rules.d/；
+# - 每个操作的参数校验（realpath、目录白名单、格式）全部写死在本文件内，
+#   未列出的操作一律拒绝。
+#
+# 新增特权操作的步骤：
+# 1. 在下方 case 中加一个分支：参数逐一校验（realpath/格式/路径白名单），
+#    命令用绝对路径并以 exec 执行，绝不拼接未校验的输入；
+# 2. 同步在业务代码中通过 privileged_manager.run("<action>", ...) 调用。
+set -euo pipefail
+
+APP="[[ package_name ]]"
+UPDATES_DIR_SUFFIX=".local/share/${APP}/datas/updates"
+
+usage() {
+    echo "用法: privileged-helper <action> [args...]" >&2
+    echo "可用 action: install-update" >&2
+    exit 2
+}
+
+[ $# -ge 1 ] || usage
+ACTION="$1"
+shift
+
+case "$ACTION" in
+    # 应用内更新：只允许安装各用户家目录中应用更新目录里的 .deb
+    install-update)
+        [ $# -eq 1 ] || usage
+        REAL="$(realpath -e -- "$1")" || { echo "文件不存在: $1" >&2; exit 2; }
+        case "$REAL" in
+            "/home/"*"/${UPDATES_DIR_SUFFIX}/"*.deb) ;;
+            *)
+                echo "拒绝安装: $REAL 不在应用更新目录中" >&2
+                exit 3
+                ;;
+        esac
+        exec /usr/bin/dpkg -i -- "$REAL"
+        ;;
+
+    # 示例：新增操作时取消注释并按需修改
+    # set-hostname)
+    #     [ $# -eq 1 ] || usage
+    #     exec /usr/bin/hostnamectl set-hostname -- "$1"
+    #     ;;
+
+    *)
+        echo "未知操作: $ACTION" >&2
+        exit 2
+        ;;
+esac

@@ -10,8 +10,6 @@ UPDATE_FILES = [
     "backend/services/feishu_client.py",
     "backend/api/update/__init__.py",
     "backend/managers/secret_obfuscator.py",
-    "backend/managers/sudoers_manager.py",
-    "backend/app_version.py",
     "scripts/feishu_upload.py",
     "configs/config_changes.json",
     "frontend/src/components/version/UpdatePanel.vue",

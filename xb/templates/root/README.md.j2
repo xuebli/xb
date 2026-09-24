@@ -12,9 +12,6 @@
 [% if enable_terminal %]
 - 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
 [% endif %]
-[% if enable_sudo %]
-- Sudo 免密配置
-[% endif %]
 [% if enable_update %]
 - 应用内自动更新（飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 [% endif %]
@@ -301,7 +298,8 @@ git commit -m "feat: add new feature"
 - 发现新版本 → 弹窗展示更新说明与配置变更明细 → 下载（4 线程分块 +
   SHA256 校验，`.part` 临时文件防半截包）→ 备份配置到
   `datas/config_backups/` → 按 `configs/config_changes.json` 迁移配置 →
-  Ubuntu 趁应用存活时免密 `sudo dpkg -i`，Windows 等应用退出后静默安装。
+  Ubuntu 走 polkit 免密安装（管理员组无感，`pkexec` 调用 root 拥有的
+  privileged-helper 只装应用更新目录中的 deb），Windows 等应用退出后静默安装。
 
 ### 配置迁移清单（configs/config_changes.json）
 
@@ -333,20 +331,29 @@ git commit -m "feat: add new feature"
 
 项目内置全局亮色/暗色主题切换（顶栏 🌙/☀ 按钮），用户偏好保存在 `localStorage`，首次访问跟随系统设置。
 
-[% if enable_sudo %]
-## Sudo 配置
+## 特权操作（polkit 白名单执行器）
 
-密码存储在 `configs/secrets.yaml`（已 gitignore）。
-修改 `backend/managers/sudoers_manager.py` 中的 `commands` 列表来添加需要免密的命令：
+需要 root 的操作不使用 sudo 密码，统一走 polkit：白名单执行器
+`/usr/local/share/[[ package_name ]]/privileged-helper` 由 DEB 安装脚本自动部署；
+pkexec 判定固定走 `org.freedesktop.policykit.exec`，管理员组成员的免密放行由
+rules 按 program 白名单（仅 privileged-helper）实现，全程无密码落盘。
+
+业务代码中执行特权操作：
 
 ```python
-self.commands = [
-    "/usr/bin/apt-get update",
-    "/usr/bin/apt-get install -y some-package"
-]
+from managers import privileged_manager
+
+result = privileged_manager.run("install-update", deb_path)
+if not result["ok"]:
+    ...
 ```
 
-[% endif %]
+新增特权操作：在 `electron/resources/polkit/privileged-helper.sh.j2` 的
+case 中加一个分支（参数逐一校验、绝对路径、exec 执行），业务侧用
+`privileged_manager.run("<action>", ...)` 调用。**禁止**业务代码临时弹
+sudo 密码，**禁止**把密码写入任何文件。
+
+
 ## API 接口
 
 | 方法 | 路径 | 说明 |
@@ -355,10 +362,6 @@ self.commands = [
 | GET | `/api/health` | 健康检查 |
 [% if enable_terminal %]
 | WS | `/api/terminal/ws` | 本地交互式终端 |
-[% endif %]
-[% if enable_sudo %]
-| GET | `/api/config/check` | 检查配置 |
-| POST | `/api/config/save` | 保存配置 |
 [% endif %]
 [% if enable_update %]
 | GET | `/api/update/check` | 检查更新（`?force=true` 跳过缓存） |

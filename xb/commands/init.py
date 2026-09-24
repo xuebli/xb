@@ -13,7 +13,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 
 from .. import __version__
 from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
@@ -31,7 +31,7 @@ def _prompt_upgrade_before_init() -> None:
 
     execvp 而非新起 subprocess：
     - 升级后的 xb 入口才能加载新版依赖；当前进程已经 import 了旧模板代码
-    - 用户原始 sys.argv 直接转交，不丢任何参数（--sudoers 等）
+    - 用户原始 sys.argv 直接转交，不丢任何参数（--terminal 等）
     """
     latest = get_latest_if_newer(__version__)
     if not latest:
@@ -226,7 +226,7 @@ class XbGroup(click.Group):
     help=(
         "应用显示名，用于窗口标题、README、应用描述等界面文案；"
         "支持中文和空格。不传时默认用包名首字母大写。"
-        "包名、安装路径、sudoers 文件名等技术标识不受影响"
+        "包名、安装路径等技术标识不受影响"
     ),
 )
 @click.option(
@@ -241,12 +241,6 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
-    "--sudoers",
-    is_flag=True,
-    default=False,
-    help="启用 sudo 免密配置 (需要输入密码)",
-)
-@click.option(
     "--terminal",
     is_flag=True,
     default=False,
@@ -257,7 +251,11 @@ class XbGroup(click.Group):
     "update",
     is_flag=True,
     default=False,
-    help="启用应用内自动更新（飞书云盘发布 + 版本检查 + 下载安装）；默认附带 --sudoers 免密",
+    help=(
+        "启用应用内自动更新（飞书云盘发布 + 版本检查 + 下载安装）。"
+        "Linux 提权走 polkit：DEB 安装时自动部署授权规则，"
+        "管理员组用户全程无感更新，无密码落盘"
+    ),
 )
 @click.option(
     "--icon",
@@ -277,7 +275,6 @@ def init_command(
     package: str,
     display_name: str | None,
     port: int | None,
-    sudoers: bool,
     terminal: bool,
     icon: str | None,
     update: bool,
@@ -292,7 +289,6 @@ def init_command(
 
     示例:
         xb init demo
-        xb init myapp --sudoers
         xb init myapp --terminal
         xb init myapp --update
         xb init /home/user/projects/myapp
@@ -342,7 +338,6 @@ def init_command(
     form_result = run_config_form(package_name, {
         "display_name": display_name,
         "port": port,
-        "sudoers": sudoers,
         "terminal": terminal,
         "update": update,
         "icon": icon,
@@ -350,7 +345,6 @@ def init_command(
     })
     display_name = form_result["display_name"]
     port = form_result["port"]
-    sudoers = form_result["sudoers"]
     terminal = form_result["terminal"]
     update = form_result["update"]
     icon = form_result["icon"]
@@ -360,38 +354,11 @@ def init_command(
     if icon_path:
         console.print(f"[green]→[/green] 使用应用图标: [cyan]{icon_path}[/cyan]")
 
-    # sudo 免密配置
-    # --update 默认附带 --sudoers：Ubuntu 下应用内安装更新依赖免密 dpkg
-    enable_sudo = False
-    sudo_password = ""
-
-    if update and not sudoers:
+    if update and not sys.platform.startswith("win"):
         console.print(
-            "[cyan]ℹ[/cyan] 已启用 --update，自动附带 --sudoers "
-            "（Ubuntu 应用内安装更新需要 sudo 免密）"
+            "[cyan]ℹ[/cyan] 已启用 --update：Linux 提权走 polkit，"
+            "DEB 安装时自动部署授权规则（管理员组无感更新，无密码落盘）"
         )
-        sudoers = True
-
-    if sudoers:
-        if sys.platform.startswith("win"):
-            # Windows 没有 sudo 概念：仍生成 sudoers_manager（运行时自动 no-op），
-            # 但不询问、不写入密码
-            console.print("[dim]Windows 无需 sudo 免密，跳过密码输入[/dim]")
-            enable_sudo = True
-        else:
-            console.print()
-            console.print(
-                Panel.fit(
-                    "[bold cyan]Sudo 免密配置[/bold cyan]\n\n"
-                    "启用 sudo 免密执行特定命令。\n"
-                    "密码将以明文存储在 configs/secrets.yaml 中,\n"
-                    "请确保该文件权限设置为 600 (仅所有者可读写)。",
-                    border_style="cyan",
-                )
-            )
-
-            sudo_password = Prompt.ask("[cyan]请输入 sudo 密码[/cyan]", password=True)
-            enable_sudo = True
 
     # 创建项目
     console.print()
@@ -404,10 +371,8 @@ def init_command(
             package_name=package_name,
             display_name=display_name,
             backend_port=port,
-            enable_sudo=enable_sudo,
             enable_terminal=terminal,
             enable_update=update,
-            sudo_password=sudo_password,
             icon_path=icon_path,
         )
 

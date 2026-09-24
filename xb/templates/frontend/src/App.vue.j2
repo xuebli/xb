@@ -7,9 +7,6 @@ import TerminalPanel from './components/TerminalPanel.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
-[% if enable_sudo %]
-import ConfigSetup from './components/ConfigSetup.vue'
-[% endif %]
 import FileManager from './components/FileManager.vue'
 
 const currentPage = ref('home')
@@ -49,9 +46,6 @@ const openSettings = () => {
       <span class="link link-d"></span>
       <span class="link link-e"></span>
     </div>
-    [% if enable_sudo %]
-    <ConfigSetup />
-    [% endif %]
 
     <header class="topbar">
       <div class="brand-block">

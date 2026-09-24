@@ -4,7 +4,6 @@
 开关行只有勾选框。↑↓ 移动 · 空格 勾选/取消 · 选中后直接输入 · 回车 提交。
 
 - CLI 显式传入的参数预填进表单（勾上/带值），回车即确认
-- 勾选"应用内更新"自动勾选"sudo 免密"，且 update 勾着时 sudoers 不可取消
 - stdin 非 tty（脚本/CI 管道）时由调用方跳过表单
 - POSIX 用 termios cbreak；Windows 用 msvcrt.getwch（原生宽字符，中文可用）
 """
@@ -30,7 +29,6 @@ class ConfigForm:
         self.lines_drawn = 0
         self.message = ""
 
-        is_win = os.name == "nt"
         rows = [
             {
                 "key": "display_name", "label": "应用显示名", "type": "text",
@@ -47,13 +45,6 @@ class ConfigForm:
                 "placeholder": "",
             },
         ]
-        if not is_win:
-            # Windows 无 sudo 概念，隐藏该行（生成逻辑与 --sudoers 现有行为一致）
-            rows.append({
-                "key": "sudoers", "label": "sudo 免密", "type": "toggle",
-                "checked": bool(cli.get("sudoers")),
-                "hint": "Linux 应用内更新需要",
-            })
         rows.extend([
             {
                 "key": "terminal", "label": "内置终端", "type": "toggle",
@@ -63,7 +54,7 @@ class ConfigForm:
             {
                 "key": "update", "label": "应用内更新", "type": "toggle",
                 "checked": bool(cli.get("update")),
-                "hint": "自动附带 sudo 免密",
+                "hint": "Linux 提权走 polkit，无密码落盘",
             },
             {
                 "key": "icon", "label": "应用图标", "type": "text",
@@ -142,20 +133,10 @@ class ConfigForm:
     # ---------- 勾选与联动 ----------
     def toggle(self) -> None:
         r = self.rows[self.cursor]
-        if r["key"] == "update":
-            r["checked"] = not r["checked"]
-            if r["checked"] and self._has("sudoers"):
-                self._row("sudoers")["checked"] = True
-        elif r["key"] == "sudoers":
-            if r["checked"] and self._has("update") and self._row("update")["checked"]:
-                self.message = "应用内更新已勾选，sudo 免密不可单独取消"
-                return
-            r["checked"] = not r["checked"]
-        else:
-            r["checked"] = not r["checked"]
-            # 文本行勾选且仍是默认值时清空，等待输入
-            if r["type"] == "text" and r["checked"] and r["value"] == r["default"]:
-                r["value"] = ""
+        r["checked"] = not r["checked"]
+        # 文本行勾选且仍是默认值时清空，等待输入
+        if r["type"] == "text" and r["checked"] and r["value"] == r["default"]:
+            r["value"] = ""
 
     def feed_char(self, ch: str) -> None:
         r = self.rows[self.cursor]
@@ -265,14 +246,12 @@ class ConfigForm:
                 self.message = (
                     f"端口 {port_row['value'] or '(空)'} 无效，已回退默认 8000/5173")
 
-        sudoers = self._row("sudoers")["checked"] if self._has("sudoers") else False
         update = self._row("update")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
         disabled = f"{DIM}关{RESET}"
-        flags = f"  sudo 免密: {enabled if (sudoers or update) else disabled}" \
-                f"   终端: {enabled if self._row('terminal')['checked'] else disabled}" \
+        flags = f"  终端: {enabled if self._row('terminal')['checked'] else disabled}" \
                 f"   更新: {enabled if update else disabled}" \
                 f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
         port_text = f"{port}/{port + 1}" if port else "8000/5173"
@@ -285,7 +264,6 @@ class ConfigForm:
         return {
             "display_name": display["value"] if display["checked"] else None,
             "port": port,
-            "sudoers": sudoers or update,
             "terminal": self._row("terminal")["checked"],
             "update": update,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
@@ -299,7 +277,6 @@ def run_config_form(package: str, cli: dict) -> dict:
         return {
             "display_name": cli.get("display_name"),
             "port": cli.get("port"),
-            "sudoers": bool(cli.get("sudoers")) or bool(cli.get("update")),
             "terminal": bool(cli.get("terminal")),
             "update": bool(cli.get("update")),
             "icon": cli.get("icon"),

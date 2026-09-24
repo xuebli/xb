@@ -12,7 +12,6 @@
 - 自动 `git init` 并提交首个 commit（含 lock 文件）
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
-- 可选 sudo 免密配置（`--sudoers`）
 - 可选内置终端（`--terminal`）
 - 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 - 可选自定义应用图标（`--icon`）
@@ -46,15 +45,10 @@ xb --help
 # 创建项目
 xb init demo
 
-# 带 sudo 免密配置
-xb init demo --sudoers
 # 带内置终端
 xb init demo --terminal
 
-# 同时启用终端和 sudo 免密配置
-xb init demo --terminal --sudoers
-
-# 启用应用内自动更新（自动附带 --sudoers 免密，输入 sudo 密码即可）
+# 启用应用内自动更新（Linux 提权走 polkit，管理员组无感更新，无密码落盘）
 xb init demo --update
 
 # 带自定义图标
@@ -81,16 +75,14 @@ xb dev stop
   ────────────────────────────────────────────────────────
 ❯ [ ] 应用显示名 : Demo
   [ ] 端口（后端/前端） : 8000 / 8001
-  [ ] sudo 免密  ✘  (Linux 应用内更新需要)
   [ ] 内置终端  ✘  (Web 终端组件)
-  [ ] 应用内更新  ✘  (自动附带 sudo 免密)
+  [ ] 应用内更新  ✘  (Linux 提权走 polkit，无密码落盘)
   [ ] 应用图标 : 使用默认
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
 ```
 
-- `--name/--port/--sudoers/--terminal/--update/--icon/--skip-install` 传了的参数
+- `--name/--port/--terminal/--update/--icon/--skip-install` 传了的参数
   直接预填进表单并勾上，回车即确认，老用法不受影响
-- 勾选"应用内更新"会自动勾上"sudo 免密"，且后者此时不可单独取消
 - 文本行（显示名/端口/图标）勾选时若仍是默认值则自动清空，直接输入即可
 - stdin 非终端时（脚本/CI 管道调用）自动跳过表单，沿用 CLI 参数
 
@@ -131,7 +123,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--name 显示名] [--port 9000] [--sudoers] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -180,8 +172,8 @@ xb init demo --icon ./my-icon.png
 
 **客户端：** 启动时 / 每小时 / 点版本号徽章时检查更新；发现新版本后下载
 （4 线程分块 + SHA256 校验 + `.part` 防半截包）→ 备份配置 → 按
-`config_changes.json` 迁移 → Ubuntu 趁应用存活时免密 `sudo dpkg -i`
-（`--update` 默认附带 `--sudoers` 免密），Windows 等退出后静默安装。
+`config_changes.json` 迁移 → Ubuntu 走 polkit 免密安装（授权规则由 DEB
+postinst 预部署，管理员组无感、无密码落盘），Windows 等退出后静默安装。
 
 **飞书侧准备：** 开放平台建自建应用 → 开通 `drive:drive` 权限并发布 →
 建云盘文件夹，完整链接填入 `update_folder_url`。开发模式（源码运行）不支持

@@ -5,9 +5,6 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from managers import path_manager, get_logger
-[% if enable_sudo %]
-from managers import sudoers_manager
-[% endif %]
 
 
 router = APIRouter()
@@ -21,21 +18,12 @@ _PLATFORM = (
 )
 
 
-[% if enable_sudo %]
-class ConfigRequest(BaseModel):
-    sudo_password: str
-
-
-[% endif %]
 class PortSettings(BaseModel):
     backend: int = Field(ge=1, le=65535)
     frontend: int = Field(ge=1, le=65535)
 
 
 class AppSettingsRequest(BaseModel):
-[% if enable_sudo %]
-    sudo_password: str | None = None
-[% endif %]
     ports: PortSettings
 
 
@@ -75,14 +63,6 @@ def _write_global_config(config: dict, config_file: pathlib.Path) -> None:
     path_manager.reload_config("global_config.yaml")
 
 
-[% if enable_sudo %]
-def _sudo_password_locked() -> bool:
-    password = path_manager.get_config_value("sudo_password", config_file="secrets.yaml") or ""
-    return bool(password) and sudoers_manager.verify_password(password)
-
-
-[% endif %]
-
 def _save_secret(key: str, value: str) -> None:
     """将敏感字段写入 secrets.yaml。"""
     secrets_file = path_manager.get_config_path("secrets.yaml")
@@ -120,12 +100,6 @@ async def get_settings():
             "secrets_path": str(secrets_file),
             "is_packaged": path_manager.is_packaged,
             "platform": _PLATFORM,
-[% if enable_sudo %]
-            "sudo_password_configured": bool(path_manager.get_config_value("sudo_password", config_file="secrets.yaml")),
-            "sudo_password_locked": _sudo_password_locked(),
-            # Windows/macOS 上 sudoers_manager.required 为 False，前端隐藏 Sudo 密码卡片
-            "requires_sudo": sudoers_manager.required,
-[% endif %]
             "ports": {
                 "backend": int(ports.get("backend") or 8000),
                 "frontend": int(ports.get("frontend") or 5173),
@@ -149,31 +123,14 @@ async def save_settings(req: AppSettingsRequest):
             "backend": req.ports.backend,
             "frontend": req.ports.frontend,
         }
-[% if enable_sudo %]
-        password = (req.sudo_password or "").strip()
-        if password:
-            if _sudo_password_locked():
-                raise HTTPException(status_code=409, detail="sudo 密码已验证正确，不允许修改")
-            _save_secret("sudo_password", password)
-[% endif %]
 
         _write_global_config(config, config_file)
 
-[% if enable_sudo %]
-        sudo_updated = False
-        if password:
-            if not sudoers_manager.setup():
-                raise HTTPException(status_code=500, detail="sudo 免密配置失败，请检查密码是否正确")
-            sudo_updated = True
-[% endif %]
         return {
             "success": True,
             "message": "配置保存成功",
             "hot_reloaded": ["global_config.yaml"],
             "restart_required": ["ports.backend", "ports.frontend"],
-[% if enable_sudo %]
-            "sudo_updated": sudo_updated,
-[% endif %]
         }
     except HTTPException:
         raise
@@ -181,99 +138,7 @@ async def save_settings(req: AppSettingsRequest):
         logger.error(f"保存应用设置失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"保存应用设置失败: {str(e)}")
 
-[% if enable_sudo %]
-@router.get("/config/check")
-async def check_config():
-    secrets_file = path_manager.get_config_path("secrets.yaml")
-    # Windows/macOS 无 sudo 概念，前端据此隐藏配置入口、跳过首启弹窗
-    requires_sudo = sudoers_manager.required
-    platform = _PLATFORM
 
-    if not secrets_file.exists():
-        return {
-            "valid": False,
-            "reason": "config_not_found",
-            "message": "密钥配置文件不存在",
-            "config_path": str(secrets_file),
-            "is_packaged": path_manager.is_packaged,
-            "requires_sudo": requires_sudo,
-            "platform": platform,
-        }
-
-    try:
-        password = path_manager.get_config_value("sudo_password", config_file="secrets.yaml") or ""
-
-        if not password:
-            return {
-                "valid": False,
-                "reason": "password_empty",
-                "message": "密码未设置",
-                "config_path": str(secrets_file),
-                "is_packaged": path_manager.is_packaged,
-                "requires_sudo": requires_sudo,
-                "platform": platform,
-            }
-
-        if not sudoers_manager.verify_password(password):
-            return {
-                "valid": False,
-                "reason": "password_incorrect",
-                "message": "密码不正确",
-                "config_path": str(secrets_file),
-                "is_packaged": path_manager.is_packaged,
-                "requires_sudo": requires_sudo,
-                "platform": platform,
-            }
-
-        sudoers_manager.setup()
-
-        return {
-            "valid": True,
-            "message": "配置正常",
-            "config_path": str(secrets_file),
-            "is_packaged": path_manager.is_packaged,
-            "requires_sudo": requires_sudo,
-            "platform": platform,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {
-            "valid": False,
-            "reason": "config_error",
-            "message": f"配置文件错误: {str(e)}",
-            "config_path": str(secrets_file),
-            "is_packaged": path_manager.is_packaged,
-        }
-
-
-[% endif %]
-[% if enable_sudo %]
-@router.post("/config/save")
-async def save_config(config_req: ConfigRequest):
-    try:
-        password = config_req.sudo_password.strip()
-        logger.info("收到配置保存请求")
-
-        if not password:
-            raise HTTPException(status_code=400, detail="密码不能为空")
-
-        _save_secret("sudo_password", password)
-
-        if not sudoers_manager.setup():
-            raise HTTPException(
-                status_code=500, detail="sudo 免密配置失败，请检查密码是否正确"
-            )
-
-        return {"success": True, "message": "配置保存成功"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"保存配置失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
-
-
-[% endif %]
 class SecretUpdateRequest(BaseModel):
     key: str
     value: str

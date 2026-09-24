@@ -37,16 +37,14 @@ class TemplateEngine:
         package_name: str,
         display_name: str | None = None,
         backend_port: int | None = None,
-        enable_sudo: bool = False,
         enable_terminal: bool = False,
         enable_update: bool = False,
-        sudo_password: str = "",
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # 显示名只用于窗口标题、README 等 UI 文案；包名/安装路径/sudoers 文件名
-        # 等标识符一律保持 ASCII 包名，不受显示名影响。
+        # 显示名只用于窗口标题、README 等 UI 文案；包名/安装路径等技术标识
+        # 一律保持 ASCII 包名，不受显示名影响。
         safe_display_name = (display_name or "").strip() or package_name.capitalize()
 
         # 端口：显式指定后端端口时，前端开发端口取 +1，避免多个生成项目
@@ -58,10 +56,8 @@ class TemplateEngine:
             "display_name": safe_display_name,
             "backend_port": backend_port if backend_port else 8000,
             "frontend_port": (backend_port + 1) if backend_port else 5173,
-            "enable_sudo": enable_sudo,
             "enable_terminal": enable_terminal,
             "enable_update": enable_update,
-            "sudo_password": sudo_password,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -133,14 +129,12 @@ class TemplateEngine:
             context,
         )
 
-        if context["enable_sudo"] or context["enable_update"]:
+        if context["enable_update"]:
             self._render_template(
-                "backend/managers/sudoers_manager.py.j2",
-                backend_dir / "managers" / "sudoers_manager.py",
+                "backend/managers/privileged_manager.py.j2",
+                backend_dir / "managers" / "privileged_manager.py",
                 context,
             )
-
-        if context["enable_update"]:
             self._render_template(
                 "backend/managers/secret_obfuscator.py.j2",
                 backend_dir / "managers" / "secret_obfuscator.py",
@@ -212,12 +206,6 @@ class TemplateEngine:
             components_dir / "GitVersionBadge.vue",
             context,
         )
-        if context["enable_sudo"]:
-            self._render_template(
-                "frontend/src/components/ConfigSetup.vue.j2",
-                components_dir / "ConfigSetup.vue",
-                context,
-            )
         self._render_template(
             "frontend/src/components/FileManager.vue.j2",
             components_dir / "FileManager.vue",
@@ -289,6 +277,28 @@ class TemplateEngine:
 
         self._copy_app_icon(resources_dir / "icon.png", context)
 
+        if context["enable_update"]:
+            # polkit 特权执行器三件套：随安装包进 resources/polkit，
+            # 由 postinst（root 身份）部署到系统路径，postrm 卸载时清理
+            polkit_dir = resources_dir / "polkit"
+            polkit_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "electron/resources/polkit/privileged.policy.j2",
+                polkit_dir / "privileged.policy",
+                context,
+            )
+            self._render_template(
+                "electron/resources/polkit/privileged.rules.j2",
+                polkit_dir / "privileged.rules",
+                context,
+            )
+            self._render_template(
+                "electron/resources/polkit/privileged-helper.sh.j2",
+                polkit_dir / "privileged-helper.sh",
+                context,
+                executable=True,
+            )
+
 
     def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
         icon_path = context.get("icon_path")
@@ -329,15 +339,6 @@ class TemplateEngine:
         self._render_template(
             "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
         )
-        if context["enable_sudo"] and context["sudo_password"]:
-            secrets_path = configs_dir / "secrets.yaml"
-            self._render_template("configs/secrets.yaml.j2", secrets_path, context)
-            # 含明文 sudo 密码，收紧为仅所有者可读写；Windows 上 os.chmod 只影响
-            # 只读位，调用无害（真权限由 NTFS 继承的用户目录 ACL 兜底）。
-            try:
-                secrets_path.chmod(0o600)
-            except OSError:
-                pass
         if context["enable_update"]:
             self._render_template(
                 "configs/config_changes.json.j2",

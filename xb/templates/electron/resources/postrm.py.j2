@@ -11,6 +11,8 @@ if action in {"upgrade", "failed-upgrade", "abort-install", "abort-upgrade", "di
 if action not in {"remove", "purge"}:
     raise SystemExit(1)
 
+app = "[[ package_name]]"
+
 # Debian 卸载前后清理 Electron/前端资源缓存，避免旧 assets 残留。
 if os.name != "nt":
     # 清理安装目录中残留的前端静态资源缓存。
@@ -18,6 +20,22 @@ if os.name != "nt":
         Path("/opt") / "[[ package_name_capitalized ]]" / "resources" / "frontend" / "assets",
         ignore_errors=True,
     )
+[% if enable_update %]
+    # 卸载即撤销提权授权：清理 polkit 授权文件与特权执行器。
+    # remove 与 purge 都执行 —— helper 残留等于留下免密提权入口，绝不能剩。
+    for polkit_path in (
+        Path("/usr/share/polkit-1/actions") / f"com.{app}.privileged.policy",
+        Path("/etc/polkit-1/rules.d") / f"60-{app}-privileged.rules",
+        Path("/usr/local/share") / app,
+    ):
+        if polkit_path.is_dir():
+            shutil.rmtree(polkit_path, ignore_errors=True)
+        else:
+            try:
+                polkit_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+[% endif %]
 
 homes = [Path.home()]
 if action == "purge" and os.name != "nt":

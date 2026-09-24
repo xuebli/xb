@@ -22,7 +22,7 @@ from typing import Optional
 import yaml
 
 from app_version import APP_VERSION
-from managers import get_logger, path_manager, secret_obfuscator, sudoers_manager
+from managers import get_logger, path_manager, privileged_manager, secret_obfuscator
 from services.feishu_client import feishu_client
 
 logger = get_logger(__name__)
@@ -648,8 +648,15 @@ class UpdateService:
     def get_install_command(self, package_path: str) -> list[str]:
         """获取安装命令。"""
         if self.get_platform() == "ubuntu":
-            # -n：非交互，依赖 sudoers 免密白名单；没配好就直接失败而不是卡住等密码
-            return ["sudo", "-n", "/usr/bin/dpkg", "-i", package_path]
+            # pkexec 的授权判定固定走 org.freedesktop.policykit.exec，
+            # rules 按 program 白名单对 privileged-helper 放行：
+            # - sudo/wheel 组用户被 rules 直接放行，完全无感（rules 由 postinst
+            #   预先装好，无需认证代理，无头会话同样生效）
+            # - 其他用户弹一次系统认证框，会话内记住
+            return [
+                "pkexec", str(privileged_manager.HELPER),
+                "install-update", package_path,
+            ]
         return [package_path, "/S"]
 
     def install(self, package_path: str) -> dict:
@@ -659,11 +666,10 @@ class UpdateService:
 
         - Windows：exe 文件被运行中的进程锁定，必须等应用退出后再装
           （detached 子进程先 timeout 再跑安装器）。
-        - Ubuntu：sudo 免密规则是应用启动时写入、**退出时由 main.cleanup()
-          删除**的（见 sudoers_manager），所以 sudo 必须在应用还活着的时候
-          立刻执行——sudo 在 exec 时校验规则，之后 dpkg 作为 root 进程继续跑，
-          应用退不退出都无所谓。dpkg 替换正在运行的程序文件在 Linux 上是
-          安全的（运行中的进程持有旧 inode）。
+        - Ubuntu：polkit 授权规则由 postinst 预先装好、常驻生效，pkexec
+          必须在应用还活着的时候立刻执行——pkexec 校验授权后以 root
+          启动 dpkg，之后应用退不退出都无所谓。dpkg 替换正在运行的
+          程序文件在 Linux 上是安全的（运行中的进程持有旧 inode）。
         """
         package = Path(package_path)
         if not package.exists():
@@ -682,12 +688,13 @@ class UpdateService:
             }
             delay_seconds = 5
         else:
-            # sudoers 免密规则只在应用运行期间存在，装之前先确认它真的在
-            if not sudoers_manager.is_configured():
-                raise RuntimeError(
-                    f"sudo 免密未配置，无法自动安装；请手动执行: sudo dpkg -i {package}"
-                )
-            command = f'sudo -n /usr/bin/dpkg -i "{package}"'
+            # 特权入口缺失（未走 DEB 安装）时提前失败并给出部署指引
+            if not privileged_manager.helper_available():
+                raise RuntimeError(privileged_manager.deploy_hint())
+            command = (
+                f'pkexec "{privileged_manager.HELPER}" '
+                f'install-update "{package}"'
+            )
             args = ["/bin/bash", "-c", command]
             kwargs = {"start_new_session": True}
             delay_seconds = 0

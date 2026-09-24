@@ -1,17 +1,10 @@
-"""配置表单（ConfigForm）交互逻辑测试：不进键盘循环，直接驱动方法。
-
-表单在 Windows 上会隐藏 sudoers 行，逻辑测试统一以 Linux 形态为准
-（mock os.name），Windows 隐藏行为由 test_sudoers_row_hidden_on_windows 覆盖。
-"""
-
-import unittest.mock as mock
+"""配置表单（ConfigForm）交互逻辑测试：不进键盘循环，直接驱动方法。"""
 
 from xb.utils.config_form import ConfigForm, run_config_form
 
 
 def make_form(cli=None):
-    with mock.patch("xb.utils.config_form.os.name", "posix"):
-        return ConfigForm("demo", cli)
+    return ConfigForm("demo", cli)
 
 
 def _cursor_key(form, key):
@@ -19,28 +12,13 @@ def _cursor_key(form, key):
         i for i, r in enumerate(form.rows) if r["key"] == key)
 
 
-def test_update_checks_sudoers_and_blocks_unchecking():
+def test_toggle_switches_rows():
     form = make_form()
-    _cursor_key(form, "update")
+    _cursor_key(form, "terminal")
     form.toggle()
-    assert form._row("update")["checked"] is True
-    assert form._row("sudoers")["checked"] is True
-
-    # update 勾着时 sudoers 无法单独取消
-    _cursor_key(form, "sudoers")
+    assert form._row("terminal")["checked"] is True
     form.toggle()
-    assert form._row("sudoers")["checked"] is True
-    assert form.message  # 有提示
-
-
-def test_sudoers_toggle_without_update():
-    form = make_form()
-    _cursor_key(form, "sudoers")
-    form.toggle()
-    assert form._row("sudoers")["checked"] is True
-    form.toggle()
-    assert form._row("sudoers")["checked"] is False
-    assert not form.message
+    assert form._row("terminal")["checked"] is False
 
 
 def test_text_row_clears_default_on_first_check():
@@ -68,12 +46,16 @@ def test_text_row_keeps_custom_value_when_rechecked():
     assert form._row("display_name")["value"] == "机器人"
 
 
+def test_no_sudo_row_in_any_platform():
+    """sudoers 行已随 polkit 方案彻底移除，任何平台都不应出现。"""
+    assert not make_form()._has("sudoers")
+
+
 def test_collect_unchecked_items_are_none():
     form = make_form()
     result = form.collect()
     assert result["display_name"] is None
     assert result["port"] is None
-    assert result["sudoers"] is False
     assert result["terminal"] is False
     assert result["update"] is False
     assert result["icon"] is None
@@ -88,7 +70,6 @@ def test_collect_valid_port():
         form.feed_char(ch)
     result = form.collect()
     assert result["port"] == 9200
-    assert result["sudoers"] is False
 
 
 def test_collect_invalid_port_falls_back_to_none():
@@ -100,14 +81,6 @@ def test_collect_invalid_port_falls_back_to_none():
     result = form.collect()
     assert result["port"] is None
     assert form._row("port")["checked"] is False
-
-
-def test_sudoers_row_hidden_on_windows():
-    with mock.patch("xb.utils.config_form.os.name", "nt"):
-        form = ConfigForm("demo")
-    assert not form._has("sudoers")
-    result = form.collect()
-    assert result["sudoers"] is False
 
 
 def test_backspace_only_on_checked_text_row():
@@ -124,14 +97,13 @@ def test_run_config_form_skipped_when_not_tty():
     result = run_config_form("demo", {
         "display_name": None,
         "port": 9100,
-        "sudoers": False,
         "terminal": True,
         "update": True,
         "icon": None,
         "skip_install": False,
     })
-    # 非 tty 环境跳过表单，CLI 值原样透传且 update 联动 sudoers
+    # 非 tty 环境跳过表单，CLI 值原样透传
     assert result["port"] == 9100
-    assert result["sudoers"] is True
     assert result["terminal"] is True
+    assert result["update"] is True
     assert result["display_name"] is None
