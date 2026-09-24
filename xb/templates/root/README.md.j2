@@ -403,15 +403,11 @@ npm install
 
 **Python 依赖同步慢或失败**
 
-uv 镜像源由 [chsrc](https://github.com/RubyMetric/chsrc) 自动管理：首次依赖同步
-（`dev.py`）与后端构建（`build.py -b/-a`）前会自动 `chsrc set uv first`
-测速并切换到最快源；没有 chsrc 时会自动安装
-（`curl https://chsrc.run/posix | sudo bash`）。手动操作：
-
-```bash
-chsrc set uv first    # 测速并切换最快 uv 源
-chsrc set uv reset    # 恢复默认源
-```
+uv 镜像源由项目内置的并行测速自动管理：首次依赖同步（`dev.py`）与后端构建
+（`build.py -b/-a`）前会实测各镜像（必须返回 HTTP 200 且下载到真实内容），
+自动切换到最快可用源（约 1-6 秒，写入 uv 用户级配置，对本机所有项目生效）；
+没有可用镜像时保持现有配置不动。不依赖 chsrc——其 `first` 模式不本地测速，
+曾出现写入被网络封锁镜像（403）的坏配置。
 
 **npm install 慢或超时**
 

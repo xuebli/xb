@@ -65,19 +65,15 @@ def _collect_checks() -> list[CheckResult]:
         checks.append(CheckResult(label, version is not None, version or '未找到'))
 
     # 源管理工具：缺失时 init / build / dev.py 会自动安装，只作提醒不阻塞
-    for label, command in (
-        ('nrm (npm 源测速)', 'nrm'),
-        ('chsrc (uv 源测速)', 'chsrc'),
-    ):
-        version = _command_version(command)
-        checks.append(
-            CheckResult(
-                label,
-                version is not None,
-                version or '未找到（首次安装依赖/构建时自动安装）',
-                optional=True,
-            )
+    version = _command_version('nrm')
+    checks.append(
+        CheckResult(
+            'nrm (npm 源测速)',
+            version is not None,
+            version or '未找到（首次安装依赖/构建时自动安装）',
+            optional=True,
         )
+    )
 
     for port in (8000, 5173):
         free = _port_is_free(port)
