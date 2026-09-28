@@ -128,7 +128,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
 | `xb version [patch\|minor\|major]` | 读取或更新版本号 |
-| `xb doctor` | 检查开发环境 |
+| `xb doctor [--fix]` | 检查开发环境；`--fix` 自动安装 nrm/uv、交互式配置 git 身份 |
 | `xb --upgrade` | 升级 xb 到 PyPI 最新版本 |
 
 ## 应用图标
@@ -242,8 +242,8 @@ xb/
 ## 环境要求
 
 - **Python**: 3.12+
-- **Node.js**: 16+
-- **npm**: 8+
+- **Node.js**: 20.19+（推荐 22 LTS；模板前端使用 Vite 8，Node 18 及以下会构建报错）
+- **npm**: 10+
 - **uv**: 已安装
 - **OS**: Windows 10/11 或 Ubuntu/Debian
 - **Windows 终端**: 使用 `--terminal` 时自动安装 Windows 专用 `pywinpty`

@@ -25,6 +25,9 @@ from .upgrade import install_upgrade
 
 console = Console()
 
+# nrm 未装时无法用 nrm 测速切源（先有鸡还是先有蛋），安装 nrm 本身直接走 npmmirror
+NPM_INSTALL_REGISTRY = "https://registry.npmmirror.com"
+
 
 def _prompt_upgrade_before_init() -> None:
     """检测到新版 xb 时询问是否先升级；同意则升级后用 execvp 重跑 init 替换当前进程。
@@ -168,9 +171,11 @@ def nrm_speedtest(console: Console, npm_command: str) -> None:
     nrm_command = "nrm.cmd" if os.name == "nt" and shutil.which("nrm.cmd") else "nrm"
     try:
         if not shutil.which(nrm_command):
-            console.print("[dim]未检测到 nrm，自动安装（npm install -g nrm）...[/dim]")
+            console.print(
+                "[dim]未检测到 nrm，自动安装（npm install -g nrm，走 npmmirror 镜像）...[/dim]"
+            )
             subprocess.run(
-                [npm_command, "install", "-g", "nrm"],
+                [npm_command, "install", "-g", "nrm", "--registry", NPM_INSTALL_REGISTRY],
                 capture_output=True,
                 text=True,
                 timeout=120,

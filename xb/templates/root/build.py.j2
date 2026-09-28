@@ -162,8 +162,9 @@ def nrm_speedtest() -> None:
     """
     nrm = "nrm.cmd" if sys.platform == "win32" else "nrm"
     if not shutil.which("nrm"):
-        print("未检测到 nrm，自动安装（npm install -g nrm）...")
-        run([NPM, "install", "-g", "nrm"])
+        print("未检测到 nrm，自动安装（npm install -g nrm，走 npmmirror 镜像）...")
+        # nrm 未装时无法用 nrm 切源，安装 nrm 本身直接走 npmmirror
+        run([NPM, "install", "-g", "nrm", "--registry", "https://registry.npmmirror.com"])
 
     try:
         # nrm test 测全部内置源，输出形如 "  huawei ------- 96 ms"，
