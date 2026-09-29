@@ -5,6 +5,8 @@ import sys
 import yaml
 from pathlib import Path
 
+from .yaml_comments import dump_yaml_with_labels, parse_yaml_labels
+
 [% if enable_update %]
 
 def _deep_merge_missing(dst: dict, src: dict, prefix: str = "") -> list:
@@ -237,10 +239,9 @@ class PathManager:
                     added = _deep_merge_missing(dst_data, src_data)
                     if added:
                         shutil.copy2(dst_path, dst_path.with_suffix(dst_path.suffix + ".bak"))
-                        dst_path.write_text(
-                            yaml.safe_dump(dst_data, allow_unicode=True, sort_keys=False),
-                            encoding="utf-8",
-                        )
+                        # 回填用户已有的行尾注释（safe_dump 本身会丢注释）
+                        labels = parse_yaml_labels(dst_path)
+                        dump_yaml_with_labels(dst_data, labels, dst_path)
                         copied.append(
                             f"[补齐] {dst_path.relative_to(dst_root)}: {', '.join(added)}"
                         )

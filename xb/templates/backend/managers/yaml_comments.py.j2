@@ -1,0 +1,127 @@
+"""yaml 行尾注释的解析与回填。
+
+设置页把 yaml 里每项的行尾 `# 注释` 当作 UI 显示名，PyYAML 的 safe_dump
+会丢掉全部注释，本模块负责：
+- parse_yaml_labels: 逐行扫描 yaml，提取每项的行尾注释（含列表项，路径形如
+  `business.tags[0]`）
+- dump_yaml_with_labels: safe_dump 写回后按解析到的注释表原样回填
+
+全项目凡是"读 yaml → 改数据 → 写回"的路径（设置页保存、升级补齐、
+配置迁移、密钥混淆）都应走 dump_yaml_with_labels，避免注释丢失。
+"""
+
+from pathlib import Path
+
+import yaml
+
+
+def split_inline_comment(content: str) -> tuple[str, str | None]:
+    """切分一行 yaml 的内容和行尾注释（引号内的 # 不算）。"""
+    quote = None
+    prev = ""
+    for i, ch in enumerate(content):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and prev in (" ", "\t"):
+            return content[:i].rstrip(), content[i + 1 :].strip()
+        prev = ch
+    return content, None
+
+
+def parse_yaml_labels(path: Path | str) -> dict[str, str]:
+    """逐行扫描 yaml，提取行尾注释作为显示名。
+
+    - 映射项：缩进栈拼出点路径，如 `ports.backend`
+    - 列表项：归属最近的映射 key，路径带下标，如 `business.tags[0]`
+    纯注释行、空行忽略；解析失败返回空表（不影响调用方正常写盘）。
+    """
+    labels: dict[str, str] = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return labels
+
+    stack: list[tuple[int, str]] = []
+    list_ctx = {"path": None, "indent": -1, "idx": 0}
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        head, comment = split_inline_comment(stripped)
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+
+        if stripped.startswith("- "):
+            # 列表项：归属最近的映射 key，同层级连续项下标递增
+            if not stack:
+                continue
+            parent = ".".join(k for _, k in stack)
+            if list_ctx["path"] != parent or list_ctx["indent"] != indent:
+                list_ctx.update(path=parent, indent=indent, idx=0)
+            else:
+                list_ctx["idx"] += 1
+            if comment is not None:
+                labels[f"{parent}[{list_ctx['idx']}]"] = comment
+            continue
+
+        if ":" not in head:
+            continue
+        key = head.split(":", 1)[0].strip().strip("\"'")
+        if not key:
+            continue
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack.append((indent, key))
+        list_ctx.update(path=None, indent=-1, idx=0)
+        if comment is not None:
+            labels[".".join(k for _, k in stack)] = comment
+    return labels
+
+
+def dump_yaml_with_labels(data: dict, labels: dict[str, str], path: Path | str) -> None:
+    """safe_dump 写回后按 labels 回填行尾注释（safe_dump 本身会丢注释）。
+
+    labels 来自写盘前的 parse_yaml_labels——即"只改值，注释原样保留"。
+    """
+    text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    if labels:
+        out: list[str] = []
+        stack: list[tuple[int, str]] = []
+        list_ctx = {"path": None, "indent": -1, "idx": 0}
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            appended = False
+            if stripped and not stripped.startswith("#"):
+                indent = len(raw_line) - len(raw_line.lstrip(" "))
+                if stripped.startswith("- "):
+                    if stack:
+                        parent = ".".join(k for _, k in stack)
+                        if (
+                            list_ctx["path"] != parent
+                            or list_ctx["indent"] != indent
+                        ):
+                            list_ctx.update(path=parent, indent=indent, idx=0)
+                        else:
+                            list_ctx["idx"] += 1
+                        label = labels.get(f"{parent}[{list_ctx['idx']}]")
+                        if label:
+                            out.append(f"{raw_line}  # {label}")
+                            appended = True
+                else:
+                    head = split_inline_comment(stripped)[0]
+                    if ":" in head:
+                        key = head.split(":", 1)[0].strip().strip("\"'")
+                        while stack and stack[-1][0] >= indent:
+                            stack.pop()
+                        stack.append((indent, key))
+                        list_ctx.update(path=None, indent=-1, idx=0)
+                        label = labels.get(".".join(k for _, k in stack))
+                        if label:
+                            out.append(f"{raw_line}  # {label}")
+                            appended = True
+            if not appended:
+                out.append(raw_line)
+        text = "\n".join(out) + "\n"
+    Path(path).write_text(text, encoding="utf-8")

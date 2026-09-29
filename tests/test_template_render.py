@@ -49,9 +49,12 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_
         "AGENTS.md",
         "backend/main.py",
         "backend/managers/path_manager.py",
+        "backend/managers/yaml_comments.py",
         "frontend/src/App.vue",
         "electron/main.js",
         "configs/global_config.yaml",
+        "configs/secrets.yaml.example",
+        "configs/secrets.yaml",
         "version/scripts/version_manager.py",
     ):
         assert (target / rel).exists(), f"缺少基础文件 {rel}"
@@ -107,6 +110,8 @@ def test_render_project_main_py_switches(tmp_path):
     assert "terminal_router" not in main_plain
     assert "update_router" not in main_plain
     assert "logs_router" not in main_plain
+    # 通用设置页是标配
+    assert "settings_router" in main_plain
     assert "sudoers_manager" not in main_plain
 
     full = _render(tmp_path / "b", True, True, True)
@@ -115,6 +120,7 @@ def test_render_project_main_py_switches(tmp_path):
     assert "update_router" in main_full
     assert "logs_router" in main_full
     assert "attach_log_sink()" in main_full
+    assert "settings_router" in main_full
     assert "sudoers_manager" not in main_full
 
 
@@ -142,6 +148,41 @@ def test_logs_assets(tmp_path):
     plain = _render(tmp_path / "plain", False, False, False)
     assert not (plain / "backend" / "api" / "logs.py").exists()
     assert not (plain / "frontend" / "src" / "components" / "LogViewer.vue").exists()
+
+
+def test_settings_assets(tmp_path):
+    """设置页是标配：yaml 驱动 + schema 增强 + 密钥管理，无独立配置页。"""
+    target = _render(tmp_path, False, False)
+
+    settings_py = (target / "backend" / "api" / "settings.py").read_text(encoding="utf-8")
+    compile(settings_py, "settings.py", "exec")
+    # 路径用 /app-settings（/settings 留给 config.py 的密钥接口）
+    assert '"/app-settings"' in settings_py
+    assert '"/settings"' not in settings_py
+    # 混合模式：yaml 叶子推断 + schema 元数据增强，secrets.yaml 也进设置页
+    assert "_effective_schema" in settings_py
+    assert "_infer_field" in settings_py
+    assert "_humanize_label" in settings_py
+    assert "parse_yaml_labels" in settings_py
+    assert "dump_yaml_with_labels" in settings_py
+    assert "_load_fresh" in settings_py
+    assert "ports.backend" in settings_py
+    assert "requires_restart" in settings_py
+    assert 'field["secret"] = True' in settings_py
+
+    # FileManager 已被设置页取代：组件不再生成，导航只剩「设置」
+    assert not (target / "frontend" / "src" / "components" / "FileManager.vue").exists()
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "FileManager" not in app_vue
+    assert "{ id: 'settingsView', label: '设置'" in app_vue
+    assert "{ id: 'settings'," not in app_vue
+
+    # 密钥 key 自动渲染为密码框；不再有手动新建密钥的卡片
+    settings_vue = (target / "frontend" / "src" / "components" / "SettingsView.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "field.secret ? 'password'" in settings_vue
+    assert "saveSecret" not in settings_vue
 
 
 def test_display_name_defaults_to_capitalized_package(tmp_path):

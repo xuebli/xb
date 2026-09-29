@@ -61,13 +61,14 @@
 | 加 API 路由 | `backend/api/<feature>/routes.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api/<feature>")`；小功能可用 `backend/api/<feature>.py`，但禁止一个文件塞多个业务域 |
 | 加业务逻辑 | `backend/services/<feature>/` | API 只做参数校验/HTTP 映射，业务编排放 service |
 | 加请求/响应模型 | `backend/schemas/<feature>.py` 或 `backend/schemas/<feature>/` | Pydantic 模型不要写进 routes 大文件 |
-| 加配置项 | 后端 `backend/api/config.py` 的结构化接口 + 前端配置 UI | 不允许只加 yaml 字段；必须有表单 UI 可配置 |
+| 加配置项 | `configs/global_config.yaml` 加一行：值 + 行尾 `# 显示名`（如 `max_workers: 8   # 最大并发`） | 前端"⚙ 设置"页自动出表单（PUT `/api/app-settings`），行尾注释就是显示名；类型按 yaml 值推断；secrets 同理（写 `secrets.yaml`）；范围校验/requires_restart 在 `backend/api/settings.py` 的 `SETTINGS_SCHEMA` 声明 |
 | 改路径策略 | `backend/managers/path_manager.py` | 全局单例 `path_manager` |
 | 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
 [% if enable_terminal %]| 改内置终端 | 后端 `backend/api/terminal/` + 前端 `TerminalPanel.vue` / `TerminalView.vue` / `useTerminalSessions.js` | Linux/macOS 使用 bash + Unix PTY；Windows 使用 PowerShell + ConPTY |
 [% endif %]
+| 改通用设置页 | 后端 `backend/api/settings.py` + 前端 `SettingsView.vue` | yaml 全量叶子 key 自动出表单，行尾 `#` 注释就是显示名（含列表项，写回经 `managers/yaml_comments.py` 回填不丢）；`SETTINGS_SCHEMA` 只做校验增强（PUT `/api/app-settings`）；应用配置与密钥的唯一图形入口 |
 [% if enable_logs %]| 改日志中心 | 后端 `backend/api/logs.py` + 前端 `LogViewer.vue` | loguru sink 进内存环形缓冲（2000 条），SSE 0.5s 增量推送；级别/关键词过滤在前端 |
 [% endif %]
 | 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
@@ -77,7 +78,7 @@
 | 加前端组件 | `frontend/src/components/<feature>/<ComponentName>.vue` | 可复用组件按业务域建目录；组件名 PascalCase |
 | 加前端 API 调用 | `frontend/src/services/<feature>Api.js` 或 `composables/use<Feature>.js` | 不要在组件里散落大量 fetch |
 | 改前端注入版本/git日志 | `frontend/vite.config.js` 的 `define` | `__APP_VERSION__` 读 `electron/package.json` |
-| 改后端 base URL（前端） | `frontend/src/components/FileManager.vue` | `import.meta.env.VITE_API_BASE` |
+| 改后端 base URL（前端） | `frontend/src/components/SettingsView.vue` 等组件 | `import.meta.env.VITE_API_BASE` |
 | 改 pre-commit 行为 | `version/hooks/pre-commit.py` | `.git/hooks/pre-commit` 是转发脚本，改完立即生效；新增 hook 跑 `python version/scripts/install_hooks.py` |
 | 加被 bump 的文件 | `version/scripts/version_manager.py` | 仿 `update_pyproject_version` |
 ## CODE MAP
@@ -132,7 +133,8 @@
 - **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。[% if enable_terminal %]终端 PTY、PowerShell/bash 及其[% endif %]业务子进程都必须随应用退出。
 - **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `%APPDATA%\[[ package_name]]\` 与 `%LOCALAPPDATA%\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
 - **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 `dev.py` 注入的 `VITE_BACKEND_PORT` / `VITE_DEV_PORT` 环境变量拿到，Vite 将 `/api`（含 WebSocket）代理到 FastAPI，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.py / Electron 才能换监听端口。
-- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。密钥类配置在"🔐 密钥管理"面板（调 `POST /api/secrets/save`），普通配置在"🌐 应用配置"面板。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
+- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，加一行值 + 行尾 `# 显示名` 即在"⚙ 设置"页自动生成表单（保存走 `PUT /api/app-settings`，注释会被回填不丢失）。密钥类配置同样：在 `secrets.yaml` 声明 key（值留空 + 行尾注释），设置页自动渲染为密码框；不要要求用户手改 yaml 填密钥。
+- **yaml 写回一律走 `managers/yaml_comments.py`**：`parse_yaml_labels` + `dump_yaml_with_labels` 回填行尾注释（含列表项 `path[0]`），凡"读 yaml → 改数据 → 写回"的代码（设置页保存、升级补齐、配置迁移、密钥混淆）禁止直接 `yaml.safe_dump` 落盘——注释就是设置页的显示名，丢了用户可直接感知。
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
 [% if enable_terminal %]- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
 [% endif %]
@@ -203,7 +205,7 @@ aliyun:
 
 模块同时有敏感参数（密码）和非敏感参数（host/port）：
 
-1. **密钥**写进 `secrets.yaml`（按模块嵌套）+ 同步在 `.example` 留空 + 在 `FileManager.vue` 密钥管理面板加 UI 字段（调 `POST /api/secrets/save`）
+1. **密钥**写进 `secrets.yaml`（按模块嵌套，值留空）+ 同步在 `.example` 声明同样的 key——设置页会自动渲染成密码框，产线直接在界面填值（保存走 `PUT /api/app-settings`）
 2. **非敏感参数**新建独立 yaml：`configs/mail_config.yaml`，**直接提交真值，无 `.example`**
 3. 写一个独立 manager 合并两处读取：
 
@@ -278,7 +280,7 @@ path_manager.reload_config()                     # 全清
 
 ### 配置实时生效约定（重要）
 
-前端 FileManager 改完 yaml 保存（`POST /api/files/write`）会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
+前端改完 yaml 保存（`PUT /api/app-settings`、`POST /api/files/write` 等接口）都会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
 
 要让这个目标真的成立，**必须遵守一条规则**：
 
@@ -396,7 +398,7 @@ class FeishuBitableManager:
 | `frontend/src/App.vue` 的 `<DashboardHome />` import & 使用 | 替换首页时同步修改 |
 | `frontend/src/components/RefreshButton.vue` | 视需要保留 |
 | `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
-| `frontend/src/components/FileManager.vue` | **保留**（配置中心：应用配置 / 密钥管理 / 原始 YAML 高级编辑） |
+| `frontend/src/components/SettingsView.vue` | 设置页：应用配置表单（yaml 驱动，行尾 `#` 注释即显示名；secrets key 渲染为密码框） |
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
 
 ## D. 启动 / 停止 / 状态:用 `dev.py`

@@ -1,0 +1,292 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+
+// 后端基地址：开发态走 dev.py 注入的 VITE_API_BASE；打包态同源相对路径
+const API_BASE = import.meta.env.VITE_API_BASE || ''
+
+const loading = ref(true)
+const saving = ref(false)
+const error = ref('')
+const message = ref('')
+const schema = ref([])
+const form = ref({})
+const restartKeys = ref([])
+
+const groups = computed(() => {
+  const bySection = new Map()
+  for (const field of schema.value) {
+    const section = field.key.split('.')[0]
+    if (!bySection.has(section)) bySection.set(section, [])
+    bySection.get(section).push(field)
+  }
+  return [...bySection.entries()].map(([name, fields]) => ({ name, fields }))
+})
+
+const needsRestart = (field) => field.requires_restart && restartKeys.value.includes(field.key)
+
+const load = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await fetch(`${API_BASE}/api/app-settings`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    schema.value = data.schema
+    form.value = data.values
+  } catch (e) {
+    error.value = `配置加载失败: ${e.message}`
+  } finally {
+    loading.value = false
+  }
+}
+
+const save = async () => {
+  saving.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    const res = await fetch(`${API_BASE}/api/app-settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: form.value }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      error.value = data.error || `保存失败（HTTP ${res.status}）`
+      return
+    }
+    form.value = data.values
+    restartKeys.value = data.restart_required
+    message.value = data.restart_required.length
+      ? `已保存；${data.restart_required.join('、')} 需重启应用后生效`
+      : '已保存并即时生效'
+  } catch (e) {
+    error.value = `保存失败: ${e.message}`
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div class="settings-view">
+    <div class="settings-head">
+      <div>
+        <p class="settings-kicker">Settings</p>
+        <h2>应用设置</h2>
+      </div>
+      <button class="settings-save" :disabled="saving || loading" @click="save">
+        {{ saving ? '保存中...' : '保存配置' }}
+      </button>
+    </div>
+
+    <div v-if="loading" class="settings-state">加载中...</div>
+    <div v-else-if="error" class="settings-state settings-state--error">{{ error }}</div>
+
+    <template v-else>
+      <p v-if="message" class="settings-state settings-state--ok">{{ message }}</p>
+
+      <section v-for="group in groups" :key="group.name" class="settings-card">
+        <h3>{{ group.name }}</h3>
+        <label v-for="field in group.fields" :key="field.key" class="settings-field">
+          <span class="field-label" :title="field.key">
+            {{ field.label }}
+            <em v-if="field.secret" class="field-secret">密钥</em>
+            <em v-if="needsRestart(field)" class="field-restart">需重启生效</em>
+          </span>
+
+          <select v-if="field.type === 'select'" v-model="form[field.key]">
+            <option v-for="option in field.options" :key="option" :value="option">
+              {{ option }}
+            </option>
+          </select>
+
+          <label v-else-if="field.type === 'bool'" class="field-switch">
+            <input v-model="form[field.key]" type="checkbox" />
+            <span>{{ form[field.key] ? '开' : '关' }}</span>
+          </label>
+
+          <input
+            v-else-if="field.type === 'int' || field.type === 'float'"
+            v-model.number="form[field.key]"
+            type="number"
+            :min="field.min"
+            :max="field.max"
+            :step="field.type === 'float' ? 'any' : '1'"
+          />
+
+          <input
+            v-else
+            v-model="form[field.key]"
+            :type="field.secret ? 'password' : 'text'"
+            :autocomplete="field.secret ? 'new-password' : 'off'"
+          />
+        </label>
+      </section>
+
+      <p v-if="!schema.length" class="settings-state">
+        global_config.yaml 里还没有业务配置项：在 yaml 里加 key 即会自动出现在这里，
+        需要中文标签/校验范围时在 backend/api/settings.py 的 SETTINGS_SCHEMA 补元数据。
+        密钥同理：在 secrets.yaml 里声明（值留空），这里会出现密码框。
+      </p>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.settings-view {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 2px 24px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-kicker {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-head h2 {
+  margin: 6px 0 0;
+  color: var(--text-h);
+  font-size: 1.6rem;
+}
+
+.settings-save {
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #7c3aed, #06b6d4);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-card {
+  padding: 20px 24px;
+  border: 1px solid rgba(124, 58, 237, 0.16);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+}
+
+.settings-card h3 {
+  margin: 0 0 14px;
+  color: var(--text-h);
+  font-size: 1.02rem;
+  text-transform: capitalize;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(140px, 240px) 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-field:last-child { border-bottom: 0; }
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.field-restart {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.field-secret {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.settings-field input[type='number'],
+.settings-field input[type='text'],
+.settings-field select {
+  height: 36px;
+  max-width: 320px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  outline: none;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
+  border-color: var(--border-strong);
+}
+
+.field-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.settings-state {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.settings-state--error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.settings-state--ok {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+@media (max-width: 720px) {
+  .settings-field {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+</style>

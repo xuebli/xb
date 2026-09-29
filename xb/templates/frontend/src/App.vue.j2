@@ -7,7 +7,7 @@ import TerminalPanel from './components/TerminalPanel.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
-import FileManager from './components/FileManager.vue'
+import SettingsView from './components/SettingsView.vue'
 [% if enable_logs %]
 import LogViewer from './components/LogViewer.vue'
 [% endif %]
@@ -25,7 +25,7 @@ const navItems = [
 [% if enable_terminal %]
   { id: 'terminal', label: '终端', icon: '💻' },
 [% endif %]
-  { id: 'settings', label: '配置', icon: '⚒' },
+  { id: 'settingsView', label: '设置', icon: '⚙' },
 ]
 
 const handleRefresh = () => {
@@ -99,7 +99,7 @@ const openSettings = () => {
 [% if enable_logs %]
         <LogViewer v-else-if="currentPage === 'logs'" />
 [% endif %]
-        <FileManager v-else-if="currentPage === 'settings'" />
+        <SettingsView v-else-if="currentPage === 'settingsView'" />
 [% if enable_terminal %]
         <TerminalPanel v-show="currentPage === 'terminal'" />
 [% endif %]

@@ -1,0 +1,259 @@
+"""通用设置接口：yaml 驱动 + schema 校验增强的配置表单。
+
+- global_config.yaml 与 secrets.yaml 里的**所有叶子 key** 都会出现在前端设置页：
+  按值类型自动推断控件（bool → 开关、int/float → 数字框、str → 文本框）；
+  secrets.yaml 的 key 标记 secret=True，前端渲染为密码框，保存写回 secrets.yaml
+- **显示名 = 行尾注释**：`max_workers: 8   # 最大并发`，加一项就一行；
+  未写注释时兜底显示 key 末段（smtp_host -> "smtp host"）
+- SETTINGS_SCHEMA 只负责校验类元数据（min/max/options/requires_restart/type 覆盖）
+- 读取绕过 path_manager 缓存直接读盘（手改 yaml 无需重启即可生效）；
+  保存时按生效 schema 校验、写回对应 yaml 并原样回填行尾注释、刷新缓存
+
+key 用点路径对应 yaml 嵌套结构。校验元数据示例：
+    {"key": "business.max_workers", "type": "int", "min": 1, "max": 64},
+    {"key": "business.mode", "type": "select", "options": ["fast", "safe"]},
+
+注意：接口路径用 /app-settings（/settings 已被 api/config.py 的密钥接口占用）。
+"""
+
+import re
+
+import yaml
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+from managers import path_manager
+from managers.yaml_comments import dump_yaml_with_labels, parse_yaml_labels
+
+router = APIRouter(tags=["settings"])
+
+# 校验类元数据（可选）：min/max/options/requires_restart/type 覆盖。
+# 显示名不在这里——直接写在 yaml 里每项的行尾 # 注释上。
+SETTINGS_SCHEMA = [
+    {
+        "key": "ports.backend",
+        "type": "int",
+        "min": 1,
+        "max": 65535,
+        "requires_restart": True,
+    },
+    {
+        "key": "ports.frontend",
+        "type": "int",
+        "min": 1,
+        "max": 65535,
+        "requires_restart": True,
+    },
+]
+
+# secrets.yaml 的 key 也进设置页（前端渲染为密码框），保存时写回 secrets.yaml
+SECRETS_FILE = "secrets.yaml"
+
+
+def _flatten(data: dict, prefix: str = ""):
+    for key, value in data.items():
+        dotted = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            yield from _flatten(value, dotted)
+        elif isinstance(value, (list, tuple)):
+            # 列表暂不进表单：避免 UI 保存把列表结构改写成字符串，注释由
+            # dump_yaml_with_labels 按下标回填保留
+            continue
+        else:
+            yield dotted, value
+
+
+def _load_fresh(filename: str) -> dict:
+    """绕过 path_manager 缓存直接读盘：手改 yaml 后无需重启即可在设置页生效。"""
+    path = path_manager.get_config_path(filename)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except FileNotFoundError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _set_nested(data: dict, dotted: str, value) -> None:
+    keys = dotted.split(".")
+    node = data
+    for key in keys[:-1]:
+        node = node.setdefault(key, {})
+        if not isinstance(node, dict):
+            raise ValueError(f"配置路径冲突: {dotted}")
+    node[keys[-1]] = value
+
+
+def _validate(field: dict, value):
+    """校验并转换单个字段，返回 (转换后的值, 错误信息)。"""
+    ftype = field.get("type", "str")
+    label = field.get("label", field["key"])
+    try:
+        if ftype == "int":
+            if isinstance(value, bool):
+                raise ValueError("必须是整数")
+            value = int(value)
+            if value != float(value):
+                raise ValueError("必须是整数")
+        elif ftype == "float":
+            if isinstance(value, bool):
+                raise ValueError("必须是数字")
+            value = float(value)
+        elif ftype == "bool":
+            if isinstance(value, bool):
+                pass
+            elif isinstance(value, str) and value.lower() in ("true", "false"):
+                value = value.lower() == "true"
+            else:
+                raise ValueError("必须是布尔值")
+        elif ftype == "select":
+            options = field.get("options", [])
+            if value not in options:
+                raise ValueError(f"必须是 {options} 之一")
+        else:
+            value = str(value)
+    except (TypeError, ValueError) as e:
+        return None, f"{label}: {e}（收到 {value!r}）"
+
+    if ftype in ("int", "float"):
+        if "min" in field and value < field["min"]:
+            return None, f"{label}: 不能小于 {field['min']}"
+        if "max" in field and value > field["max"]:
+            return None, f"{label}: 不能大于 {field['max']}"
+    return value, None
+
+
+def _humanize_label(key: str) -> str:
+    """未写行尾注释时的兜底显示名：取 key 末段，下划线/连字符转空格。"""
+    tail = key.split(".")[-1]
+    return re.sub(r"[-_]+", " ", tail).strip() or key
+
+
+def _infer_field(key: str, value):
+    """schema 未声明时按值类型推断字段定义。"""
+    if isinstance(value, bool):
+        ftype = "bool"
+    elif isinstance(value, int):
+        ftype = "int"
+    elif isinstance(value, float):
+        ftype = "float"
+    else:
+        ftype = "str"
+    return {"key": key, "label": _humanize_label(key), "type": ftype}
+
+
+def _effective_schema(
+    config: dict,
+    labels: dict[str, str] | None = None,
+    include_defaults: bool = True,
+) -> list[dict]:
+    """yaml 全量叶子 key 生成生效 schema：行尾注释作显示名，其余按值类型推断。"""
+    labels = labels or {}
+    declared = {field["key"]: dict(field) for field in SETTINGS_SCHEMA}
+    fields: list[dict] = []
+    for key, value in _flatten(config):
+        field = declared.pop(key, None)
+        if field is None:
+            field = _infer_field(key, value)
+        else:
+            field.setdefault("label", _humanize_label(key))
+            field.setdefault("type", _infer_field(key, value)["type"])
+        # 行尾注释拥有最终解释权
+        field["label"] = labels.get(key) or field["label"]
+        fields.append(field)
+
+    # schema 声明了但 yaml 还没有的键：带 default 的也展示，首次保存时写入 yaml
+    if include_defaults:
+        for key, field in declared.items():
+            if "default" in field:
+                field["label"] = labels.get(key) or field.setdefault(
+                    "label", _humanize_label(key)
+                )
+                fields.append(field)
+    return fields
+
+
+@router.get("/app-settings")
+async def get_app_settings():
+    global_path = path_manager.get_config_path("global_config.yaml")
+    secrets_path = path_manager.get_config_path(SECRETS_FILE)
+    config = _load_fresh("global_config.yaml")
+    secrets = _load_fresh(SECRETS_FILE)
+
+    schema = _effective_schema(config, parse_yaml_labels(global_path))
+    secret_fields = _effective_schema(
+        secrets, parse_yaml_labels(secrets_path), include_defaults=False
+    )
+    for field in secret_fields:
+        field["secret"] = True
+    schema.extend(secret_fields)
+
+    values = dict(_flatten(config))
+    values.update(_flatten(secrets))
+    for field in schema:
+        if field["key"] not in values and "default" in field:
+            values[field["key"]] = field["default"]
+    return {"schema": schema, "values": values}
+
+
+@router.put("/app-settings")
+async def put_app_settings(payload: dict):
+    incoming = payload.get("values")
+    if not isinstance(incoming, dict):
+        return JSONResponse({"error": "请求体需为 {\"values\": {...}}"}, status_code=400)
+
+    global_path = path_manager.get_config_path("global_config.yaml")
+    secrets_path = path_manager.get_config_path(SECRETS_FILE)
+    config = _load_fresh("global_config.yaml")
+    secrets = _load_fresh(SECRETS_FILE)
+    secret_keys = {
+        field["key"]
+        for field in _effective_schema(secrets, include_defaults=False)
+    }
+
+    fields = {field["key"]: field for field in _effective_schema(config)}
+    for field in _effective_schema(secrets, include_defaults=False):
+        field["secret"] = True
+        fields[field["key"]] = field
+
+    unknown = [key for key in incoming if key not in fields]
+    errors = []
+    validated = {}
+    restart_keys = []
+    for key, field in fields.items():
+        if key not in incoming:
+            continue
+        value, err = _validate(field, incoming[key])
+        if err:
+            errors.append(err)
+            continue
+        validated[key] = value
+        if field.get("requires_restart"):
+            restart_keys.append(key)
+
+    if errors:
+        return JSONResponse({"error": "；".join(errors)}, status_code=422)
+
+    # 按归属分流写回：secret key 写 secrets.yaml，其余写 global_config.yaml。
+    # 写回前先解析原文件的行尾注释，dump 后原样回填（显示名不丢）。
+    updates_global = {k: v for k, v in validated.items() if k not in secret_keys}
+    updates_secret = {k: v for k, v in validated.items() if k in secret_keys}
+    if updates_global:
+        for key, value in updates_global.items():
+            _set_nested(config, key, value)
+        dump_yaml_with_labels(config, parse_yaml_labels(global_path), global_path)
+        path_manager.reload_config("global_config.yaml")
+    if updates_secret:
+        for key, value in updates_secret.items():
+            _set_nested(secrets, key, value)
+        dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_path), secrets_path)
+        path_manager.reload_config(SECRETS_FILE)
+
+    return {
+        "values": {
+            **dict(_flatten(_load_fresh("global_config.yaml"))),
+            **dict(_flatten(_load_fresh(SECRETS_FILE))),
+        },
+        "restart_required": sorted(set(restart_keys)),
+        "ignored_unknown": unknown,
+    }

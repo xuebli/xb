@@ -23,6 +23,7 @@ import yaml
 
 from app_version import APP_VERSION
 from managers import get_logger, path_manager, privileged_manager, secret_obfuscator
+from managers.yaml_comments import dump_yaml_with_labels, parse_yaml_labels
 from services.feishu_client import feishu_client
 
 logger = get_logger(__name__)
@@ -566,8 +567,9 @@ class UpdateService:
         # 避免迁移条目里携带的真实凭证以明文写进用户 secrets.yaml
         new_config, _ = secret_obfuscator.obfuscate_plain_secrets(new_config)
 
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(new_config, f, allow_unicode=True, sort_keys=False)
+        # 回填用户已有的行尾注释（含列表项），升级不改写用户的显示名
+        labels = parse_yaml_labels(config_path)
+        dump_yaml_with_labels(new_config, labels, config_path)
 
         logger.info(f"已合并配置文件: {config_path.name}")
         return True

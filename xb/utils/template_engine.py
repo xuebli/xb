@@ -122,12 +122,22 @@ class TemplateEngine:
                 "backend/api/logs.py.j2", backend_dir / "api" / "logs.py", context
             )
 
+        # 通用设置页是标配：yaml 驱动 + schema 元数据增强
+        self._render_template(
+            "backend/api/settings.py.j2", backend_dir / "api" / "settings.py", context
+        )
+
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
         )
         self._render_template(
             "backend/managers/path_manager.py.j2",
             backend_dir / "managers" / "path_manager.py",
+            context,
+        )
+        self._render_template(
+            "backend/managers/yaml_comments.py.j2",
+            backend_dir / "managers" / "yaml_comments.py",
             context,
         )
         self._render_template(
@@ -213,11 +223,6 @@ class TemplateEngine:
             components_dir / "GitVersionBadge.vue",
             context,
         )
-        self._render_template(
-            "frontend/src/components/FileManager.vue.j2",
-            components_dir / "FileManager.vue",
-            context,
-        )
         if context["enable_terminal"]:
             self._render_template(
                 "frontend/src/components/TerminalView.vue.j2",
@@ -234,6 +239,12 @@ class TemplateEngine:
                 composables_dir / "useTerminalSessions.js",
                 context,
             )
+        # 通用设置页是标配（yaml 驱动 + schema 增强），密钥管理也集成在内
+        self._render_template(
+            "frontend/src/components/SettingsView.vue.j2",
+            components_dir / "SettingsView.vue",
+            context,
+        )
         if context["enable_logs"]:
             self._render_template(
                 "frontend/src/components/LogViewer.vue.j2",
@@ -351,6 +362,11 @@ class TemplateEngine:
         )
         self._render_template(
             "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
+        )
+        # 同步生成一份 secrets.yaml：dev 模式设置页立即出现密钥框，build 的
+        # example 同步也不再缺文件；该文件在 .gitignore 中，不会进仓库
+        shutil.copy2(
+            configs_dir / "secrets.yaml.example", configs_dir / "secrets.yaml"
         )
         if context["enable_update"]:
             self._render_template(
