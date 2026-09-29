@@ -263,6 +263,13 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
+    "--logs",
+    "logs",
+    is_flag=True,
+    default=False,
+    help="启用日志中心（后端日志 SSE 实时推送 + 级别/关键词过滤 + 导出）",
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
@@ -283,6 +290,7 @@ def init_command(
     terminal: bool,
     icon: str | None,
     update: bool,
+    logs: bool,
     skip_install: bool,
 ):
     """
@@ -345,6 +353,7 @@ def init_command(
         "port": port,
         "terminal": terminal,
         "update": update,
+        "logs": logs,
         "icon": icon,
         "skip_install": skip_install,
     })
@@ -352,6 +361,7 @@ def init_command(
     port = form_result["port"]
     terminal = form_result["terminal"]
     update = form_result["update"]
+    logs = form_result["logs"]
     icon = form_result["icon"]
     skip_install = form_result["skip_install"]
 
@@ -378,6 +388,7 @@ def init_command(
             backend_port=port,
             enable_terminal=terminal,
             enable_update=update,
+            enable_logs=logs,
             icon_path=icon_path,
         )
 

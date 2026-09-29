@@ -8,6 +8,9 @@ import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
 import FileManager from './components/FileManager.vue'
+[% if enable_logs %]
+import LogViewer from './components/LogViewer.vue'
+[% endif %]
 
 const currentPage = ref('home')
 [% if icon_path %]
@@ -16,6 +19,9 @@ const showIconFallback = ref(false)
 
 const navItems = [
   { id: 'home', label: '首页', icon: '🏠' },
+[% if enable_logs %]
+  { id: 'logs', label: '日志', icon: '📜' },
+[% endif %]
 [% if enable_terminal %]
   { id: 'terminal', label: '终端', icon: '💻' },
 [% endif %]
@@ -90,6 +96,9 @@ const openSettings = () => {
         :class="currentPage === 'home' ? 'page-content--centered' : 'page-content--stretch'"
       >
         <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
+[% if enable_logs %]
+        <LogViewer v-else-if="currentPage === 'logs'" />
+[% endif %]
         <FileManager v-else-if="currentPage === 'settings'" />
 [% if enable_terminal %]
         <TerminalPanel v-show="currentPage === 'terminal'" />

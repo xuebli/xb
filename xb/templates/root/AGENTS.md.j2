@@ -68,6 +68,8 @@
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
 [% if enable_terminal %]| 改内置终端 | 后端 `backend/api/terminal/` + 前端 `TerminalPanel.vue` / `TerminalView.vue` / `useTerminalSessions.js` | Linux/macOS 使用 bash + Unix PTY；Windows 使用 PowerShell + ConPTY |
 [% endif %]
+[% if enable_logs %]| 改日志中心 | 后端 `backend/api/logs.py` + 前端 `LogViewer.vue` | loguru sink 进内存环形缓冲（2000 条），SSE 0.5s 增量推送；级别/关键词过滤在前端 |
+[% endif %]
 | 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
 | 改安装/卸载副作用 | `electron/resources/postinst.py` / `postrm.py` / `uninstaller.nsh` | Linux DEB 使用 Python 钩子；Windows NSIS 卸载复选项在 `uninstaller.nsh` |
 | 改 Electron 窗口尺寸/菜单 | `electron/main.js` | `BrowserWindow` 构造参数 |

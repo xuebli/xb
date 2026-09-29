@@ -57,6 +57,11 @@ class ConfigForm:
                 "hint": "Linux 提权走 polkit，无密码落盘",
             },
             {
+                "key": "logs", "label": "日志中心", "type": "toggle",
+                "checked": bool(cli.get("logs")),
+                "hint": "实时查看后端日志，排障刚需",
+            },
+            {
                 "key": "icon", "label": "应用图标", "type": "text",
                 "checked": False,
                 "value": str(cli.get("icon") or ""),
@@ -247,12 +252,14 @@ class ConfigForm:
                     f"端口 {port_row['value'] or '(空)'} 无效，已回退默认 8000/5173")
 
         update = self._row("update")["checked"]
+        logs = self._row("logs")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
         disabled = f"{DIM}关{RESET}"
         flags = f"  终端: {enabled if self._row('terminal')['checked'] else disabled}" \
                 f"   更新: {enabled if update else disabled}" \
+                f"   日志: {enabled if logs else disabled}" \
                 f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
         port_text = f"{port}/{port + 1}" if port else "8000/5173"
         sys.stdout.write(
@@ -266,6 +273,7 @@ class ConfigForm:
             "port": port,
             "terminal": self._row("terminal")["checked"],
             "update": update,
+            "logs": logs,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
             "skip_install": self._row("skip_install")["checked"],
         }
@@ -279,6 +287,7 @@ def run_config_form(package: str, cli: dict) -> dict:
             "port": cli.get("port"),
             "terminal": bool(cli.get("terminal")),
             "update": bool(cli.get("update")),
+            "logs": bool(cli.get("logs")),
             "icon": cli.get("icon"),
             "skip_install": bool(cli.get("skip_install")),
         }

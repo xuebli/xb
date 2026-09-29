@@ -52,11 +52,18 @@ def test_update_hint_suppressed_on_windows(monkeypatch, tmp_path):
     assert "polkit" not in output
 
 
+def test_logs_passed_through(monkeypatch, tmp_path):
+    captured, _ = _invoke_init(monkeypatch, tmp_path, ["--logs"])
+
+    assert captured["enable_logs"] is True
+
+
 def test_plain_init_has_no_update(monkeypatch, tmp_path):
     captured, _ = _invoke_init(monkeypatch, tmp_path, [])
 
     assert captured["enable_update"] is False
     assert captured["enable_terminal"] is False
+    assert captured["enable_logs"] is False
 
 
 def test_display_name_passed_through(monkeypatch, tmp_path):

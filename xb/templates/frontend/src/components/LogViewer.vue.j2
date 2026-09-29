@@ -1,0 +1,330 @@
+<script setup>
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+
+const LEVEL_RANK = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 }
+const BUFFER_MAX = 2000
+
+const connected = ref(false)
+const minLevel = ref('DEBUG')
+const keyword = ref('')
+const autoScroll = ref(true)
+const logs = ref([])
+const logListEl = ref(null)
+
+let source = null
+let lastSeq = 0
+
+const filtered = computed(() => {
+  const min = LEVEL_RANK[minLevel.value] ?? 0
+  const kw = keyword.value.trim().toLowerCase()
+  if (min <= 0 && !kw) return logs.value
+  return logs.value.filter(
+    (item) =>
+      (LEVEL_RANK[item.level] ?? 20) >= min &&
+      (!kw ||
+        item.message.toLowerCase().includes(kw) ||
+        item.source.toLowerCase().includes(kw)),
+  )
+})
+
+const levelClass = (level) => `level--${level.toLowerCase()}`
+
+const fmtTime = (ts) => {
+  const d = new Date(ts * 1000)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+const nearBottom = () => {
+  const el = logListEl.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 48
+}
+
+const append = (item) => {
+  const stick = autoScroll.value && nearBottom()
+  logs.value.push(item)
+  if (logs.value.length > BUFFER_MAX) {
+    logs.value.splice(0, logs.value.length - BUFFER_MAX)
+  }
+  if (stick) {
+    requestAnimationFrame(() => {
+      const el = logListEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  }
+}
+
+const connect = () => {
+  source = new EventSource(`/api/logs/stream?after=${lastSeq}`)
+  source.onopen = () => {
+    connected.value = true
+  }
+  // EventSource 断线自动重连，这里只负责状态展示
+  source.onerror = () => {
+    connected.value = false
+  }
+  source.onmessage = (event) => {
+    connected.value = true
+    const item = JSON.parse(event.data)
+    lastSeq = item.seq
+    append(item)
+  }
+}
+
+const clearView = () => {
+  logs.value = []
+}
+
+const exportLogs = () => {
+  const text = filtered.value
+    .map(
+      (item) =>
+        `[${new Date(item.ts * 1000).toISOString()}] [${item.level}] [${item.source}] ${item.message}`,
+    )
+    .join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `logs-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.log`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/logs/recent?limit=500')
+    const data = await res.json()
+    logs.value = data.logs
+    lastSeq = data.last_seq
+  } catch {
+    // 后端未就绪：SSE 自动重连会兜底
+  }
+  connect()
+})
+
+onBeforeUnmount(() => {
+  source?.close()
+  source = null
+})
+</script>
+
+<template>
+  <div class="logview">
+    <div class="logview-header">
+      <div>
+        <p class="logview-kicker">Log Center</p>
+        <h2>日志中心</h2>
+      </div>
+      <span class="logview-pill" :class="{ offline: !connected }">
+        {{ connected ? '实时推送' : '重连中...' }}
+      </span>
+    </div>
+
+    <div class="logview-toolbar">
+      <select v-model="minLevel" class="logview-select" title="最低级别">
+        <option value="DEBUG">DEBUG 及以上</option>
+        <option value="INFO">INFO 及以上</option>
+        <option value="WARNING">WARNING 及以上</option>
+        <option value="ERROR">ERROR 及以上</option>
+      </select>
+      <input
+        v-model="keyword"
+        class="logview-input"
+        type="search"
+        placeholder="过滤关键词（消息 / 来源）"
+      />
+      <label class="logview-check">
+        <input v-model="autoScroll" type="checkbox" />
+        自动滚动
+      </label>
+      <button class="logview-button" @click="exportLogs">导出</button>
+      <button class="logview-button" @click="clearView">清屏</button>
+      <span class="logview-count">{{ filtered.length }} / {{ logs.length }} 条</span>
+    </div>
+
+    <div ref="logListEl" class="logview-list">
+      <div v-if="!filtered.length" class="logview-empty">
+        {{ logs.length ? '没有匹配的日志' : '暂无日志，触发一些操作试试' }}
+      </div>
+      <div v-for="item in filtered" :key="item.seq" class="logview-row">
+        <span class="log-time">{{ fmtTime(item.ts) }}</span>
+        <span class="log-level" :class="levelClass(item.level)">{{ item.level }}</span>
+        <span class="log-source">{{ item.source }}</span>
+        <pre class="log-message">{{ item.message }}</pre>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.logview {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px 24px;
+}
+
+.logview-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.logview-kicker {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.logview-header h2 {
+  margin: 6px 0 0;
+  color: var(--text-h);
+  font-size: 1.6rem;
+}
+
+.logview-pill {
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.logview-pill.offline {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.logview-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logview-select,
+.logview-input {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.logview-input {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
+.logview-select:focus,
+.logview-input:focus {
+  border-color: var(--border-strong);
+}
+
+.logview-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.logview-button {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.logview-button:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.logview-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.logview-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border: 1px solid rgba(124, 58, 237, 0.16);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.logview-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.logview-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(90px, auto) 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.log-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-level {
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.level--debug { color: var(--muted); }
+.level--info { color: var(--blue); }
+.level--warning { color: var(--amber); }
+.level--error { color: #ef4444; }
+.level--critical { color: #ef4444; font-weight: 800; }
+
+.log-source {
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-message {
+  margin: 0;
+  font: inherit;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+</style>

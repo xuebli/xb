@@ -15,6 +15,9 @@ from api.terminal import router as terminal_router
 [% if enable_update %]
 from api.update import router as update_router
 [% endif %]
+[% if enable_logs %]
+from api.logs import attach_log_sink, router as logs_router
+[% endif %]
 
 logger = get_logger(__name__)
 _cleanup_done = False
@@ -102,6 +105,10 @@ app.include_router(terminal_router, prefix="/api")
 [% endif %]
 [% if enable_update %]
 app.include_router(update_router, prefix="/api")
+[% endif %]
+[% if enable_logs %]
+app.include_router(logs_router, prefix="/api")
+attach_log_sink()
 [% endif %]
 
 

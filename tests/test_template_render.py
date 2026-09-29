@@ -1,4 +1,4 @@
-"""模板渲染矩阵测试：terminal x update 全组合。
+"""模板渲染矩阵测试：terminal x update x logs 全组合。
 
 渲染到临时目录，校验：
 - 条件文件按开关出现/缺席（防止模板改坏条件渲染）
@@ -15,11 +15,11 @@ import pytest
 
 from xb.utils.template_engine import TemplateEngine
 
-COMBOS = list(itertools.product([False, True], repeat=2))
+COMBOS = list(itertools.product([False, True], repeat=3))
 
 
-def _render(tmp_path, enable_terminal, enable_update, display_name=None,
-            backend_port=None):
+def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
+            display_name=None, backend_port=None):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -28,13 +28,16 @@ def _render(tmp_path, enable_terminal, enable_update, display_name=None,
         backend_port=backend_port,
         enable_terminal=enable_terminal,
         enable_update=enable_update,
+        enable_logs=enable_logs,
     )
     return target
 
 
-@pytest.mark.parametrize(("enable_terminal", "enable_update"), COMBOS)
-def test_render_project_matrix(tmp_path, enable_terminal, enable_update):
-    target = _render(tmp_path, enable_terminal, enable_update)
+@pytest.mark.parametrize(
+    ("enable_terminal", "enable_update", "enable_logs"), COMBOS
+)
+def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_logs):
+    target = _render(tmp_path, enable_terminal, enable_update, enable_logs)
 
     # 基础骨架始终存在
     for rel in (
@@ -70,6 +73,8 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update):
         "electron/resources/polkit/privileged.policy": enable_update,
         "electron/resources/polkit/privileged.rules": enable_update,
         "electron/resources/polkit/privileged-helper.sh": enable_update,
+        "backend/api/logs.py": enable_logs,
+        "frontend/src/components/LogViewer.vue": enable_logs,
     }
     for rel, should_exist in conditional.items():
         assert (target / rel).exists() is should_exist, f"{rel} 存在性与开关不符"
@@ -101,13 +106,42 @@ def test_render_project_main_py_switches(tmp_path):
     main_plain = (plain / "backend" / "main.py").read_text(encoding="utf-8")
     assert "terminal_router" not in main_plain
     assert "update_router" not in main_plain
+    assert "logs_router" not in main_plain
     assert "sudoers_manager" not in main_plain
 
-    full = _render(tmp_path / "b", True, True)
+    full = _render(tmp_path / "b", True, True, True)
     main_full = (full / "backend" / "main.py").read_text(encoding="utf-8")
     assert "terminal_router" in main_full
     assert "update_router" in main_full
+    assert "logs_router" in main_full
+    assert "attach_log_sink()" in main_full
     assert "sudoers_manager" not in main_full
+
+
+def test_logs_assets(tmp_path):
+    """--logs 项目自带日志接口与面板，关闭时不生成。"""
+    target = _render(tmp_path, False, False, True)
+
+    logs_py = (target / "backend" / "api" / "logs.py").read_text(encoding="utf-8")
+    compile(logs_py, "logs.py", "exec")
+    assert "/logs/recent" in logs_py
+    assert "/logs/stream" in logs_py
+    # 日志功能零新增依赖：fastapi/loguru 本来就在 pyproject 里
+    assert "loguru" in (target / "pyproject.toml").read_text(encoding="utf-8")
+
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "LogViewer" in app_vue
+    assert "{ id: 'logs', label: '日志'" in app_vue
+
+    # 前端不引入新 npm 依赖（SSE 用原生 EventSource）
+    frontend_pkg = json.loads(
+        (target / "frontend" / "package.json").read_text(encoding="utf-8")
+    )
+    assert "echarts" not in frontend_pkg["dependencies"]
+
+    plain = _render(tmp_path / "plain", False, False, False)
+    assert not (plain / "backend" / "api" / "logs.py").exists()
+    assert not (plain / "frontend" / "src" / "components" / "LogViewer.vue").exists()
 
 
 def test_display_name_defaults_to_capitalized_package(tmp_path):

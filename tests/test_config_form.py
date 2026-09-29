@@ -58,8 +58,15 @@ def test_collect_unchecked_items_are_none():
     assert result["port"] is None
     assert result["terminal"] is False
     assert result["update"] is False
+    assert result["logs"] is False
     assert result["icon"] is None
     assert result["skip_install"] is False
+
+
+def test_collect_logs_toggled():
+    form = make_form({"logs": True})
+    result = form.collect()
+    assert result["logs"] is True
 
 
 def test_collect_valid_port():
@@ -99,6 +106,7 @@ def test_run_config_form_skipped_when_not_tty():
         "port": 9100,
         "terminal": True,
         "update": True,
+        "logs": True,
         "icon": None,
         "skip_install": False,
     })
@@ -106,4 +114,5 @@ def test_run_config_form_skipped_when_not_tty():
     assert result["port"] == 9100
     assert result["terminal"] is True
     assert result["update"] is True
+    assert result["logs"] is True
     assert result["display_name"] is None

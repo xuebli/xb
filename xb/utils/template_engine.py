@@ -39,6 +39,7 @@ class TemplateEngine:
         backend_port: int | None = None,
         enable_terminal: bool = False,
         enable_update: bool = False,
+        enable_logs: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -58,6 +59,7 @@ class TemplateEngine:
             "frontend_port": (backend_port + 1) if backend_port else 5173,
             "enable_terminal": enable_terminal,
             "enable_update": enable_update,
+            "enable_logs": enable_logs,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -113,6 +115,11 @@ class TemplateEngine:
                 "backend/api/update/__init__.py.j2",
                 update_dir / "__init__.py",
                 context,
+            )
+
+        if context["enable_logs"]:
+            self._render_template(
+                "backend/api/logs.py.j2", backend_dir / "api" / "logs.py", context
             )
 
         self._render_template(
@@ -225,6 +232,12 @@ class TemplateEngine:
             self._render_template(
                 "frontend/src/composables/useTerminalSessions.js.j2",
                 composables_dir / "useTerminalSessions.js",
+                context,
+            )
+        if context["enable_logs"]:
+            self._render_template(
+                "frontend/src/components/LogViewer.vue.j2",
+                components_dir / "LogViewer.vue",
                 context,
             )
         if context["enable_update"]:

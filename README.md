@@ -13,6 +13,7 @@
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
 - 可选内置终端（`--terminal`）
+- 可选日志中心（`--logs`，后端日志实时推送到界面，排障不用登机器）
 - 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
@@ -48,6 +49,9 @@ xb init demo
 # 带内置终端
 xb init demo --terminal
 
+# 带日志中心
+xb init demo --logs
+
 # 启用应用内自动更新（Linux 提权走 polkit，管理员组无感更新，无密码落盘）
 xb init demo --update
 
@@ -77,6 +81,7 @@ xb dev stop
   [ ] 端口（后端/前端） : 8000 / 8001
   [ ] 内置终端  ✘  (Web 终端组件)
   [ ] 应用内更新  ✘  (Linux 提权走 polkit，无密码落盘)
+  [ ] 日志中心  ✘  (实时查看后端日志，排障刚需)
   [ ] 应用图标 : 使用默认
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
 ```
@@ -123,7 +128,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
