@@ -1,0 +1,85 @@
+"""polkit 特权操作客户端。
+
+特权命令统一走 pkexec 调用 root 拥有的 privileged-helper——白名单校验
+全部写死在 helper 内（普通用户不可修改），管理员组（sudo/wheel）成员
+免密执行，全程无密码落盘。
+
+授权机制：pkexec 的判定固定使用 org.freedesktop.policykit.exec action
+（pkexec 无法指定自定义 action-id），免密放行由 rules
+（/etc/polkit-1/rules.d/60-[[ package_name ]]-privileged.rules）按
+program 白名单（仅 privileged-helper）实现。
+
+新增特权操作的步骤：
+1. 在 electron/resources/polkit/privileged-helper.sh.j2 的 case 中加分支：
+   参数逐一校验（realpath/格式/路径白名单），命令用绝对路径并以 exec 执行；
+2. 业务代码通过 privileged_manager.run("<action>", ...) 调用，
+   禁止在业务代码里直接 subprocess 弹 sudo/pkexec 密码。
+"""
+
+import subprocess
+from pathlib import Path
+
+from .logger_manager import get_logger
+
+logger = get_logger(__name__)
+
+# 由 DEB postinst 以 root 身份部署（见 electron/resources/postinst.py.j2）
+HELPER = Path("/usr/local/share/[[ package_name ]]/privileged-helper")
+POLICY = Path("/usr/share/polkit-1/actions/com.[[ package_name ]].privileged.policy")
+RULES = Path("/etc/polkit-1/rules.d/60-[[ package_name ]]-privileged.rules")
+
+
+def helper_available() -> bool:
+    """特权入口是否存在（tar.gz 手动安装时不会自动部署）。"""
+    return HELPER.exists()
+
+
+def deploy_hint() -> str:
+    """helper 缺失时的部署指引。"""
+    return (
+        "未找到 polkit 特权入口（DEB 安装时由 postinst 自动部署）。\n"
+        "开发模式请执行: python dev.py polkit install\n"
+        "tar.gz 手动安装请以 root 执行:\n"
+        f"  install -m755 resources/polkit/privileged-helper.sh {HELPER}\n"
+        f"  install -m644 resources/polkit/privileged.policy {POLICY}\n"
+        f"  install -m644 resources/polkit/privileged.rules {RULES}"
+    )
+
+
+def run(action: str, *args: str, timeout: float = 300) -> dict:
+    """执行白名单内的特权操作。
+
+    返回 {"ok", "returncode", "stdout", "stderr"}，不抛异常，
+    调用方按 ok 分支处理；stdout/stderr 已解码为文本。
+    """
+    if not helper_available():
+        hint = deploy_hint()
+        logger.error(hint)
+        return {"ok": False, "returncode": -1, "stdout": "", "stderr": hint}
+
+    cmd = ["pkexec", str(HELPER), action, *[str(a) for a in args]]
+    logger.info(f"执行特权操作: {action}")
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        logger.error(f"特权操作超时({timeout}s): {action}")
+        return {"ok": False, "returncode": -1, "stdout": "", "stderr": "timeout"}
+    except OSError as e:
+        logger.error(f"特权操作启动失败: {e}")
+        return {"ok": False, "returncode": -1, "stdout": "", "stderr": str(e)}
+
+    if result.returncode == 0:
+        logger.info(f"特权操作完成: {action}")
+    else:
+        logger.error(
+            f"特权操作失败(exit {result.returncode}): {action} "
+            f"{result.stderr.strip()[:200]}"
+        )
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }

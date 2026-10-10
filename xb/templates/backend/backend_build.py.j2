@@ -34,6 +34,13 @@ PyInstaller.__main__.run(
         "--hidden-import=uvicorn.protocols.websockets.websockets_impl",
         "--collect-submodules=websockets",
 [% endif %]
+[% if enable_update %]
+        "--hidden-import=app_version",
+        "--hidden-import=managers.secret_obfuscator",
+        "--hidden-import=services.updater",
+        "--hidden-import=services.feishu_client",
+        "--hidden-import=api.update",
+[% endif %]
         "--hidden-import=uvicorn.lifespan",
         "--hidden-import=uvicorn.lifespan.on",
     ]

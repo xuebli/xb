@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""飞书文件上传工具（发版用）
+
+用法：
+  上传文件：python scripts/feishu_upload.py upload <文件路径> [文件路径2 ...] [--json]
+  上传版本信息：python scripts/feishu_upload.py upload-info [--json]
+
+加 --json 时，进度信息走 stderr，stdout 只输出一份 JSON 结果，供 build.py 解析。
+
+上传目标文件夹 token 配置在 configs/secrets.yaml 的 feishu.update_folder_url
+（客户端检查更新读同一配置），未配置时脚本报错退出。
+"""
+
+import fnmatch
+import hashlib
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+from pathlib import Path
+
+# 项目根目录
+ROOT = Path(__file__).resolve().parent.parent
+
+# 飞书 API 地址
+BASE_URL = "https://open.feishu.cn/open-apis"
+
+# 本地 token 记录（datas/ 已 gitignore，仅构建机用）。上传端通常只有
+# drive:file:upload 权限、不能列举文件夹，删旧文件只能靠上次上传后记录的 token。
+TOKEN_RECORD_FILE = ROOT / "datas" / "feishu_tokens.json"
+
+# upload_all 接口官方上限 20MB，超过必须走分片上传，否则连接会被飞书网关掐断
+UPLOAD_ALL_MAX_SIZE = 20 * 1024 * 1024
+# 列举文件夹 page_size 官方上限 100，超限直接 HTTP 400
+LIST_PAGE_SIZE = 100
+# 分片上传单片失败重试次数
+PART_RETRY = 3
+
+# --json 模式下所有人类可读输出都走 stderr，保证 stdout 是干净的 JSON
+JSON_MODE = False
+
+
+def log(message: str):
+    print(message, file=sys.stderr if JSON_MODE else sys.stdout)
+
+
+def _read_feishu_section() -> dict:
+    """读取 secrets.yaml 的 feishu 段（不存在返回空 dict）。"""
+    secrets_file = ROOT / "configs" / "secrets.yaml"
+    if not secrets_file.exists():
+        return {}
+    try:
+        import yaml
+        with open(secrets_file, "r", encoding="utf-8") as f:
+            return ((yaml.safe_load(f) or {}).get("feishu") or {})
+    except Exception:
+        return {}
+
+
+def _file_url_prefix() -> str:
+    """云文档下载页前缀（仅用于展示，应用内下载走 file_token）。
+
+    飞书租户域名因企业而异，从 update_folder_url 的域名推导，
+    配置里没有任何链接时退回通用占位。
+    """
+    url = (_read_feishu_section().get("update_folder_url") or "").strip()
+    netloc = urllib.parse.urlsplit(url).netloc if url.startswith("http") else ""
+    return f"https://{netloc}/file" if netloc else "https://feishu.cn/file"
+
+
+FILE_URL_PREFIX = _file_url_prefix()
+
+
+def get_feishu_config():
+    """读取飞书配置。app_secret 支持 obf1: 混淆形态（与后端 secret_obfuscator 同算法）。"""
+    secrets_file = ROOT / "configs" / "secrets.yaml"
+    if not secrets_file.exists():
+        log("❌ 未找到 configs/secrets.yaml")
+        return None, None
+
+    try:
+        import base64
+        import yaml
+
+        key = b"[[ package_name ]]$SecretObfuscation#2026"
+
+        def deobfuscate(value):
+            """obf1: 前缀的混淆值解密还原；明文值原样返回。"""
+            if not isinstance(value, str) or not value.startswith("obf1:"):
+                return value
+            try:
+                raw = base64.urlsafe_b64decode(value[len("obf1:"):].encode("ascii"))
+                return bytes(b ^ key[i % len(key)] for i, b in enumerate(raw)).decode("utf-8")
+            except Exception:
+                return ""
+
+        with open(secrets_file, "r", encoding="utf-8") as f:
+            secrets = yaml.safe_load(f) or {}
+        feishu = secrets.get("feishu", {})
+        app_id = deobfuscate(feishu.get("app_id", ""))
+        app_secret = deobfuscate(feishu.get("app_secret", ""))
+        return app_id, app_secret
+    except Exception as e:
+        log(f"❌ 读取飞书配置失败: {e}")
+        return None, None
+
+
+def get_folder_token() -> str:
+    """上传目标文件夹，唯一来源是 secrets.yaml 的 feishu.update_folder_url。
+
+    支持填完整链接（https://xxx.feishu.cn/drive/folder/<token>）或裸 token。
+    """
+    value = (_read_feishu_section().get("update_folder_url") or "").strip()
+    if value:
+        # 链接形态：去掉 query 与尾部斜杠后取路径最后一段
+        value = value.split("?")[0].rstrip("/")
+        if "/" in value or "." in value:
+            value = value.rsplit("/", 1)[-1]
+        return value
+    log("❌ 未配置 feishu.update_folder_url（configs/secrets.yaml），无法确定上传目标文件夹")
+    return ""
+
+
+def get_tenant_access_token(app_id: str, app_secret: str) -> str:
+    """获取飞书 tenant_access_token"""
+    url = f"{BASE_URL}/auth/v3/tenant_access_token/internal"
+    payload = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            if result.get("code") == 0:
+                return result.get("tenant_access_token", "")
+            log(f"❌ 获取 token 失败: {result}")
+    except Exception as e:
+        log(f"❌ 获取 token 异常: {e}")
+    return ""
+
+
+def calculate_hash(file_path: Path) -> str:
+    """计算文件 SHA256 哈希"""
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return f"sha256:{sha256.hexdigest()}"
+
+
+def load_token_record() -> dict:
+    """读取本地上次上传的 file_token 记录。"""
+    if not TOKEN_RECORD_FILE.exists():
+        return {}
+    try:
+        with open(TOKEN_RECORD_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception as e:
+        log(f"⚠️ 读取 token 记录失败: {e}")
+        return {}
+
+
+def save_token_record(key: str, file_token: str):
+    """记录某文件最近一次上传的 file_token，供下次上传前清理旧文件。"""
+    record = load_token_record()
+    record[key] = file_token
+    TOKEN_RECORD_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(TOKEN_RECORD_FILE, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+
+
+def rotate_token_record(token: str, key: str, new_token: str, purge_pattern: str = None):
+    """记录新 token；purge_pattern 非空时清理云盘上的同名旧文件。
+
+    安装包（deb/exe）保留全部历史版本供回滚，调用方不传 purge_pattern、
+    只记录 token；update_*.json 必须传（同名文件按 modified_time 取最新，
+    残缺旧文件若比新文件晚传会被误当成最新）。清理失败仅告警不阻塞；
+    列举失败（无权限）时回落用本地 token 记录尽力删一份。
+    """
+    old_token = load_token_record().get(key, "")
+    save_token_record(key, new_token)
+    if not purge_pattern:
+        return
+    folder = get_folder_token()
+    if not folder:
+        log("   ⚠️ 未配置 update_folder_url，跳过云盘旧文件清理")
+        return
+    deleted = purge_old_files(token, folder, purge_pattern, keep_token=new_token)
+    if deleted > 0:
+        log(f"   🗑 已清理旧版本 {deleted} 个: {purge_pattern}")
+        return
+    if deleted == 0:
+        return
+    # 列举失败：按本地记录尽力删一份
+    if old_token and old_token != new_token and delete_file(token, old_token):
+        log(f"   🗑 已清理旧版本: {key}")
+    elif old_token and old_token != new_token:
+        log(f"   ⚠️ 旧版本删除失败（缺权限？），请手动清理: {key}")
+
+
+def list_folder_files(token: str, folder_token: str) -> list:
+    """列举文件夹下的文件。"""
+    files = []
+    page_token = ""
+    while True:
+        url = f"{BASE_URL}/drive/v1/files?folder_token={folder_token}&page_size={LIST_PAGE_SIZE}"
+        if page_token:
+            url += f"&page_token={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            log(f"⚠️ 列举文件夹失败 HTTP {e.code}: {detail}")
+            return files
+        except Exception as e:
+            log(f"⚠️ 列举文件夹失败: {e}")
+            return files
+        if result.get("code") != 0:
+            log(f"⚠️ 列举文件夹失败: {result}")
+            return files
+        data = result.get("data", {})
+        files.extend(data.get("files") or [])
+        if not data.get("has_more"):
+            break
+        page_token = data.get("next_page_token", "")
+        if not page_token:
+            break
+    return files
+
+
+def delete_file(token: str, file_token: str) -> bool:
+    """删除云文档文件（移入回收站）。"""
+    url = f"{BASE_URL}/drive/v1/files/{file_token}?type=file"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("code") == 0
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        log(f"⚠️ 删除旧文件失败 HTTP {e.code}: {detail}")
+        return False
+    except Exception as e:
+        log(f"⚠️ 删除旧文件失败: {e}")
+        return False
+
+
+def purge_old_files(token: str, folder_token: str, name_pattern: str, keep_token: str = "") -> int:
+    """列举文件夹，删除所有匹配 name_pattern 的旧文件（保留 keep_token）。
+
+    返回删除个数；列举失败（应用缺 drive:drive 权限等）返回 -1。
+    upload_all 不覆盖同名文件而是新建一份，不清理会让旧版本越积越多，
+    客户端虽按 modified_time 取最新，但残缺的旧文件可能被误当成最新。
+    """
+    files: list = []
+    page_token = ""
+    while True:
+        url = (
+            f"{BASE_URL}/drive/v1/files?folder_token={folder_token}&page_size={LIST_PAGE_SIZE}"
+            + (f"&page_token={page_token}" if page_token else "")
+        )
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            if "99991672" in detail:
+                log("   ⚠️ 飞书应用缺少 drive:drive 权限，无法列举/清理旧文件，"
+                    "请到开放平台开通：https://open.feishu.cn/app/auth?q=drive:drive")
+            else:
+                log(f"   ⚠️ 列举文件夹失败 HTTP {e.code}: {detail[:200]}")
+            return -1
+        except Exception as e:
+            log(f"   ⚠️ 列举文件夹失败: {e}")
+            return -1
+        if result.get("code") != 0:
+            log(f"   ⚠️ 列举文件夹失败: {result.get('msg')}")
+            return -1
+        data = result.get("data", {})
+        files.extend(data.get("files") or [])
+        if not data.get("has_more"):
+            break
+        page_token = data.get("next_page_token", "")
+        if not page_token:
+            break
+
+    deleted = 0
+    for f in files:
+        name = f.get("name") or ""
+        if not fnmatch.fnmatch(name, name_pattern) or f.get("token") == keep_token:
+            continue
+        if delete_file(token, f["token"]):
+            deleted += 1
+        else:
+            log(f"   ⚠️ 旧文件删除失败，请到飞书网页手动清理: {name} ({f['token']})")
+    return deleted
+
+
+def _build_multipart(fields: list, boundary: str) -> bytes:
+    """构造 multipart/form-data 请求体。fields: [(name, str|bytes), (name, filename, bytes)]"""
+    body = b""
+    for field in fields:
+        body += f"--{boundary}\r\n".encode()
+        if len(field) == 2:
+            name, value = field
+            body += f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        else:
+            name, filename, data = field
+            body += f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
+            body += b"Content-Type: application/octet-stream\r\n\r\n"
+            body += data
+            body += b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    return body
+
+
+def _post_json(url: str, payload: bytes, token: str, timeout: int = 60):
+    """POST JSON 并解析响应，返回 (result, err)。result 为 None 表示请求层失败。"""
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read()), ""
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        return None, f"HTTP {e.code}: {detail}"
+    except Exception as e:
+        return None, str(e)
+
+
+def _progress_stream():
+    """进度条输出流：--json 模式走 stderr，保证 stdout 只有一份 JSON 结果。"""
+    return sys.stderr if JSON_MODE else sys.stdout
+
+
+def print_progress(done: int, total: int, width: int = 26) -> None:
+    """单行动态进度条（\\r 原地刷新，每片上传完成后推进一格）。
+
+    --json 模式下进度额外写入 datas/logs/upload_progress.json，
+    供 build.py 轮询渲染汇总进度行。
+    """
+    pct = min(done / total, 1.0) if total else 0.0
+    filled = int(width * pct)
+    bar = "█" * filled + "░" * (width - filled)
+    if JSON_MODE:
+        try:
+            prog_file = ROOT / "datas" / "logs" / "upload_progress.json"
+            prog_file.parent.mkdir(parents=True, exist_ok=True)
+            prog_file.write_text(
+                json.dumps({"sent": done, "total": total}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        return
+    print(
+        f"\r   ⏳ [{bar}] {pct * 100:5.1f}% {done / 1048576:7.1f}/{total / 1048576:.1f}MB",
+        end="",
+        file=_progress_stream(),
+        flush=True,
+    )
+
+
+def finish_progress() -> None:
+    """进度条结束，换行脱离 \\r 原地刷新。"""
+    print(file=_progress_stream(), flush=True)
+
+
+def upload_file_chunked(token: str, file_path: Path, parent_token: str) -> str:
+    """大文件分片上传（upload_prepare → upload_part × N → upload_finish），返回 file_token"""
+    file_size = file_path.stat().st_size
+
+    # 1. 准备：申请 upload_id 与分片信息
+    result, err = _post_json(
+        f"{BASE_URL}/drive/v1/files/upload_prepare",
+        json.dumps({
+            "file_name": file_path.name,
+            "parent_type": "explorer",
+            "parent_node": parent_token,
+            "size": file_size,
+        }).encode(),
+        token,
+    )
+    if result is None or result.get("code") != 0:
+        log(f"   ❌ 分片上传准备失败: {err or result}")
+        return ""
+    data = result.get("data", {})
+    upload_id = data.get("upload_id", "")
+    block_num = int(data.get("block_num", 0))
+    block_size = int(data.get("block_size") or 0) or (4 * 1024 * 1024)
+    if not upload_id or block_num <= 0:
+        log(f"   ❌ 分片上传准备返回异常: {result}")
+        return ""
+    log(f"   📦 共 {block_num} 片，每片 ≤ {block_size // 1024 // 1024}MB")
+
+    # 2. 逐片上传，单片失败重试
+    with open(file_path, "rb") as f:
+        uploaded = 0
+        for seq in range(block_num):
+            chunk = f.read(block_size)
+            ok = False
+            for attempt in range(1, PART_RETRY + 1):
+                boundary = f"----WebKitFormBoundary{int(time.time() * 1000)}{seq}"
+                # upload_part 表单必须带 size（本片大小），否则报 1062009；
+                # checksum 可选，传错格式反而报 1062008，直接不传
+                body = _build_multipart(
+                    [
+                        ("upload_id", upload_id),
+                        ("seq", str(seq)),
+                        ("size", str(len(chunk))),
+                        ("file", "blob", chunk),
+                    ],
+                    boundary,
+                )
+                req = urllib.request.Request(
+                    f"{BASE_URL}/drive/v1/files/upload_part",
+                    data=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    },
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        part_result = json.loads(resp.read())
+                    if part_result.get("code") == 0:
+                        ok = True
+                        break
+                    log(f"   ⚠️ 片 {seq + 1}/{block_num} 失败: {part_result}")
+                except Exception as e:
+                    log(f"   ⚠️ 片 {seq + 1}/{block_num} 异常: {e}")
+                if attempt < PART_RETRY:
+                    time.sleep(attempt)
+            if not ok:
+                log(f"   ❌ 片 {seq + 1}/{block_num} 重试 {PART_RETRY} 次仍失败，放弃")
+                finish_progress()
+                return ""
+            uploaded += len(chunk)
+            print_progress(uploaded, file_size)
+
+    finish_progress()
+
+    # 3. 完成：换取 file_token
+    result, err = _post_json(
+        f"{BASE_URL}/drive/v1/files/upload_finish",
+        json.dumps({"upload_id": upload_id, "block_num": block_num}).encode(),
+        token,
+    )
+    if result is None or result.get("code") != 0:
+        log(f"   ❌ 分片上传收尾失败: {err or result}")
+        return ""
+    return result.get("data", {}).get("file_token", "")
+
+
+def upload_file(token: str, file_path: Path, parent_token: str = None) -> str:
+    """上传文件到飞书云文档，返回 file_token；大于 20MB 自动切换分片上传"""
+    parent_token = parent_token or get_folder_token()
+    if not parent_token:
+        return ""
+    file_size = file_path.stat().st_size
+
+    if file_size > UPLOAD_ALL_MAX_SIZE:
+        return upload_file_chunked(token, file_path, parent_token)
+
+    boundary = f"----WebKitFormBoundary{int(time.time() * 1000)}"
+    body = _build_multipart(
+        [
+            ("file_name", file_path.name),
+            ("parent_type", "explorer"),
+            ("parent_node", parent_token),
+            ("size", str(file_size)),
+            ("file", file_path.name, file_path.read_bytes()),
+        ],
+        boundary,
+    )
+
+    url = f"{BASE_URL}/drive/v1/files/upload_all"
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read())
+            if result.get("code") == 0:
+                return result.get("data", {}).get("file_token", "")
+            log(f"❌ 上传失败: {result}")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        log(f"❌ 上传失败 HTTP {e.code}: {detail}")
+    except Exception as e:
+        log(f"❌ 上传异常: {e}")
+    return ""
+
+
+def upload_files(file_paths: list[Path]) -> list:
+    """批量上传文件"""
+    app_id, app_secret = get_feishu_config()
+    if not app_id or not app_secret:
+        return []
+
+    log("\n[1/2] 获取飞书 access token...")
+    token = get_tenant_access_token(app_id, app_secret)
+    if not token:
+        log("❌ 获取 token 失败")
+        return []
+    log("✅ Token 获取成功")
+
+    log("\n[2/2] 上传文件...")
+    results = []
+    for file_path in file_paths:
+        if not file_path.exists():
+            log(f"   ⚠️ 文件不存在: {file_path}")
+            continue
+
+        log(f"   上传 {file_path.name}...")
+        file_hash = calculate_hash(file_path)
+        file_token = upload_file(token, file_path)
+
+        if file_token:
+            log("   ✅ 上传成功")
+            results.append({
+                "name": file_path.name,
+                "token": file_token,
+                "hash": file_hash,
+                "size": file_path.stat().st_size,
+                "url": f"{FILE_URL_PREFIX}/{file_token}",
+            })
+            # 上传成功后记录 token；不同版本号的安装包保留供回滚，
+            # 仅清理同名旧文件（同版本重传的场景）
+            rotate_token_record(token, file_path.name, file_token, purge_pattern=file_path.name)
+        else:
+            log("   ❌ 上传失败")
+
+    # 输出结果
+    if results:
+        log("\n" + "=" * 60)
+        log("上传结果：")
+        log("=" * 60)
+        for r in results:
+            log(f"\n{r['name']}:")
+            log(f"  Token: {r['token']}")
+            log(f"  Hash: {r['hash']}")
+            log(f"  Size: {r['size']:,} bytes")
+            log(f"  URL: {r['url']}")
+
+    return results
+
+
+def upload_update_info() -> list:
+    """上传版本信息文件。
+
+    upload_all 不会覆盖同名文件而是新建一份；上传端通常没有列举文件夹权限，
+    旧文件清理依赖本地上次记录的 file_token（datas/feishu_tokens.json），
+    删除失败时需要到飞书网页手动清理。
+    """
+    app_id, app_secret = get_feishu_config()
+    if not app_id or not app_secret:
+        return []
+
+    log("\n获取飞书 access token...")
+    token = get_tenant_access_token(app_id, app_secret)
+    if not token:
+        log("❌ 获取 token 失败")
+        return []
+    log("✅ Token 获取成功")
+
+    folder_token = get_folder_token()
+    if not folder_token:
+        return []
+
+    results = []
+    for platform in ["ubuntu", "windows"]:
+        # 只上传 build.py 生成的 datas 版（含 version/package 等动态字段）。
+        # configs/config_changes.json 仅存配置迁移说明，绝不能作为上传源——
+        # 它不含 version/package，传上去会以最新 modified_time 顶掉飞书上的
+        # 完整版，导致该平台客户端检查不到任何版本。
+        update_file = ROOT / "datas" / f"update_{platform}.json"
+        if not update_file.exists():
+            log(f"   ⏭ 跳过 {platform}：缺少 datas/update_{platform}.json 发布产物"
+                f"（本机未构建该平台，或未走 build.py 发布流程）")
+            continue
+
+        log(f"\n上传 {update_file.name}...")
+        new_token = upload_file(token, update_file, folder_token)
+        if not new_token:
+            log("   ❌ 上传失败")
+            continue
+
+        log("   ✅ 上传成功")
+        results.append({"name": update_file.name, "token": new_token})
+
+        # 上传成功后再删旧的，避免删完上传失败导致客户端查无此文件；
+        # json 同名必须清理（客户端按 modified_time 取最新，残缺旧文件有风险）
+        rotate_token_record(token, update_file.name, new_token, purge_pattern=update_file.name)
+
+    return results
+
+
+def main():
+    global JSON_MODE
+
+    argv = [a for a in sys.argv[1:] if a != "--json"]
+    JSON_MODE = "--json" in sys.argv
+
+    if not argv:
+        print(__doc__)
+        sys.exit(1)
+
+    command = argv[0]
+
+    if command == "upload":
+        # 上传文件
+        if len(argv) < 2:
+            print("用法: python scripts/feishu_upload.py upload <文件路径> [文件路径2 ...]")
+            sys.exit(1)
+
+        file_paths = [Path(p) for p in argv[1:]]
+        results = upload_files(file_paths)
+        if JSON_MODE:
+            print(json.dumps({"results": results}, ensure_ascii=False))
+        if not results:
+            sys.exit(1)
+
+    elif command == "upload-info":
+        # 上传版本信息文件
+        results = upload_update_info()
+        if JSON_MODE:
+            print(json.dumps({"results": results}, ensure_ascii=False))
+        if not results:
+            sys.exit(1)
+
+    else:
+        print(f"未知命令: {command}")
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

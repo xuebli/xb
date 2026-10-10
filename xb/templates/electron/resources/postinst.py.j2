@@ -25,6 +25,26 @@ def run(command):
         return False
 
 
+def chown_tree(path, user):
+    """把 path 及其内容递归 chown 给 user；失败不中断安装。
+
+    dpkg 以 root 运行，脚本预创建的目录/复制的文件默认属主是 root，
+    必须归还真实用户，否则应用运行时（以普通用户身份）无写权限。
+    """
+    if pwd is None or user is None or path is None or not path.exists():
+        return
+    try:
+        record = pwd.getpwnam(user)
+    except KeyError:
+        return
+    uid, gid = record.pw_uid, record.pw_gid
+    for item in (path, *path.rglob("*")):
+        try:
+            os.chown(item, uid, gid)
+        except OSError:
+            pass
+
+
 binary = f"/opt/{capitalized}/{app}"
 link = f"/usr/bin/{app}"
 # 创建全局命令入口，使用户可以直接从终端启动应用。
@@ -39,10 +59,12 @@ elif os.path.exists(binary):
 
 sandbox = Path(f"/opt/{capitalized}/chrome-sandbox")
 if sandbox.exists():
-    # user namespace 可用时使用普通权限，否则设置 Electron 所需的 setuid 权限。
-    supported = Path("/proc/self/ns/user").exists() and run(["unshare", "--user", "true"])
+    # Ubuntu 24.04+ 默认限制普通用户的 unprivileged user namespace，
+    # 而 dpkg 安装阶段以 root 探测 userns 必然成功（root 不受限），
+    # 误判会导致 chrome-sandbox 保持 755，普通用户桌面启动即 FATAL core-dump。
+    # 因此无条件设置 setuid 位，交由内核级 SUID 沙箱兜底（与 Chrome 官方 deb 一致）。
     try:
-        sandbox.chmod(0o755 if supported else 0o4755)
+        sandbox.chmod(0o4755)
     except OSError:
         pass
 
@@ -53,6 +75,32 @@ for command in (("update-mime-database", "/usr/share/mime"),
         run(list(command))
 
 resource_root = Path(f"/opt/{capitalized}/resources")
+[% if enable_update %]
+# polkit 特权执行器三件套：此刻以 root 身份安装到系统路径。
+# helper 是白名单执行器（root 拥有、不可被普通用户修改），应用运行时
+# （普通用户）通过 pkexec 请求执行其中的白名单操作，全程无密码落盘；
+# sudo/wheel 组用户被 rules 直接放行。
+polkit_src = resource_root / "polkit"
+if polkit_src.is_dir():
+    polkit_targets = {
+        polkit_src / "privileged.policy": Path(
+            "/usr/share/polkit-1/actions") / f"com.{app}.privileged.policy",
+        polkit_src / "privileged.rules": Path(
+            "/etc/polkit-1/rules.d") / f"60-{app}-privileged.rules",
+        polkit_src / "privileged-helper.sh": Path(
+            "/usr/local/share") / app / "privileged-helper",
+    }
+    for source, target in polkit_targets.items():
+        try:
+            if not source.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            # helper 必须可执行；policy/rules 按 polkit 惯例 0644
+            target.chmod(0o755 if target.name == "privileged-helper" else 0o644)
+        except OSError:
+            pass
+[% endif %]
 # 为捆绑 Python 脚本补充执行权限，保持原 chmod +x 行为。
 scripts = resource_root / "scripts"
 if scripts.is_dir():
@@ -94,11 +142,18 @@ secret = config / "secrets.yaml"
 if secret.exists():
     secret.chmod(0o600)
 
-# dpkg 通常以 root 运行；优先把配置初始化到实际调用 sudo 的用户目录。
-real_home = os.environ.get("SUDO_USER")
-if real_home and pwd is not None:
+# dpkg 通常以 root 运行；优先把配置初始化到实际调用 sudo/pkexec 的用户目录。
+real_user = os.environ.get("SUDO_USER")
+if not real_user and os.environ.get("PKEXEC_UID") and pwd is not None:
+    # 图形化（软件商店/pkexec）安装时没有 SUDO_USER，用 PKEXEC_UID 反查。
     try:
-        real_home = Path(pwd.getpwnam(real_home).pw_dir)
+        real_user = pwd.getpwuid(int(os.environ["PKEXEC_UID"])).pw_name
+    except (KeyError, ValueError):
+        real_user = None
+real_home = None
+if real_user and pwd is not None:
+    try:
+        real_home = Path(pwd.getpwnam(real_user).pw_dir)
     except KeyError:
         real_home = None
 if real_home:
@@ -129,3 +184,6 @@ if real_home:
     secret = user_config / "secrets.yaml"
     if secret.exists():
         secret.chmod(0o600)
+    # root 建立的目录与文件归还真实用户，避免应用启动即 PermissionError
+    chown_tree(user_config, real_user)
+    chown_tree(user_data_root, real_user)

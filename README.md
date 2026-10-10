@@ -12,8 +12,10 @@
 - 自动 `git init` 并提交首个 commit（含 lock 文件）
 - 自动生成 `AGENTS.md`（AI 编码助手协作约定）
 - 内置全局亮色/暗色主题切换
-- 可选 sudo 免密配置（`--sudoers`）
 - 可选内置终端（`--terminal`）
+- 可选日志中心（`--logs`，后端日志实时推送到界面，排障不用登机器）
+- 通用设置页（yaml 加一行"值 + 行尾 `# 显示名`"即自动出表单，注释回填不丢失；secrets.yaml 的 key 自动渲染为密码框）
+- 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
@@ -45,20 +47,19 @@ xb --help
 # 创建项目
 xb init demo
 
-# 带 sudo 免密配置
-xb init demo --sudoers
-
 # 带内置终端
 xb init demo --terminal
 
-# 同时启用终端和 sudo 免密配置
-xb init demo --terminal --sudoers
+# 带日志中心
+xb init demo --logs
+
+# 启用应用内自动更新（Linux 提权走 polkit，管理员组无感更新，无密码落盘）
+xb init demo --update
 
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
 
 cd demo
-
 # 启动开发环境
 xb dev
 
@@ -68,6 +69,28 @@ xb dev status
 # 停止
 xb dev stop
 ```
+
+### 交互式配置表单
+
+`xb init` 会在创建前显示一个单屏配置表单，回车即按当前值创建：
+
+```
+  xb init demo — 应用配置
+  ↑↓ 移动 · 空格 勾选/取消 · 选中后直接输入 · 回车 开始创建
+  ────────────────────────────────────────────────────────
+❯ [ ] 应用显示名 : Demo
+  [ ] 端口（后端/前端） : 8000 / 8001
+  [ ] 内置终端  ✘  (Web 终端组件)
+  [ ] 应用内更新  ✘  (Linux 提权走 polkit，无密码落盘)
+  [ ] 日志中心  ✘  (实时查看后端日志，排障刚需)
+  [ ] 应用图标 : 使用默认
+  [ ] 跳过依赖安装  ✘  (离线环境可跳过)
+```
+
+- `--name/--port/--terminal/--update/--icon/--skip-install` 传了的参数
+  直接预填进表单并勾上，回车即确认，老用法不受影响
+- 文本行（显示名/端口/图标）勾选时若仍是默认值则自动清空，直接输入即可
+- stdin 非终端时（脚本/CI 管道调用）自动跳过表单，沿用 CLI 参数
 
 Windows PowerShell 也可以直接运行生成项目脚本：
 
@@ -81,14 +104,22 @@ python .\dev.py stop
 使用 `--terminal` 时，Windows 终端使用 PowerShell + ConPTY，支持上下箭头
 命令历史、复制粘贴、Tab 补全和 Ctrl+C；Ubuntu/Debian 使用 bash + Unix PTY。
 
-Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.npmrc`
-写 npm 不识别的自定义键。若安装过程被网络中断，生成项目的
+Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
+若安装过程被网络中断，生成项目的
 `electron/prepare.js` 会在 `npm start` 或 `npm run build` 前自动检查并补装
 缺失的 Electron 二进制。
 
 > **`xb init` 自动行为**：
 > - 执行 `npm install`（frontend + electron），生成 `package-lock.json`
->   - 生成的 `.npmrc` 已配好华为云镜像；electron 约 200MB 二进制也走镜像下载
+>   离线环境可加 `--skip-install` 跳过，稍后手动安装
+>   - 生成的项目用 [nrm](https://github.com/Pana/nrm) 管理 npm 源：`xb init`
+>     安装依赖前与 `build.py` 构建前都会自动 `nrm test` 测速所有内置源并切换
+>     到最快的（未安装 nrm 时自动全局安装）；项目不放 `.npmrc`，npm 源完全由
+>     nrm 全局管理
+>   - electron 约 200MB 二进制走华为云镜像下载
+>   - uv 源同样自动优化：首次依赖同步（dev.py）与后端构建（build.py -b/-a）
+>     前并行实测各镜像（要求最终 HTTP 200），自动切换到最快可用源（约
+>     1-6 秒，纯标准库实现，无需额外工具）
 >   - 若安装失败或超时，会打印提示但不中断项目创建，可稍后手动重试
 > - 执行 `git init` 并提交首个 commit（包含所有文件和 lock 文件）
 > - 若检测到 PyPI 有新版 xb，会询问是否先升级再创建项目
@@ -98,12 +129,12 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入，不向 `.n
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--sudoers] [--terminal] [--icon PATH]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
 | `xb version [patch\|minor\|major]` | 读取或更新版本号 |
-| `xb doctor` | 检查开发环境 |
+| `xb doctor [--fix]` | 检查开发环境；`--fix` 自动安装 nrm/uv、交互式配置 git 身份 |
 | `xb --upgrade` | 升级 xb 到 PyPI 最新版本 |
 
 ## 应用图标
@@ -117,6 +148,43 @@ xb init demo --icon ./my-icon.png
 # ./assets/app-icon.png, ./assets/icon.png, ./resources/icon.png
 ```
 
+## 应用内自动更新（`--update`）
+
+> 详细原理与 AI 开发者注意事项见模板内
+> **[xb/templates/root/docs/自动更新说明.md](xb/templates/root/docs/自动更新说明.md)**
+> （生成的项目会自带 `docs/自动更新说明.md` 与配图）。
+
+`xb init demo --update` 会让生成的项目内置自动更新能力，
+以飞书云盘的一个文件夹作为发布"货架"：
+
+**生成内容：**
+
+| 位置 | 职责 |
+|------|------|
+| `backend/api/update/` | 更新接口（检查 / 信息 / 下载 / 进度 / 安装） |
+| `backend/services/updater.py` | 版本比较、信息拉取、下载校验、配置备份迁移、安装 |
+| `backend/services/feishu_client.py` | 飞书接口封装（文件夹列举、并发下载） |
+| `backend/managers/secret_obfuscator.py` | 敏感值混淆（`obf1:`，防围观级别） |
+| `backend/app_version.py` | 后端版本号（version_manager 提交时自动同步） |
+| `frontend/src/components/UpdateChecker.vue` | 版本号徽章 + 更新弹窗 + 进度条 |
+| `frontend/src/composables/useUpdate.js` | 定时检查 / 下载进度轮询 |
+| `scripts/feishu_upload.py` | 发版端：安装包与版本信息上传飞书 |
+| `configs/config_changes.json` | 配置迁移清单（顶层 key 是版本号） |
+| `build.py` | 增加 `--upload-only` 与构建后发布编排 |
+
+**发版流程：** 在 `configs/secrets.yaml` 填 `feishu.app_id` / `app_secret` /
+`update_folder_url` → `./build.py -a` → 确认上传。构建时敏感键自动混淆进
+`secrets.yaml.example` 随包分发，构建结束 example 恢复为留空模板。
+
+**客户端：** 启动时 / 每小时 / 点版本号徽章时检查更新；发现新版本后下载
+（4 线程分块 + SHA256 校验 + `.part` 防半截包）→ 备份配置 → 按
+`config_changes.json` 迁移 → Ubuntu 走 polkit 免密安装（授权规则由 DEB
+postinst 预部署，管理员组无感、无密码落盘），Windows 等退出后静默安装。
+
+**飞书侧准备：** 开放平台建自建应用 → 开通 `drive:drive` 权限并发布 →
+建云盘文件夹，完整链接填入 `update_folder_url`。开发模式（源码运行）不支持
+应用内更新，检查接口返回 `packaged: false`。
+
 ## 生成的项目结构
 
 ```
@@ -124,6 +192,7 @@ demo/
 ├── pyproject.toml          # Python 依赖（uv 管理）
 ├── AGENTS.md               # AI 编码助手协作约定
 ├── README.md               # 项目说明（含三种启动方式详解）
+├── LICENSE                 # MIT 许可证
 ├── .gitignore
 ├── backend/                # FastAPI 后端
 │   ├── main.py             # FastAPI 入口（lifespan / CORS / SPA 兜底）
@@ -133,13 +202,11 @@ demo/
 ├── frontend/               # Vue 3 前端
 │   ├── package.json
 │   ├── package-lock.json
-│   ├── .npmrc              # npm 镜像源（华为云）
 │   ├── vite.config.js
 │   └── src/
 ├── electron/               # Electron 主进程
 │   ├── package.json
 │   ├── package-lock.json
-│   ├── .npmrc              # npm + electron 二进制镜像源
 │   ├── main.js
 │   └── resources/          # icon + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）
@@ -181,8 +248,8 @@ xb/
 ## 环境要求
 
 - **Python**: 3.12+
-- **Node.js**: 16+
-- **npm**: 8+
+- **Node.js**: 20.19+（推荐 22 LTS；模板前端使用 Vite 8，Node 18 及以下会构建报错）
+- **npm**: 10+
 - **uv**: 已安装
 - **OS**: Windows 10/11 或 Ubuntu/Debian
 - **Windows 终端**: 使用 `--terminal` 时自动安装 Windows 专用 `pywinpty`

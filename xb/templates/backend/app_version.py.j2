@@ -1,0 +1,11 @@
+"""应用版本号。
+
+版本号的 single source of truth 仍是 `electron/package.json`，但打包态的后端
+二进制读不到那个文件（它不在 PyInstaller 的 bundle 里），所以在 bump 版本时
+由 `version/scripts/version_manager.py` 把版本号同步落到这个模块，运行时直接
+import，开发态与打包态行为一致。
+
+**不要手改这里的值**，改 `electron/package.json` 后跑 version_manager。
+"""
+
+APP_VERSION = "1.0.0"

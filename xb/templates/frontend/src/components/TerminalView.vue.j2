@@ -19,7 +19,14 @@ let resizeObserver = null
 let fitFrame = 0
 let dprQuery = null
 let dprHandler = null
+let themeObserver = null
 const termRef = ref(null)
+
+const terminalThemes = {
+  dark: { background: '#0a0e17', foreground: '#e4e8f0', cursor: '#3b82f6', selectionBackground: 'rgba(59,130,246,0.3)', black: '#1e2740', red: '#ef4444', green: '#22c55e', yellow: '#f59e0b', blue: '#3b82f6', magenta: '#8b5cf6', cyan: '#06b6d4', white: '#e4e8f0', brightBlack: '#5a6478', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#c4b5fd', brightCyan: '#67e8f9', brightWhite: '#f8fafc' },
+  light: { background: '#f8fafc', foreground: '#1e293b', cursor: '#2563eb', selectionBackground: 'rgba(37,99,235,0.2)', black: '#334155', red: '#dc2626', green: '#16a34a', yellow: '#ca8a04', blue: '#2563eb', magenta: '#7c3aed', cyan: '#0891b2', white: '#f8fafc', brightBlack: '#64748b', brightRed: '#b91c1c', brightGreen: '#15803d', brightYellow: '#a16207', brightBlue: '#1d4ed8', brightMagenta: '#6d28d9', brightCyan: '#0e7490', brightWhite: '#ffffff' },
+}
+const currentTerminalTheme = () => terminalThemes[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark']
 
 function initTerminal() {
   term = new Terminal({
@@ -27,7 +34,8 @@ function initTerminal() {
     cursorStyle: 'block',
     fontSize: props.session.fontSize,
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-    theme: {
+    theme: currentTerminalTheme(),
+    /*
       background: '#0a0e17',
       foreground: '#e4e8f0',
       cursor: '#3b82f6',
@@ -47,8 +55,7 @@ function initTerminal() {
       brightBlue: '#93c5fd',
       brightMagenta: '#c4b5fd',
       brightCyan: '#67e8f9',
-      brightWhite: '#f8fafc',
-    },
+      brightWhite: '#f8fafc', */
     allowProposedApi: true,
   })
 
@@ -163,6 +170,8 @@ onMounted(async () => {
   }
   window.addEventListener('resize', scheduleFit)
   watchDevicePixelRatio()
+  themeObserver = new MutationObserver(() => { if (term) term.options.theme = currentTerminalTheme() })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   scheduleFit()
 })
 
@@ -175,6 +184,8 @@ onBeforeUnmount(() => {
   }
   dprQuery = null
   dprHandler = null
+  themeObserver?.disconnect()
+  themeObserver = null
   if (fitFrame) {
     cancelAnimationFrame(fitFrame)
     fitFrame = 0
@@ -198,7 +209,8 @@ defineExpose({ refit: scheduleFit, changeFontSize })
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 4px;
+  padding: 0;
+  background: var(--terminal-bg, #0a0e17);
   overflow: hidden;
 }
 
@@ -207,5 +219,11 @@ defineExpose({ refit: scheduleFit, changeFontSize })
 .terminal-container :deep(.xterm) {
   width: 100%;
   height: 100%;
+  background: var(--terminal-bg, #0a0e17);
+}
+
+.terminal-container :deep(.xterm-viewport),
+.terminal-container :deep(.xterm-screen) {
+  background: var(--terminal-bg, #0a0e17) !important;
 }
 </style>

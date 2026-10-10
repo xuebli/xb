@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu[% if enable_terminal %], ipcMain[% endif %] } = require('electron');
+const { app, BrowserWindow, Menu, session[% if enable_terminal %], ipcMain[% endif %] } = require('electron');
 const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -135,6 +135,10 @@ function resetZoom() {
 
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
+
+    // 前端由本地后端服务（回环地址，网络成本为零），每次启动清空 HTTP 缓存，
+    // 避免应用内更新后 Chromium 仍渲染缓存的旧页面（如已移除的旧弹窗）
+    session.defaultSession.clearCache().catch(() => {});
 
     const backendName = process.platform === 'win32' ? 'server.exe' : 'server';
     const backendPath = app.isPackaged

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  [[ display_name ]] 特权操作授权动作。
+  由 DEB 安装脚本（postinst，root 身份）复制到
+  /usr/share/polkit-1/actions/com.[[ package_name ]].privileged.policy，
+  卸载时由 postrm 清理。
+
+  本动作授权执行 root 拥有的白名单执行器
+  /usr/local/share/[[ package_name ]]/privileged-helper
+  （参数校验全部写死在 helper 内，未列出的操作一律拒绝）。
+
+  默认策略：
+  - allow_active=auth_admin_keep：桌面会话内首次执行需输一次密码，
+    之后同会话内（polkit 默认 5 分钟）不再重复询问。
+  - 管理员组（sudo/wheel）用户由 rules 文件直接放行（完全无感），
+    见 /etc/polkit-1/rules.d/60-[[ package_name ]]-privileged.rules。
+-->
+<policyconfig>
+  <action id="com.[[ package_name ]].privileged">
+    <description>Run [[ display_name ]] privileged operations</description>
+    <description xml:lang="zh_cn">执行 [[ display_name ]] 特权操作</description>
+    <message>[[ display_name ]] needs system privileges for this operation</message>
+    <message xml:lang="zh_cn">[[ display_name ]] 需要系统权限来执行此操作</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

@@ -1,0 +1,188 @@
+"""更新检查 API —— 版本查询、安装包下载、配置备份合并、安装执行。"""
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from managers import get_logger, path_manager
+from services.updater import compare_version, release_notes_text, update_service
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+class UpdateCheckResponse(BaseModel):
+    """更新检查响应。"""
+    has_update: bool
+    current_version: str
+    latest_version: str = ""
+    release_date: str = ""
+    release_notes: str = ""
+    has_config_changes: bool = False
+    config_summary: str = ""
+    config_files: list = []
+    download_url: str = ""
+    file_size: int = 0
+    file_hash: str = ""
+    filename: str = ""
+    # 版本信息来源：remote(飞书) / local(离线兜底) / none(拿不到)
+    source: str = "none"
+    can_download: bool = False
+    # 当前是否为打包安装版；开发态（源码运行）不支持应用内更新
+    packaged: bool = False
+
+
+class UpdateInstallRequest(BaseModel):
+    """安装请求。"""
+    # 是否在安装前备份并应用配置变更
+    apply_config: bool = True
+
+
+@router.get("/update/check")
+async def check_update(force: bool = False):
+    """检查是否有新版本。force=true 时跳过远程缓存。
+
+    开发模式（源码运行）直接短路返回，不查飞书——deb 更新对开发进程无意义，
+    也避免开发时反复打飞书接口。
+    """
+    current_version = update_service.get_current_version()
+    if not path_manager.is_packaged:
+        return UpdateCheckResponse(
+            has_update=False,
+            current_version=current_version,
+            source="none",
+            packaged=False,
+        )
+
+    try:
+        info, source = update_service.fetch_update_info(force=force)
+
+        if not info:
+            return UpdateCheckResponse(
+                has_update=False,
+                current_version=current_version,
+                source=source,
+                packaged=True,
+            )
+
+        latest_version = info.get("version", "0.0.0")
+        has_update = compare_version(latest_version, current_version) > 0
+
+        config_files = update_service.filter_config_changes(
+            info.get("config_changes") or {}, current_version, latest_version
+        )
+        config_changes = info.get("config_changes") or {}
+        config_summary = config_changes.get("summary", "")
+        if config_files and not config_summary:
+            config_summary = f"有 {len(config_files)} 个配置文件需要更新"
+
+        package = info.get("package") or {}
+        return UpdateCheckResponse(
+            has_update=has_update,
+            current_version=current_version,
+            latest_version=latest_version,
+            release_date=info.get("release_date", ""),
+            release_notes=release_notes_text(info),
+            has_config_changes=bool(config_files),
+            config_summary=config_summary,
+            config_files=config_files,
+            download_url=package.get("url", ""),
+            file_size=package.get("size", 0),
+            file_hash=package.get("hash", ""),
+            filename=package.get("filename", ""),
+            source=source,
+            # 只有远程信息带 file_token 才能在应用内下载
+            can_download=bool(package.get("file_token")),
+            packaged=True,
+        )
+    except Exception as e:
+        logger.error(f"检查更新失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"检查更新失败: {str(e)}")
+
+
+@router.get("/update/info")
+async def get_update_info():
+    """获取完整的版本信息文件内容。"""
+    if not path_manager.is_packaged:
+        return {
+            "exists": False,
+            "platform": update_service.get_platform(),
+            "source": "none",
+            "info": {},
+            "packaged": False,
+        }
+    try:
+        info, source = update_service.fetch_update_info()
+        return {
+            "exists": bool(info),
+            "platform": update_service.get_platform(),
+            "source": source,
+            "info": info,
+            "packaged": True,
+        }
+    except Exception as e:
+        logger.error(f"获取版本信息失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取版本信息失败: {str(e)}")
+
+
+@router.post("/update/download")
+async def start_download():
+    """开始下载安装包（后台线程，立即返回）。"""
+    if not path_manager.is_packaged:
+        raise HTTPException(status_code=400, detail="开发模式不支持应用内更新")
+    try:
+        info, _ = update_service.fetch_update_info()
+        if not info:
+            raise HTTPException(status_code=404, detail="没有可用的版本信息")
+        return update_service.start_download(info)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"启动下载失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动下载失败: {str(e)}")
+
+
+@router.get("/update/download/progress")
+async def download_progress():
+    """查询下载进度。"""
+    return update_service.get_download_state()
+
+
+@router.post("/update/install")
+async def install_update(request: UpdateInstallRequest):
+    """备份配置 → 应用配置变更 → 启动安装程序。
+
+    安装程序会替换正在运行的文件，接口返回后前端需要主动关闭应用。
+    """
+    if not path_manager.is_packaged:
+        raise HTTPException(status_code=400, detail="开发模式不支持应用内更新")
+
+    state = update_service.get_download_state()
+    if state.get("status") != "done" or not state.get("path"):
+        raise HTTPException(status_code=400, detail="安装包尚未下载完成")
+
+    try:
+        current_version = update_service.get_current_version()
+        backup_path = update_service.create_backup(current_version)
+
+        config_results = []
+        if request.apply_config:
+            info, _ = update_service.fetch_update_info()
+            changes = update_service.filter_config_changes(
+                info.get("config_changes") or {},
+                current_version,
+                info.get("version") or current_version,
+            )
+            if changes:
+                config_results = update_service.apply_config_changes(changes)
+
+        result = update_service.install(state["path"])
+        return {
+            **result,
+            "backup_path": str(backup_path),
+            "config_results": config_results,
+        }
+    except Exception as e:
+        logger.error(f"执行更新失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"执行更新失败: {str(e)}")

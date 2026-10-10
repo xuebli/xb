@@ -2,8 +2,10 @@
 模板引擎 - 负责生成项目文件
 """
 
+import json
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -25,26 +27,41 @@ class TemplateEngine:
             comment_start_string="[#",
             comment_end_string="#]",
         )
+        # 输出带引号的 JSON 字符串字面量，用于 JS/JSON/Python/TOML 字符串上下文，
+        # 保证显示名含引号、反斜杠时产物仍合法；中文保持原样不转 \u。
+        self.env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
 
     def render_project(
         self,
         target_dir: Path,
         package_name: str,
-        enable_sudo: bool = False,
+        display_name: str | None = None,
+        backend_port: int | None = None,
         enable_terminal: bool = False,
-        sudo_password: str = "",
+        enable_update: bool = False,
+        enable_logs: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
 
+        # 显示名只用于窗口标题、README 等 UI 文案；包名/安装路径等技术标识
+        # 一律保持 ASCII 包名，不受显示名影响。
+        safe_display_name = (display_name or "").strip() or package_name.capitalize()
+
+        # 端口：显式指定后端端口时，前端开发端口取 +1，避免多个生成项目
+        # 同时 dev 时都抢默认 5173（Vite strictPort 会直接启动失败）。
         context = {
             "package_name": package_name,
             "package_name_upper": package_name.upper(),
             "package_name_capitalized": package_name.capitalize(),
-            "enable_sudo": enable_sudo,
+            "display_name": safe_display_name,
+            "backend_port": backend_port if backend_port else 8000,
+            "frontend_port": (backend_port + 1) if backend_port else 5173,
             "enable_terminal": enable_terminal,
-            "sudo_password": sudo_password,
+            "enable_update": enable_update,
+            "enable_logs": enable_logs,
             "icon_path": icon_path,
+            "current_year": datetime.now().year,
         }
 
         self._create_backend(target_dir, context)
@@ -91,6 +108,25 @@ class TemplateEngine:
                 context,
             )
 
+        if context["enable_update"]:
+            update_dir = backend_dir / "api" / "update"
+            update_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/api/update/__init__.py.j2",
+                update_dir / "__init__.py",
+                context,
+            )
+
+        if context["enable_logs"]:
+            self._render_template(
+                "backend/api/logs.py.j2", backend_dir / "api" / "logs.py", context
+            )
+
+        # 通用设置页是标配：yaml 驱动 + schema 元数据增强
+        self._render_template(
+            "backend/api/settings.py.j2", backend_dir / "api" / "settings.py", context
+        )
+
         self._render_template(
             "backend/managers/__init__.py.j2", backend_dir / "managers" / "__init__.py", context
         )
@@ -100,15 +136,45 @@ class TemplateEngine:
             context,
         )
         self._render_template(
+            "backend/managers/yaml_comments.py.j2",
+            backend_dir / "managers" / "yaml_comments.py",
+            context,
+        )
+        self._render_template(
             "backend/managers/logger_manager.py.j2",
             backend_dir / "managers" / "logger_manager.py",
             context,
         )
 
-        if context["enable_sudo"]:
+        if context["enable_update"]:
             self._render_template(
-                "backend/managers/sudoers_manager.py.j2",
-                backend_dir / "managers" / "sudoers_manager.py",
+                "backend/managers/privileged_manager.py.j2",
+                backend_dir / "managers" / "privileged_manager.py",
+                context,
+            )
+            self._render_template(
+                "backend/managers/secret_obfuscator.py.j2",
+                backend_dir / "managers" / "secret_obfuscator.py",
+                context,
+            )
+            self._render_template(
+                "backend/app_version.py.j2", backend_dir / "app_version.py", context
+            )
+            services_dir = backend_dir / "services"
+            services_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/services/__init__.py.j2",
+                services_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/services/updater.py.j2",
+                services_dir / "updater.py",
+                context,
+            )
+            self._render_template(
+                "backend/services/feishu_client.py.j2",
+                services_dir / "feishu_client.py",
                 context,
             )
 
@@ -126,8 +192,6 @@ class TemplateEngine:
         composables_dir.mkdir(exist_ok=True)
 
         self._render_template("frontend/package.json.j2", frontend_dir / "package.json", context)
-        # npm 镜像配置：npm 不继承父目录 .npmrc，frontend / electron 需各自持有一份
-        self._render_template("frontend/.npmrc.j2", frontend_dir / ".npmrc", context)
         self._render_template(
             "frontend/vite.config.js.j2", frontend_dir / "vite.config.js", context
         )
@@ -159,17 +223,6 @@ class TemplateEngine:
             components_dir / "GitVersionBadge.vue",
             context,
         )
-        if context["enable_sudo"]:
-            self._render_template(
-                "frontend/src/components/ConfigSetup.vue.j2",
-                components_dir / "ConfigSetup.vue",
-                context,
-            )
-        self._render_template(
-            "frontend/src/components/FileManager.vue.j2",
-            components_dir / "FileManager.vue",
-            context,
-        )
         if context["enable_terminal"]:
             self._render_template(
                 "frontend/src/components/TerminalView.vue.j2",
@@ -184,6 +237,37 @@ class TemplateEngine:
             self._render_template(
                 "frontend/src/composables/useTerminalSessions.js.j2",
                 composables_dir / "useTerminalSessions.js",
+                context,
+            )
+        # 通用设置页是标配（yaml 驱动 + schema 增强），密钥管理也集成在内
+        self._render_template(
+            "frontend/src/components/SettingsView.vue.j2",
+            components_dir / "SettingsView.vue",
+            context,
+        )
+        if context["enable_logs"]:
+            self._render_template(
+                "frontend/src/components/LogViewer.vue.j2",
+                components_dir / "LogViewer.vue",
+                context,
+            )
+        if context["enable_update"]:
+            # 更新 UI 挂在 GitVersionBadge 的弹窗里（见 components/version/）
+            version_dir = components_dir / "version"
+            version_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "frontend/src/components/version/UpdatePanel.vue.j2",
+                version_dir / "UpdatePanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/components/version/CommitHistoryPanel.vue.j2",
+                version_dir / "CommitHistoryPanel.vue",
+                context,
+            )
+            self._render_template(
+                "frontend/src/composables/useUpdate.js.j2",
+                composables_dir / "useUpdate.js",
                 context,
             )
 
@@ -202,7 +286,6 @@ class TemplateEngine:
             "electron/port_diagnostics.js.j2", electron_dir / "port_diagnostics.js", context
         )
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
-        self._render_template("electron/.npmrc.j2", electron_dir / ".npmrc", context)
 
         self._render_template(
             "electron/resources/postinst.py.j2", resources_dir / "postinst.py", context, executable=True
@@ -218,6 +301,28 @@ class TemplateEngine:
 
         self._copy_app_icon(resources_dir / "icon.png", context)
 
+        if context["enable_update"]:
+            # polkit 特权执行器三件套：随安装包进 resources/polkit，
+            # 由 postinst（root 身份）部署到系统路径，postrm 卸载时清理
+            polkit_dir = resources_dir / "polkit"
+            polkit_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "electron/resources/polkit/privileged.policy.j2",
+                polkit_dir / "privileged.policy",
+                context,
+            )
+            self._render_template(
+                "electron/resources/polkit/privileged.rules.j2",
+                polkit_dir / "privileged.rules",
+                context,
+            )
+            self._render_template(
+                "electron/resources/polkit/privileged-helper.sh.j2",
+                polkit_dir / "privileged-helper.sh",
+                context,
+                executable=True,
+            )
+
 
     def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
         icon_path = context.get("icon_path")
@@ -232,11 +337,19 @@ class TemplateEngine:
 
     @staticmethod
     def _resize_icon(src: Path, dst: Path, size: int = 256):
-        """将任意图片转换为 size x size 的 PNG 图标。"""
+        """将任意图片转换为 size x size 的 PNG 图标。
+
+        非正方形图片居中裁剪后再缩放，避免直接 resize 导致的拉伸变形。
+        """
         from PIL import Image
 
         with Image.open(src) as img:
             img = img.convert("RGBA")
+            width, height = img.size
+            side = min(width, height)
+            left = (width - side) // 2
+            top = (height - side) // 2
+            img = img.crop((left, top, left + side, top + side))
             img = img.resize((size, size), Image.LANCZOS)
             img.save(dst, "PNG")
 
@@ -250,9 +363,16 @@ class TemplateEngine:
         self._render_template(
             "configs/secrets.yaml.example.j2", configs_dir / "secrets.yaml.example", context
         )
-        if context["enable_sudo"] and context["sudo_password"]:
+        # 同步生成一份 secrets.yaml：dev 模式设置页立即出现密钥框，build 的
+        # example 同步也不再缺文件；该文件在 .gitignore 中，不会进仓库
+        shutil.copy2(
+            configs_dir / "secrets.yaml.example", configs_dir / "secrets.yaml"
+        )
+        if context["enable_update"]:
             self._render_template(
-                "configs/secrets.yaml.j2", configs_dir / "secrets.yaml", context
+                "configs/config_changes.json.j2",
+                configs_dir / "config_changes.json",
+                context,
             )
 
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):
@@ -261,6 +381,13 @@ class TemplateEngine:
         self._render_template(
             "scripts/example.py.j2", scripts_dir / "example.py", context, executable=True
         )
+        if context["enable_update"]:
+            self._render_template(
+                "scripts/feishu_upload.py.j2",
+                scripts_dir / "feishu_upload.py",
+                context,
+                executable=True,
+            )
 
 
     def _create_version(self, target_dir: Path, context: Dict[str, Any]):
@@ -306,10 +433,16 @@ class TemplateEngine:
         self._render_template("root/dev.py.j2", target_dir / "dev.py", context, executable=True)
         self._render_template("root/build.py.j2", target_dir / "build.py", context, executable=True)
         self._render_template("root/README.md.j2", target_dir / "README.md", context)
+        self._render_template("root/LICENSE.j2", target_dir / "LICENSE", context)
         self._render_template("root/.gitignore.j2", target_dir / ".gitignore", context)
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
+        # docs/：自动更新说明 + 配图，仅 --update 项目随模板分发（原样拷贝，不渲染变量）
+        if context["enable_update"]:
+            docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
+            if docs_src.exists():
+                shutil.copytree(docs_src, target_dir / "docs", dirs_exist_ok=True)
 
         (target_dir / "datas" / "logs").mkdir(parents=True, exist_ok=True)
         (target_dir / "datas" / "pids").mkdir(parents=True, exist_ok=True)

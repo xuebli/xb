@@ -1,7 +1,7 @@
 {
   "name": "[[ package_name]]",
   "version": "1.0.0",
-  "description": "[[ package_name_capitalized]] App",
+  "description": [[ display_name | tojson ]],
   "main": "launcher.js",
   "author": "[[ package_name]]@example.com",
   "homepage": "https://example.com",
@@ -62,6 +62,13 @@
           "!secrets.yaml"
         ]
       },
+[% if enable_update %]
+      {
+        "from": "resources/polkit",
+        "to": "polkit",
+        "filter": ["**/*"]
+      },
+[% endif %]
       {
         "from": "../scripts",
         "to": "scripts",

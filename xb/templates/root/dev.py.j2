@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 # 可直接执行：Linux/macOS 用 ./dev.py start，Windows 用 .\dev.py start（依赖 .py 文件关联）。
 import os
-import signal
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
+import urllib.request
+from concurrent import futures
 from pathlib import Path
 
 # 项目根目录以及运行时 PID、日志目录；两种平台统一使用同一布局。
@@ -20,6 +23,194 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
+
+
+def _ask_sudo_password() -> str:
+    """终端询问本机 sudo 密码（仅本次使用，不落盘）。"""
+    if sys.stdin is None or not sys.stdin.isatty():
+        return ""
+    from getpass import getpass
+
+    return getpass("请输入本机 sudo 密码（仅本次使用，不会保存）: ").strip()
+
+
+UV_MIRRORS = (
+    ("aliyun", "https://mirrors.aliyun.com/pypi/simple"),
+    ("huawei", "https://mirrors.huaweicloud.com/repository/pypi/simple"),
+    ("tencent", "https://mirrors.cloud.tencent.com/pypi/simple"),
+    ("lzu", "https://mirrors.lzu.edu.cn/pypi/web/simple"),
+    ("sjtu", "https://mirror.sjtu.edu.cn/pypi/web/simple"),
+    ("ustc", "https://mirrors.ustc.edu.cn/pypi/web/simple"),
+    ("pku", "https://mirrors.pku.edu.cn/pypi/web/simple"),
+    ("tuna", "https://pypi.tuna.tsinghua.edu.cn/simple"),
+    ("bfsu", "https://mirrors.bfsu.edu.cn/pypi/web/simple"),
+    ("pypi", "https://pypi.org/simple"),
+)
+
+
+def _uv_config_path() -> Path:
+    """uv 用户级配置路径（uv 官方发现位置）：POSIX 为 ~/.config/uv/uv.toml，
+    Windows 为 %APPDATA%\\uv\\uv.toml。"""
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(appdata) / "uv" / "uv.toml"
+    return Path.home() / ".config" / "uv" / "uv.toml"
+
+
+def _probe_mirror(url: str) -> tuple[float, int]:
+    """实测镜像可用性：下载 click 包索引页，返回 (耗时秒, 最终 HTTP 状态码)。
+
+    urllib 自动跟随重定向，最终状态码非 200（如 cernet 聚合域名 302 到被
+    网络封锁的镜像返回 403）一律视为不可用——403 响应天然快，只测延迟会选中。
+    """
+    request = urllib.request.Request(
+        f"{url}/click/", headers={"User-Agent": "uv-mirror-probe"}
+    )
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            return time.monotonic() - start, response.status
+    except Exception:
+        return 6.0, 0
+
+
+def uv_mirror_fastest() -> None:
+    """uv 换最快镜像源：并行实测全部候选，选最终状态码 200 的最快者写入
+    uv 用户级配置（对本机所有项目生效），保留已有 python-install-mirror。
+
+    - 不用 chsrc：其 first 模式按维护方预设排名选源（不本地测速），且测速
+      目标与写入 URL 可能不一致——曾出现测"兰大"最快却写入 cernet 聚合域名、
+      实际 302 到被封锁镜像（403）的坏配置
+    - 全程标准库并发，约 1-6 秒；无可用镜像时保持现有配置不动；
+      失败只告警，不阻塞启动（沿用当前源）
+    """
+    config_path = _uv_config_path()
+    print(f"→ 并行实测 {len(UV_MIRRORS)} 个 uv 镜像源...")
+    with futures.ThreadPoolExecutor(max_workers=len(UV_MIRRORS)) as pool:
+        measured = list(
+            pool.map(lambda item: (item[0], *_probe_mirror(item[1])), UV_MIRRORS)
+        )
+    for name, seconds, status in sorted(measured, key=lambda r: r[1]):
+        mark = "✓" if status == 200 else "✗"
+        print(f"  {mark} {name:<8} {seconds:5.2f}s  {status or '--'}")
+    fastest = next((row for row in sorted(measured, key=lambda r: r[1]) if row[2] == 200), None)
+    if fastest is None:
+        print("⚠ 没有实测可用的镜像源，沿用当前 uv 配置")
+        return
+    name, seconds, _ = fastest
+    url = dict(UV_MIRRORS)[name]
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = ""
+    if config_path.exists():
+        existing = config_path.read_text(encoding="utf-8")
+        shutil.copy2(config_path, config_path.with_name(config_path.name + ".bak"))
+    match = re.search(r'python-install-mirror\s*=\s*"([^"]*)"', existing)
+    lines = []
+    if match:
+        lines.append(f'python-install-mirror = "{match.group(1)}"')
+    # [% raw %][[index]][% endraw %] 是 TOML 的数组表头，必须用 raw 块防止
+    # 模板引擎把它当成变量分隔符求值成空串。
+    lines += ["[% raw %][[index]][% endraw %]", f'url = "{url}"', "default = true", ""]
+    config_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"✓ uv 已切换到最快源 {name}（实测 {seconds:.2f}s）: {url}")
+
+
+# ---------------------------------------------------------------- polkit
+# 开发模式下没有 DEB postinst，特权入口需要手动部署一次；
+# 打包态由安装脚本自动处理，这里只服务开发调试场景。
+
+POLKIT_SRC = ROOT / "electron" / "resources" / "polkit"
+POLKIT_HELPER_DST = Path("/usr/local/share") / "[[ package_name ]]" / "privileged-helper"
+POLKIT_POLICY_DST = (
+    Path("/usr/share/polkit-1/actions") / "com.[[ package_name ]].privileged.policy"
+)
+POLKIT_RULES_DST = (
+    Path("/etc/polkit-1/rules.d") / "60-[[ package_name ]]-privileged.rules"
+)
+
+
+def _run_sudo_script(script: str) -> bool:
+    """以 root 执行一段 shell（sudo -S 从 stdin 读密码），失败返回 False。"""
+    password = _ask_sudo_password()
+    try:
+        if not password:
+            print("⚠️ 未输入 sudo 密码，无法提权（仅交互终端可询问）")
+            return False
+        result = subprocess.run(
+            ["sudo", "-S", "-p", "", "bash", "-c", script],
+            input=password + "\n",
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print((result.stderr or result.stdout).strip() or "执行失败")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ 执行失败: {e}")
+        return False
+
+
+def polkit_install_script() -> str:
+    """生成部署三件套的 root shell 脚本（文件拷贝而非符号链接——
+    root 拥有的链接指向用户可写的项目文件等于提权后门）。"""
+    return "\n".join(
+        [
+            "install -d -m755 /usr/share/polkit-1/actions /etc/polkit-1/rules.d",
+            f"install -d -m755 '/usr/local/share/[[ package_name ]]'",
+            f"install -m755 '{POLKIT_SRC}/privileged-helper.sh' '{POLKIT_HELPER_DST}'",
+            f"install -m644 '{POLKIT_SRC}/privileged.policy' '{POLKIT_POLICY_DST}'",
+            f"install -m644 '{POLKIT_SRC}/privileged.rules' '{POLKIT_RULES_DST}'",
+        ]
+    )
+
+
+def polkit_manage(sub: str) -> None:
+    """部署/卸载/查看 polkit 特权入口（开发调试用）。
+
+    注意：部署的是文件拷贝而非符号链接——root 拥有的链接指向用户可写的
+    项目文件等于提权后门。修改 helper 分支后需重新执行 install。
+    """
+    if os.name == "nt":
+        print("Windows 无 polkit，无需部署")
+        return
+    if not POLKIT_SRC.is_dir():
+        print(f"项目未生成 polkit 资源（未启用 --update）：{POLKIT_SRC} 不存在")
+        raise SystemExit(1)
+
+    if sub == "status":
+        for label, path in (
+            ("helper", POLKIT_HELPER_DST),
+            ("policy", POLKIT_POLICY_DST),
+            ("rules", POLKIT_RULES_DST),
+        ):
+            try:
+                deployed = path.exists()
+            except OSError:
+                # /etc/polkit-1/rules.d 等目录普通用户不可入，不可读视为未部署
+                deployed = False
+            state = "✓ 已部署" if deployed else "✘ 未部署"
+            print(f"{label:<8} {state}  {path}")
+        return
+
+    if sub == "install":
+        if _run_sudo_script(polkit_install_script()):
+            print("✓ polkit 特权入口已部署（管理员组成员免密生效）")
+            print(f"  修改 helper 分支后请重新执行本命令同步（{POLKIT_HELPER_DST}）")
+        else:
+            raise SystemExit(1)
+    elif sub == "remove":
+        script = "\n".join(
+            f"rm -f '{p}'" for p in (POLKIT_HELPER_DST, POLKIT_POLICY_DST, POLKIT_RULES_DST)
+        )
+        if _run_sudo_script(script):
+            print("✓ polkit 特权入口已卸载")
+        else:
+            raise SystemExit(1)
+    else:
+        print("用法: python dev.py polkit install|remove|status")
+        raise SystemExit(2)
 
 
 def stop_service(name: str) -> None:
@@ -131,7 +322,11 @@ def port_is_free(port: int) -> bool:
     import socket
     with socket.socket() as sock:
         try:
+            # 服务关闭后 TCP 连接可能短暂保留在 TIME_WAIT。复用地址后再 listen，
+            # 可区分该回收状态与真正仍在监听的进程。
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("127.0.0.1", port))
+            sock.listen(1)
             return True
         except OSError:
             return False
@@ -176,11 +371,14 @@ def configured_port(name: str, default: int) -> int:
 
 PID_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-# start/stop/restart/status 与原开发脚本保持一致。
+# start/stop/restart/status/polkit 与原开发脚本保持一致。
 action = sys.argv[1].lower() if len(sys.argv) > 1 else "start"
+if action == "polkit":
+    polkit_manage(sys.argv[2].lower() if len(sys.argv) > 2 else "status")
+    raise SystemExit(0)
 if action not in {"start", "stop", "restart", "status"}:
     usage = ".\\dev.py" if os.name == "nt" else "./dev.py"
-    print(f"用法: {usage} {{start|stop|restart|status}}")
+    print(f"用法: {usage} {{start|stop|restart|status}} 或 {usage} polkit {{install|remove|status}}")
     raise SystemExit(2)
 backend_port = configured_port("backend", 8000)
 frontend_port = configured_port("frontend", 5173)
@@ -208,6 +406,8 @@ if action in {"start", "restart"}:
         print_port_owner(backend_port)
         raise SystemExit(f"后端端口 {backend_port} 已被占用")
     if not python.exists():
+        # 首次同步依赖前先切到最快的 uv 镜像源，避免默认源拖慢/拖挂
+        uv_mirror_fastest()
         print("→ 正在同步 Python 依赖，首次启动可能需要几分钟...")
         try:
             subprocess.run(
@@ -222,6 +422,26 @@ if action in {"start", "restart"}:
             )
     start_service("backend", [str(service_python), "backend/main.py"])
     print(f"✓ 后端已启动（PID 文件: {PID_DIR / 'backend.pid'}，端口: {backend_port}）")
+[% if enable_update %]
+    if os.name != "nt" and POLKIT_SRC.is_dir():
+        # 开发模式没有 DEB postinst，start 时自动部署特权入口；
+        # 项目内 helper 比 部署副本新（改过分支）或尚未部署时自动同步。
+        # 密码在终端询问（仅本次使用，不落盘）；非交互终端跳过不阻塞。
+        try:
+            polkit_stale = (
+                not POLKIT_HELPER_DST.exists()
+                or (POLKIT_SRC / "privileged-helper.sh").stat().st_mtime
+                > POLKIT_HELPER_DST.stat().st_mtime
+            )
+        except OSError:
+            polkit_stale = True
+        if polkit_stale:
+            if _run_sudo_script(polkit_install_script()):
+                print("✓ polkit 特权入口已自动部署/同步（管理员组免密生效）")
+            else:
+                print("ℹ polkit 特权入口未部署，应用内更新/特权功能不可用；"
+                      "可稍后执行 python dev.py polkit install 重试")
+[% endif %]
     if not wait_for_port(backend_port):
         stop_service("backend")
         raise SystemExit("后端启动失败，请查看 datas/logs/backend.log")

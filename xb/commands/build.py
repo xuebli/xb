@@ -5,23 +5,11 @@ xb build 命令实现
 
 import subprocess
 import sys
-from pathlib import Path
 
 import click
 
-from ..utils.click_helpers import ChineseHelpCommand, HELP_CONTEXT
-
-
-def is_project_root(path: Path) -> bool:
-    return (path / "pyproject.toml").exists() and (path / "build.py").exists()
-
-
-def find_project_root() -> Path | None:
-    cwd = Path.cwd()
-    for path in [cwd] + list(cwd.parents):
-        if is_project_root(path):
-            return path
-    return None
+from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
+from ..utils.project import find_project_root
 
 
 def _selected_target(target: str, frontend: bool, backend: bool, electron: bool, all_build: bool) -> str:
@@ -63,7 +51,7 @@ def build(target: str, all_build: bool, frontend: bool, backend: bool, electron:
         xb build electron
         xb build -f
     """
-    project_root = find_project_root()
+    project_root = find_project_root("build.py")
     if not project_root:
         click.echo("❌ 未找到项目根目录（缺少 pyproject.toml 或 build.py）")
         raise click.Abort()
@@ -76,4 +64,8 @@ def build(target: str, all_build: bool, frontend: bool, backend: bool, electron:
         "backend": "-b",
         "electron": "-e",
     }
-    subprocess.run([sys.executable, str(build_script), arg_map[selected]], cwd=project_root)
+    result = subprocess.run(
+        [sys.executable, str(build_script), arg_map[selected]], cwd=project_root
+    )
+    # 透传 build.py 的退出码，方便脚本化使用时感知失败
+    raise SystemExit(result.returncode)

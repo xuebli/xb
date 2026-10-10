@@ -7,10 +7,10 @@ import TerminalPanel from './components/TerminalPanel.vue'
 import RefreshButton from './components/RefreshButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import GitVersionBadge from './components/GitVersionBadge.vue'
-[% if enable_sudo %]
-import ConfigSetup from './components/ConfigSetup.vue'
+import SettingsView from './components/SettingsView.vue'
+[% if enable_logs %]
+import LogViewer from './components/LogViewer.vue'
 [% endif %]
-import FileManager from './components/FileManager.vue'
 
 const currentPage = ref('home')
 [% if icon_path %]
@@ -19,10 +19,13 @@ const showIconFallback = ref(false)
 
 const navItems = [
   { id: 'home', label: '首页', icon: '🏠' },
+[% if enable_logs %]
+  { id: 'logs', label: '日志', icon: '📜' },
+[% endif %]
 [% if enable_terminal %]
   { id: 'terminal', label: '终端', icon: '💻' },
 [% endif %]
-  { id: 'settings', label: '配置', icon: '⚒' },
+  { id: 'settingsView', label: '设置', icon: '⚙' },
 ]
 
 const handleRefresh = () => {
@@ -49,24 +52,21 @@ const openSettings = () => {
       <span class="link link-d"></span>
       <span class="link link-e"></span>
     </div>
-    [% if enable_sudo %]
-    <ConfigSetup />
-    [% endif %]
 
     <header class="topbar">
       <div class="brand-block">
 [% if icon_path %]
         <div class="brand-mark" :class="{ 'has-icon': !showIconFallback }">
-          <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ package_name_capitalized]]" @error="showIconFallback = true" />
-          <span v-else>[[ package_name_capitalized | first ]]</span>
+          <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ display_name ]]" @error="showIconFallback = true" />
+          <span v-else>[[ display_name | first ]]</span>
         </div>
 [% else %]
         <div class="brand-mark">
-          <span>[[ package_name_capitalized | first ]]</span>
+          <span>[[ display_name | first ]]</span>
         </div>
 [% endif %]
         <div>
-          <h1>[[ package_name_capitalized]] <GitVersionBadge /></h1>
+          <h1>[[ display_name ]] <GitVersionBadge /></h1>
           <p>AI Native · FastAPI · Electron</p>
         </div>
       </div>
@@ -74,9 +74,6 @@ const openSettings = () => {
       <div class="toolbar">
         <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
-        <button class="icon-button" @click="openSettings" title="配置中心" aria-label="配置中心">
-          <span>⚒</span>
-        </button>
       </div>
     </header>
 
@@ -99,7 +96,10 @@ const openSettings = () => {
         :class="currentPage === 'home' ? 'page-content--centered' : 'page-content--stretch'"
       >
         <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
-        <FileManager v-else-if="currentPage === 'settings'" />
+[% if enable_logs %]
+        <LogViewer v-else-if="currentPage === 'logs'" />
+[% endif %]
+        <SettingsView v-else-if="currentPage === 'settingsView'" />
 [% if enable_terminal %]
         <TerminalPanel v-show="currentPage === 'terminal'" />
 [% endif %]

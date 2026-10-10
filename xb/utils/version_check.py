@@ -111,6 +111,11 @@ def _fetch_latest_from_pypi(timeout: float = HTTP_TIMEOUT_BG_SECONDS) -> Optiona
         return None
 
 
+def fetch_latest_from_pypi(timeout: float = HTTP_TIMEOUT_BG_SECONDS) -> Optional[str]:
+    """同步返回 PyPI 最新版本，供显式升级命令使用。"""
+    return _fetch_latest_from_pypi(timeout=timeout)
+
+
 def run_check_and_write_cache(current_version: str, timeout: float = HTTP_TIMEOUT_BG_SECONDS) -> None:
     """同步拉 PyPI 写缓存。绝不抛异常。
 

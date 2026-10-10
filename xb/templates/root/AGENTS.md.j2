@@ -37,7 +37,7 @@
 │   ├── api/            # API 路由层；按业务域拆子目录，不要把所有路由堆在一层
 │   ├── services/       # 业务编排层；每个业务域一个子目录/模块
 │   ├── schemas/        # Pydantic 请求/响应模型；按业务域拆分
-│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_sudo %] / sudoers_manager[% endif %]；不要堆业务代码
+│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_update %] / privileged_manager[% endif %]；不要堆业务代码
 ├── frontend/           # Vue3 + Vite SPA
 │   ├── vite.config.js  # 构建期注入 __APP_VERSION__ + __GIT_COMMITS__
 │   └── src/
@@ -61,12 +61,15 @@
 | 加 API 路由 | `backend/api/<feature>/routes.py` 定义 `router` + `backend/main.py` 注册 | `app.include_router(..., prefix="/api/<feature>")`；小功能可用 `backend/api/<feature>.py`，但禁止一个文件塞多个业务域 |
 | 加业务逻辑 | `backend/services/<feature>/` | API 只做参数校验/HTTP 映射，业务编排放 service |
 | 加请求/响应模型 | `backend/schemas/<feature>.py` 或 `backend/schemas/<feature>/` | Pydantic 模型不要写进 routes 大文件 |
-| 加配置项 | 后端 `backend/api/config.py` 的结构化接口 + 前端配置 UI | 不允许只加 yaml 字段；必须有表单 UI 可配置 |
+| 加配置项 | `configs/global_config.yaml` 加一行：值 + 行尾 `# 显示名`（如 `max_workers: 8   # 最大并发`） | 前端"⚙ 设置"页自动出表单（PUT `/api/app-settings`），行尾注释就是显示名；类型按 yaml 值推断；secrets 同理（写 `secrets.yaml`）；范围校验/requires_restart 在 `backend/api/settings.py` 的 `SETTINGS_SCHEMA` 声明 |
 | 改路径策略 | `backend/managers/path_manager.py` | 全局单例 `path_manager` |
 | 加新 manager | `backend/managers/<name>_manager.py` + `__init__.py` 暴露 | 只放跨模块基础设施/外部资源单例；普通业务不要放 managers |
 | 加打包隐式导入 | `backend/backend_build.py` 的 `--hidden-import=...` | uvicorn 子模块在那 |
 | 改启动 / 关闭钩子 | `backend/main.py` 的 `lifespan` 异步上下文 | |
 [% if enable_terminal %]| 改内置终端 | 后端 `backend/api/terminal/` + 前端 `TerminalPanel.vue` / `TerminalView.vue` / `useTerminalSessions.js` | Linux/macOS 使用 bash + Unix PTY；Windows 使用 PowerShell + ConPTY |
+[% endif %]
+| 改通用设置页 | 后端 `backend/api/settings.py` + 前端 `SettingsView.vue` | yaml 全量叶子 key 自动出表单，行尾 `#` 注释就是显示名（含列表项，写回经 `managers/yaml_comments.py` 回填不丢）；`SETTINGS_SCHEMA` 只做校验增强（PUT `/api/app-settings`）；应用配置与密钥的唯一图形入口 |
+[% if enable_logs %]| 改日志中心 | 后端 `backend/api/logs.py` + 前端 `LogViewer.vue` | loguru sink 进内存环形缓冲（2000 条），SSE 0.5s 增量推送；级别/关键词过滤在前端 |
 [% endif %]
 | 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
 | 改安装/卸载副作用 | `electron/resources/postinst.py` / `postrm.py` / `uninstaller.nsh` | Linux DEB 使用 Python 钩子；Windows NSIS 卸载复选项在 `uninstaller.nsh` |
@@ -75,11 +78,9 @@
 | 加前端组件 | `frontend/src/components/<feature>/<ComponentName>.vue` | 可复用组件按业务域建目录；组件名 PascalCase |
 | 加前端 API 调用 | `frontend/src/services/<feature>Api.js` 或 `composables/use<Feature>.js` | 不要在组件里散落大量 fetch |
 | 改前端注入版本/git日志 | `frontend/vite.config.js` 的 `define` | `__APP_VERSION__` 读 `electron/package.json` |
-| 改后端 base URL（前端） | `frontend/src/components/FileManager.vue` | `import.meta.env.VITE_API_BASE` |
+| 改后端 base URL（前端） | `frontend/src/components/SettingsView.vue` 等组件 | `import.meta.env.VITE_API_BASE` |
 | 改 pre-commit 行为 | `version/hooks/pre-commit.py` | `.git/hooks/pre-commit` 是转发脚本，改完立即生效；新增 hook 跑 `python version/scripts/install_hooks.py` |
 | 加被 bump 的文件 | `version/scripts/version_manager.py` | 仿 `update_pyproject_version` |
-[% if enable_sudo %]| 加 sudo 免密命令 | `backend/managers/sudoers_manager.py` 的 `self.commands = []` | 加完启动应用自动写 `/etc/sudoers.d/` |
-[% endif %]
 ## CODE MAP
 
 | 符号 | 位置 | 角色 |
@@ -92,8 +93,6 @@
 | `PathManager.init_user_data_dirs` | `backend/managers/path_manager.py` | 仅打包态生效，创建用户目录中的 `datas/logs` 与 `datas/reports` |
 | `PathManager.init_user_configs` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 configs 初始化到当前平台用户配置目录，已存在不覆盖 |
 | `PathManager.init_user_scripts` | `backend/managers/path_manager.py` | 仅打包态生效，把安装资源中的 scripts 初始化到用户数据根目录的 `scripts/`，已存在不覆盖 |
-[% if enable_sudo %]| `sudoers_manager` | `backend/managers/sudoers_manager.py` 文件底部 | 单例，把 `self.commands` 列表写入 `/etc/sudoers.d/[[ package_name_capitalized]]_nopasswd` |
-[% endif %]
 ## COMMANDS
 
 ```bash
@@ -134,7 +133,8 @@
 - **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。[% if enable_terminal %]终端 PTY、PowerShell/bash 及其[% endif %]业务子进程都必须随应用退出。
 - **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `%APPDATA%\[[ package_name]]\` 与 `%LOCALAPPDATA%\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
 - **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 `dev.py` 注入的 `VITE_BACKEND_PORT` / `VITE_DEV_PORT` 环境变量拿到，Vite 将 `/api`（含 WebSocket）代理到 FastAPI，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.py / Electron 才能换监听端口。
-- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，都必须在前端提供对应表单 UI 和后端结构化保存接口。密钥类配置在"🔐 密钥管理"面板（调 `POST /api/secrets/save`），普通配置在"🌐 应用配置"面板。`FileManager` 的原始 YAML 编辑只作为高级兜底，不是新增配置的主要入口；不要要求用户手改 yaml。
+- **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，加一行值 + 行尾 `# 显示名` 即在"⚙ 设置"页自动生成表单（保存走 `PUT /api/app-settings`，注释会被回填不丢失）。密钥类配置同样：在 `secrets.yaml` 声明 key（值留空 + 行尾注释），设置页自动渲染为密码框；不要要求用户手改 yaml 填密钥。
+- **yaml 写回一律走 `managers/yaml_comments.py`**：`parse_yaml_labels` + `dump_yaml_with_labels` 回填行尾注释（含列表项 `path[0]`），凡"读 yaml → 改数据 → 写回"的代码（设置页保存、升级补齐、配置迁移、密钥混淆）禁止直接 `yaml.safe_dump` 落盘——注释就是设置页的显示名，丢了用户可直接感知。
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
 [% if enable_terminal %]- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
 [% endif %]
@@ -148,10 +148,20 @@
 - **前端新增代码必须模块化**：`App.vue` 只做应用壳、顶栏、全局弹窗挂载和页面编排；页面级内容放 `views/`，可复用 UI 放 `components/<feature>/`，API 调用放 `services/` 或 `composables/`，纯函数放 `utils/`。不要把一个功能的模板、状态、请求、格式化、弹窗、表格全塞进单个 `.vue`。
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
-[% if enable_sudo %]- **sudo 命令必须注册**：所有需要 sudo 的命令必须加入 `backend/managers/sudoers_manager.py` 的 `self.commands` 列表（**绝对路径**，相对路径会被 `visudo -c` 拒绝）。**禁止**业务代码里临时 `subprocess.run(["sudo", ...])` 弹密码。
-- **sudo 密码单一来源**：`path_manager.get_config_value("sudo_password", config_file="secrets.yaml")`，密码明文存 `configs/secrets.yaml`，文件权限必须 `chmod 600`。
-- **sudo 配置流程**：用户首启（`ConfigSetup.vue`）→ 调 `/api/config/save` 写密码 → `sudoers_manager.setup()` 用密码以 `sudo -S` 安装 sudoers 文件 → 校验通过则永久免密。
-[% endif %]
+- **密钥展示安全**：除非用户明确要求显示原文，任何其他密钥、密码、token、access key 等敏感值在前端、日志、接口响应和文档中都必须脱敏或加密显示，禁止明文展示。
+- **特权操作走 polkit 白名单执行器**：需要 root 的操作统一通过 `privileged_manager.run("<action>", ...)` 调用（pkexec → root 拥有的 `/usr/local/share/[[ package_name ]]/privileged-helper`；pkexec 判定固定走 `org.freedesktop.policykit.exec`，免密放行由 rules 按 program 白名单实现，由 DEB postinst 部署）。**新增特权操作 = 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 case 中加一个分支**（参数逐一校验、绝对路径、exec 执行），业务代码**禁止**直接 `subprocess.run(["sudo"/"pkexec", ...])` 弹密码，**禁止**把密码写入任何文件。
+- **如何判断一个命令需要特权**：实现功能时如果命令涉及以下任意一条，按"新增特权操作 SOP"处理，**不要先写成普通 subprocess 再等 PermissionError**：
+  - 写入系统目录或系统配置：`/etc`、`/usr`、`/opt`、`/boot`、`/var/lib`、其他用户的家目录；
+  - 包管理与系统服务：`apt`/`apt-get`/`dpkg`/`snap`/`systemctl start|stop|restart|enable`；
+  - 系统状态修改：`useradd`/`usermod`/`groupadd`、`hostnamectl`、`timedatectl`、`mount`/`umount`、`ufw`/`iptables`、`nmcli` 修改系统连接、`modprobe`；
+  - 监听 1024 以下特权端口、调整网络接口、修改内核参数（`sysctl`）。
+  不确定时也走 helper（白名单分支里校验失败会安全拒绝），**永远不要**退回裸 sudo。
+- **新增特权操作 SOP**（严格按顺序）：
+  1. 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 `case` 中加分支：每个参数独立校验（路径用 `realpath` + 目录白名单、取值用正则/枚举限定）、命令用**绝对路径**、以 `exec` 执行、绝不拼接未校验的输入；
+  2. 业务代码调用 `privileged_manager.run("<action>", *args)`，**必须处理 `ok=False` 分支**（`stderr` 里可能带 tar.gz 手动安装场景的部署指引，原样展示给用户）；
+  3. 更新 `electron/resources/polkit/privileged-helper.sh.j2` 头部的"可用 action"注释。
+  helper 的更新随 DEB 重装自动生效（postinst 重新部署），**不需要**额外的配置迁移条目。
+- **禁止的替代方案**（即使功能更"简单"也不允许）：裸 `sudo`/`pkexec 任意命令`（等于把免密 root 开放给任意进程）、把用户加进 sudoers、密码写文件、守护进程化绕过校验。
 ## 配置文件分级（关键约定）
 
 **核心原则**：**含密钥/密码 → `secrets.yaml`；不含密钥 → `global_config.yaml` 或独立 yaml 直接提交真值**。
@@ -171,8 +181,6 @@
 
 ```yaml
 # secrets.yaml（git 排除，含真实凭证）
-[% if enable_sudo %]sudo_password: "REAL_PASSWORD"
-[% endif %]
 mail:
   smtp:
     password: "REAL_MAIL_PASSWORD"
@@ -185,8 +193,6 @@ aliyun:
 `secrets.yaml.example`（**提交 git**，密钥**留空**）：
 
 ```yaml
-[% if enable_sudo %]sudo_password: ""
-[% endif %]
 mail:
   smtp:
     password: ""
@@ -199,7 +205,7 @@ aliyun:
 
 模块同时有敏感参数（密码）和非敏感参数（host/port）：
 
-1. **密钥**写进 `secrets.yaml`（按模块嵌套）+ 同步在 `.example` 留空 + 在 `FileManager.vue` 密钥管理面板加 UI 字段（调 `POST /api/secrets/save`）
+1. **密钥**写进 `secrets.yaml`（按模块嵌套，值留空）+ 同步在 `.example` 声明同样的 key——设置页会自动渲染成密码框，产线直接在界面填值（保存走 `PUT /api/app-settings`）
 2. **非敏感参数**新建独立 yaml：`configs/mail_config.yaml`，**直接提交真值，无 `.example`**
 3. 写一个独立 manager 合并两处读取：
 
@@ -274,7 +280,7 @@ path_manager.reload_config()                     # 全清
 
 ### 配置实时生效约定（重要）
 
-前端 FileManager 改完 yaml 保存（`POST /api/files/write`）会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
+前端改完 yaml 保存（`PUT /api/app-settings`、`POST /api/files/write` 等接口）都会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
 
 要让这个目标真的成立，**必须遵守一条规则**：
 
@@ -317,7 +323,7 @@ class FeishuBitableManager:
 
 - **Electron 启动序**：先 `spawn(server)`，监听 stdout 直到出现 `应用启动完成` 才创建 BrowserWindow。**这是 `electron/main.js` 与 `backend/main.py` lifespan 日志的字面字符串耦合，不能动**。
 - **Vite 注入 git 日志**：`frontend/vite.config.js` 在构建期 `execSync('git log -10 ...')` 把 commit 历史塞进 `__GIT_COMMITS__` 全局常量供 `GitVersionBadge.vue` 渲染；非 git 仓库降级为 `[]`。
-- **pre-commit 三模态**：远程 IDE → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。退出码契约：`0` = 完成或跳过（继续 commit），`1` = 用户取消（中断 commit），其他 = 异常（继续 commit + warning）。
+- **pre-commit 三模态**：远程 IDE/SSH → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。SSH 页面会输出可从本地浏览器访问的地址；页面超时或启动失败会中断 commit。退出码契约：`0` = 完成或主动跳过（继续 commit），`1` = 用户取消或交互失败（中断 commit），其他 = 异常（继续 commit + warning）。
 - **`electron/package.json` 是版本号 single source of truth**：`pyproject.toml` 的 version 跟着它走，**不是反过来**。
 - **DEB 用户感知安装**：`postinst` 通过 `$SUDO_USER` / `$PKEXEC_UID` 反查真实用户，把配置初始化到 *该用户* 的 `~/.config/`，而非 root。
 - **`LoggerManager` 是类级单次初始化**：`_initialized` 类变量；多次 `get_logger(name)` 只换 `bind(module=name)`，不会重复 `logger.add`。
@@ -331,13 +337,13 @@ class FeishuBitableManager:
 - ❌ 不要写只适配亮色的样式 —— 项目已启用全局亮/暗主题切换（`data-theme` 属性）。任何硬编码颜色都必须同时写暗色覆盖，或改用 CSS 变量。尤其注意 scoped 组件内要用 `:root[data-theme='dark'] .xxx` 而非全局 `[data-theme='dark'] .xxx`（后者穿透不了 scoped）。
 - ❌ 不要 `from backend.managers import ...` —— pyproject 把 `backend/` 当包根，应 `from managers import ...`。开发态可能能跑，PyInstaller 打包后 hidden-import 不匹配，运行时崩溃。
 - ❌ 不要把所有 API 都塞进 `backend/api/config.py`、`backend/api/main.py` 或单个 `<feature>.py` —— 按业务域拆 `api/<feature>/routes.py`，复杂域继续拆 `validators.py` / `dependencies.py` / 子 routes。
-- ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、sudo、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。
+- ❌ 不要把普通业务对象、业务流程、数据转换都塞进 `backend/managers/` —— `managers` 只放路径、日志、客户端连接池这类基础设施单例；业务代码放 `services/<feature>/`。
 - ❌ 不要把前端所有页面都塞进 `App.vue` 或 `components/DashboardHome.vue` —— `App.vue` 是壳，业务页面进 `views/`，复杂区域拆 `components/<feature>/`。
 - ❌ 不要在单个 `.vue` 里堆几百上千行，把表单、弹窗、列表、API 请求、格式化函数和状态管理全写一起 —— 拆子组件、`composables/useXxx.js`、`services/xxxApi.js`。
 - ❌ 不要写几千行大文件 —— 一个文件如果同时包含 API、Pydantic schema、业务逻辑、文件读写、第三方接口封装，或一个前端组件同时包含多个页面/弹窗/数据流程，说明职责已经混乱，必须拆到对应目录。
 - ❌ 不要在 `path_manager` 之外直接读平台用户配置目录 —— 开发态配置在 `./configs/`，打包态 Linux/Windows/macOS 路径不同。
 - ❌ 不要在 Electron 主进程里写死 `resources/server` —— 安装包后端统一位于 `process.resourcesPath/server-bin/server[.exe]`，Windows 文件名是 `server.exe`，Linux/macOS 是 `server`。
-- ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除[% if enable_sudo %]，提交会泄露 `sudo_password`[% endif %]。
+- ❌ 不要把 `configs/secrets.yaml` 提交到 git —— `.gitignore` 已排除，提交会泄露密钥。
 - ❌ 不要把密钥/密码塞进 `global_config.yaml` —— 敏感信息只放 `secrets.yaml`，见上"配置文件分级"决策表。
 - ❌ 不要新增只有 yaml、没有 UI 的配置项 —— 用户必须能在界面里配置；原始 YAML 编辑器只能做高级兜底。
 - ❌ 不要保存配置后还要求用户手动刷新业务状态 —— 除明确标注必须重启的启动期配置外，保存接口必须 reload 对应配置缓存，让下次业务读取立即生效。
@@ -361,7 +367,10 @@ class FeishuBitableManager:
 - ❌ 不要直接编辑 `frontend/dist/` —— 打包产物，被 electron-builder 通过 `extraResources` 拉走。
 - ❌ 不要把 hooks 直接放进 `.git/hooks/` 提交 —— `.git/` 不在版本控制内，必须靠 `version/scripts/install_hooks.py` 分发。
 - ❌ 不要在 hook 里硬退出非 0 码 —— 除非确实是用户取消。误退会卡住整个 commit 流程。
-- ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— [% if enable_sudo %]必须注册到 `sudoers_manager.commands`，配置完成后无密执行[% else %]当前项目未启用 sudo；如确需，请重新生成项目时加 `--sudoers`[% endif %]。
+- ❌ 不要在业务代码里 `subprocess.run(["sudo", ...])` 弹密码 —— 特权操作走 polkit helper + policy action（见 `electron/resources/polkit/`），全程无密码。
+[% if enable_update %]
+- ❌ 不要改了 `configs/` 下配置结构却不动 `configs/config_changes.json` —— 已部署的旧版本升级后不会自动获得新配置键/新默认值，功能静默失效。只要暂存区出现配置文件修改，就必须先询问用户是否补迁移条目（见「AI 协作硬性约定 §H」）。
+[% endif %]
 
 ---
 
@@ -389,9 +398,7 @@ class FeishuBitableManager:
 | `frontend/src/App.vue` 的 `<DashboardHome />` import & 使用 | 替换首页时同步修改 |
 | `frontend/src/components/RefreshButton.vue` | 视需要保留 |
 | `frontend/src/components/GitVersionBadge.vue` | 视需要保留（与 vite 的 `__GIT_COMMITS__` 配合） |
-| `frontend/src/components/FileManager.vue` | **保留**（配置中心：应用配置 / 密钥管理 / 原始 YAML 高级编辑） |
-[% if enable_sudo %]| `frontend/src/components/ConfigSetup.vue` | **保留**（sudo 模式下的首启密码配置 UI） |
-[% endif %]
+| `frontend/src/components/SettingsView.vue` | 设置页：应用配置表单（yaml 驱动，行尾 `#` 注释即显示名；secrets key 渲染为密码框） |
 清理时**同步**修改 `App.vue` 的 `<script>` 和 `<template>`，避免遗留无效 import。
 
 ## D. 启动 / 停止 / 状态:用 `dev.py`
@@ -419,7 +426,7 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 
 - ❌ 不要为了"完整性"加一堆用不到的辅助函数 / 抽象层。
 - ❌ 不要把简单的 `if-else` 改成"设计模式"。
-- ❌ 不要在没读 `path_manager`[% if enable_sudo %] / `sudoers_manager`[% endif %] 源码的情况下"猜"它的接口。
+- ❌ 不要在没读 `path_manager` 源码的情况下"猜"它的接口。
 - ❌ 不要写"防御性"代码塞满 `try/except`，让真实错误被吞掉。
 - ✅ 改动前**先读现有代码**，找到模式再写。
 - ✅ 不确定时**问用户**，不要瞎写。
@@ -442,13 +449,75 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 跳过 hook = 这三件事都不做 = 版本号失同步、日志缺记录、提交语义模糊。
 
 **如果 hook 看起来"卡住"**，正确做法（按优先级）：
-1. **检查环境变量**：`echo "DISPLAY=$DISPLAY SSH_CLIENT=$SSH_CLIENT VSCODE_IPC_HOOK_CLI=$VSCODE_IPC_HOOK_CLI"`，确认 hook 走的是哪条三模态分支（参考 `.git/hooks/pre-commit` 末段）
+1. **检查环境变量**：`echo "DISPLAY=$DISPLAY SSH_CLIENT=$SSH_CLIENT SSH_CONNECTION=$SSH_CONNECTION VSCODE_IPC_HOOK_CLI=$VSCODE_IPC_HOOK_CLI"`，确认 hook 走的是哪条分支（参考 `version/hooks/pre-commit.py`）
 2. **本地图形环境**（DISPLAY 非空、非 SSH）：弹窗在你的物理屏幕上，**到屏幕上完成它**
-3. **远程 IDE**（VSCODE_IPC_HOOK_CLI 非空）：浏览器开 localhost 页面完成它
-4. **纯终端 + 无 X11**：hook 自动 `exit 0` 静默跳过（不影响 commit），不需要任何操作
-5. **真的解决不了**：**问用户**，不要自作主张 `--no-verify`
+3. **远程 IDE/SSH**：终端会输出 Web 地址；远程 SSH 不能自动打开本地 Windows 浏览器，请在本地浏览器访问该地址
+4. **纯终端 + 无 SSH/X11**：hook 自动 `exit 0` 静默跳过（不影响 commit），不需要任何操作
+5. **页面启动失败或超时**：commit 会中止；修复交互环境后重新执行，不要自作主张 `--no-verify`
 
 **AI 在 OpenCode/Claude Code 等环境里跑 `git commit`**：bash 工具会等 hook 弹窗结束才返回。如果用户没及时点弹窗，可能超时——这种情况下应**告诉用户去操作弹窗**，**不是**用 `--no-verify` 绕过。
+[% if enable_update %]
+
+## H. 配置文件变更必须同步迁移清单（`configs/config_changes.json`）
+
+项目启用了应用内自动更新。`configs/` 下任何**结构或默认值**变更都会影响已部署的旧版本——旧机器升级安装包后配置文件不会被重写，靠 `configs/config_changes.json` 的迁移条目在安装时自动补齐/修改。**AI 每次改配置相关文件都有义务维护这份清单。**
+
+### 触发规则（必须执行）
+
+1. **每次改动配置相关文件后、commit 前**，先检查暂存区与工作区：
+
+   ```bash
+   git status --short -- configs/
+   git diff --cached -- configs/
+   ```
+
+2. **只要检查到 `configs/` 下有文件修改或新增**（yaml/json/csv，含已 `git add` 进暂存区的），**必须向用户确认**：
+
+   > 「检测到配置文件变更（<列出文件与改动摘要>）。是否需要在 `configs/config_changes.json` 里为旧版本用户生成迁移条目？」
+
+   - 用户确认需要 → 按下方格式补条目
+   - 用户确认不需要（如项目还没发过版、纯开发期内部键）→ 说明原因后继续
+   - 用户已明确「配置变更默认直接维护迁移清单」→ 此后不再逐次询问，**直接修改** `config_changes.json` 并在回复中列出所加条目
+
+### 什么变更要写条目
+
+| 变更 | 处理 |
+|---|---|
+| yaml 新增配置键（业务配置） | `merge` + `add_items`；键**不带 value**（值自动取自 `<文件名>.example` 模板），无 example 的业务 yaml 直接带 value 写默认值 |
+| 新增 secrets 键 | 先在 `secrets.yaml.example` 留空占位，再 `merge` + `add_items`（**不带 value**） |
+| 删除 / 改名配置键 | `merge` + `delete_items` 删旧键；改名场景再加 `add_items` 补新键 |
+| 修改默认值 / 取值范围 | `merge` + `overwrite_items`（带 value） |
+| 新增整个配置文件 | `create`（已存在则自动跳过，不覆盖用户文件） |
+| csv 等程序数据文件内容更新 | `overwrite` + 完整 `content`（启动时还会由 `sync_declared_overwrites` 自动对齐，覆盖前留 `.bak`） |
+
+**不需要写条目**：仅注释/格式调整；代码内 `default=` 兜底值与用户已有 yaml 实际值同步变化的纯读逻辑调整。
+
+### 条目格式速查
+
+顶层 key = **变更生效前用户所处的最后版本号**（即本次变更 commit **之前** `electron/package.json` 里的版本；不确定时问用户）。应用条件是 `用户当前版本 <= 块版本 < 要安装的包版本`（见 `backend/services/updater.py` 的 `filter_config_changes`），**不要**写成"引入变更的新版本号"——否则从上一旧版本直升引入版本的更新会被条件二挡掉，迁移失效。例：块 `"1.0.0"` 表示 1.0.0 及更早的用户配置还是旧结构，1.0.0 升 1.1.0 会应用，1.1.0 升 1.2.0 不再应用。
+
+**文件维护约定**：顶层版本块按版本号**从高到低排列**（新条目插在文件最上方，便于快速定位最新迁移）；追加条目时用版本号元组倒序重排整个文件，**不要**直接 append 到末尾。（运行时 `filter_config_changes` 会自行按块版本升序应用，文件顺序只影响可读性，但仍必须遵守。）
+
+```json
+{
+  "1.0.0": {
+    "summary": "一句话说明（本次变更随 1.1.0 发布，1.0.0 及更早用户需迁移）",
+    "files": [
+      {
+        "filename": "global_config.yaml",
+        "action": "merge",
+        "description": "新增 xxx 配置",
+        "add_items": [{"key": "new_section.new_key"}],
+        "overwrite_items": [{"key": "ports.backend", "value": 9000}],
+        "delete_items": ["legacy.old_key"]
+      }
+    ]
+  }
+}
+```
+
+**禁止**把真实密钥写进迁移条目（该文件进 git）——secrets 键一律不带 value，运行时从 `secrets.yaml.example` 模板取（构建时自动混淆）。
+[% endif %]
 
 ---
 
@@ -457,6 +526,6 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 | 现象 | 第一步看哪 |
 |---|---|
 | DEB 安装后配置写到 `/root/.config/` 而非用户家目录 | `electron/resources/postinst` 是否用 `$SUDO_USER` 反查家目录 |
-| `git commit` 卡住没反应 | hook 三模态判错,GUI 弹窗可能在屏外;在屏幕上完成弹窗,**不要** `--no-verify`(见 §G) |
+| `git commit` 卡住没反应 | hook 三模态判错；SSH 场景检查终端输出的 Web 地址，本地图形场景检查弹窗；**不要** `--no-verify`(见 §G) |
 | `from managers import xxx` 开发态 OK 打包后 ImportError | `backend/backend_build.py` 加 `--hidden-import=managers.xxx` |
 | YAML 改了但应用读到旧值 | 调用方漏了 `path_manager.reload_config("xxx.yaml")` |

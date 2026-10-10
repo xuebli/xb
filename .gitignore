@@ -36,3 +36,5 @@ htmlcov/
 *.log
 .env
 .env.local
+
+uv.lock

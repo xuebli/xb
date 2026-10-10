@@ -1,0 +1,84 @@
+"""日志中心：loguru 采集 + 内存环形缓冲 + SSE 实时推送。
+
+- 任意终端/浏览器打开日志页即可看到后端实时日志，排障不需要登机器翻文件
+- 环形缓冲保留最近 2000 条（含 DEBUG），级别/关键词过滤在前端做
+- SSE 每隔 0.5s 增量推送新日志（text/event-stream），断线由 EventSource 自动重连
+"""
+
+import asyncio
+import json
+import traceback
+from collections import deque
+
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+from loguru import logger
+
+router = APIRouter(tags=["logs"])
+
+_BUFFER_MAX = 2000
+_buffer = deque(maxlen=_BUFFER_MAX)
+_seq = 0
+
+
+def _log_sink(message) -> None:
+    """loguru sink：把每条日志追加进环形缓冲（同步调用，线程安全靠 GIL）。"""
+    global _seq
+    record = message.record
+    _seq += 1
+    text = record["message"]
+    if record["exception"]:
+        exc_type, exc_value, exc_tb = record["exception"]
+        text += "\n" + "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    _buffer.append(
+        {
+            "seq": _seq,
+            "ts": record["time"].timestamp(),
+            "level": record["level"].name,
+            "source": f"{record['name']}:{record['function']}:{record['line']}",
+            "message": text,
+        }
+    )
+
+
+def attach_log_sink(level: str = "DEBUG") -> None:
+    """把内存 sink 挂到 loguru（幂等：重复调用只挂一次）。"""
+    for sink_id in getattr(attach_log_sink, "_sink_ids", []):
+        logger.remove(sink_id)
+    attach_log_sink._sink_ids = [logger.add(_log_sink, level=level)]
+
+
+@router.get("/logs/recent")
+async def logs_recent(limit: int = 500):
+    """启动以来的最近日志（前端首次进入时拉历史）。"""
+    limit = max(1, min(limit, _BUFFER_MAX))
+    return {"logs": list(_buffer)[-limit:], "last_seq": _seq}
+
+
+@router.get("/logs/stream")
+async def logs_stream(request: Request, after: int = 0):
+    """SSE 增量推送 after 之后的日志。"""
+
+    async def event_stream():
+        cursor = after
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                fresh = [item for item in _buffer if item["seq"] > cursor]
+                if fresh:
+                    for item in fresh:
+                        cursor = item["seq"]
+                        yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                else:
+                    # SSE 注释行当心跳，防止代理断开空闲连接
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

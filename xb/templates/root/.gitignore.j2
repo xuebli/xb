@@ -27,6 +27,12 @@ Thumbs.db
 datas/logs/
 datas/pids/
 datas/reports/
+[% if enable_update %]
+datas/updates/
+datas/config_backups/
+datas/feishu_tokens.json
+datas/update_*.json
+[% endif %]
 
 # Config (sensitive)
 configs/secrets.yaml
