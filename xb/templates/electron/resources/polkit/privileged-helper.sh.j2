@@ -18,11 +18,17 @@
 set -euo pipefail
 
 APP="[[ package_name ]]"
+[% if enable_update %]
 UPDATES_DIR_SUFFIX=".local/share/${APP}/datas/updates"
+[% endif %]
 
 usage() {
     echo "用法: privileged-helper <action> [args...]" >&2
+[% if enable_update %]
     echo "可用 action: install-update" >&2
+[% else %]
+    echo "可用 action: （暂无登记，按文件头注释新增）" >&2
+[% endif %]
     exit 2
 }
 
@@ -31,6 +37,7 @@ ACTION="$1"
 shift
 
 case "$ACTION" in
+[% if enable_update %]
     # 应用内更新：只允许安装各用户家目录中应用更新目录里的 .deb
     install-update)
         [ $# -eq 1 ] || usage
@@ -45,6 +52,7 @@ case "$ACTION" in
         exec /usr/bin/dpkg -i -- "$REAL"
         ;;
 
+[% endif %]
     # 示例：新增操作时取消注释并按需修改
     # set-hostname)
     #     [ $# -eq 1 ] || usage

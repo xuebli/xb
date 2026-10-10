@@ -75,8 +75,7 @@ for command in (("update-mime-database", "/usr/share/mime"),
         run(list(command))
 
 resource_root = Path(f"/opt/{capitalized}/resources")
-[% if enable_update %]
-# polkit 特权执行器三件套：此刻以 root 身份安装到系统路径。
+# polkit 特权执行器三件套（标配）：此刻以 root 身份安装到系统路径。
 # helper 是白名单执行器（root 拥有、不可被普通用户修改），应用运行时
 # （普通用户）通过 pkexec 请求执行其中的白名单操作，全程无密码落盘；
 # sudo/wheel 组用户被 rules 直接放行。
@@ -100,7 +99,6 @@ if polkit_src.is_dir():
             target.chmod(0o755 if target.name == "privileged-helper" else 0o644)
         except OSError:
             pass
-[% endif %]
 # 为捆绑 Python 脚本补充执行权限，保持原 chmod +x 行为。
 scripts = resource_root / "scripts"
 if scripts.is_dir():

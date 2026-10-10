@@ -3,7 +3,7 @@
 渲染到临时目录，校验：
 - 条件文件按开关出现/缺席（防止模板改坏条件渲染）
 - 所有生成的 .py 能通过 compile() 语法检查（防止模板产出非法 Python）
-- polkit 三件套随 --update 生成且内容合法
+- polkit 三件套为标配（全组合生成），helper 的 install-update 分支随 --update
 """
 
 import itertools
@@ -39,7 +39,7 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
 def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_logs):
     target = _render(tmp_path, enable_terminal, enable_update, enable_logs)
 
-    # 基础骨架始终存在
+    # 基础骨架始终存在（含 polkit 三件套与特权客户端——标配）
     for rel in (
         "pyproject.toml",
         "dev.py",
@@ -50,6 +50,10 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_
         "backend/main.py",
         "backend/managers/path_manager.py",
         "backend/managers/yaml_comments.py",
+        "backend/managers/privileged_manager.py",
+        "electron/resources/polkit/privileged.policy",
+        "electron/resources/polkit/privileged.rules",
+        "electron/resources/polkit/privileged-helper.sh",
         "frontend/src/App.vue",
         "electron/main.js",
         "configs/global_config.yaml",
@@ -70,12 +74,8 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_
         "backend/api/update/__init__.py": enable_update,
         "backend/services/updater.py": enable_update,
         "backend/managers/secret_obfuscator.py": enable_update,
-        "backend/managers/privileged_manager.py": enable_update,
         "scripts/feishu_upload.py": enable_update,
         "frontend/src/composables/useUpdate.js": enable_update,
-        "electron/resources/polkit/privileged.policy": enable_update,
-        "electron/resources/polkit/privileged.rules": enable_update,
-        "electron/resources/polkit/privileged-helper.sh": enable_update,
         "backend/api/logs.py": enable_logs,
         "frontend/src/components/LogViewer.vue": enable_logs,
     }
@@ -238,7 +238,7 @@ def test_display_name_with_quotes_and_chinese(tmp_path):
 
 
 def test_polkit_assets_with_update(tmp_path):
-    """--update 项目自带 polkit 三件套，且内容合法、授权边界正确。"""
+    """--update 项目的 polkit 三件套：内容合法，helper 内置 install-update 分支。"""
     target = _render(tmp_path, False, True)
     polkit_dir = target / "electron" / "resources" / "polkit"
 
@@ -305,10 +305,61 @@ def test_polkit_assets_with_update(tmp_path):
     assert "sudo_password" not in example
 
 
-def test_polkit_assets_absent_without_update(tmp_path):
+def test_polkit_assets_standard_without_update(tmp_path):
+    """polkit 是标配：未启用 --update 也生成三件套与特权客户端，
+    但 helper 无 install-update 分支（更新专属），更新链路文件不生成。"""
     target = _render(tmp_path, False, False)
-    assert not (target / "electron" / "resources" / "polkit").exists()
+    polkit_dir = target / "electron" / "resources" / "polkit"
+
+    # 三件套齐全且合法
+    policy = ET.parse(polkit_dir / "privileged.policy").getroot()
+    assert policy.find("action").get("id") == "com.demo.privileged"
+    rules = (polkit_dir / "privileged.rules").read_text(encoding="utf-8")
+    assert (
+        'action.lookup("program") == "/usr/local/share/demo/privileged-helper"'
+        in rules
+    )
+    helper = (polkit_dir / "privileged-helper.sh").read_text(encoding="utf-8")
+    assert "install-update" not in helper and "dpkg" not in helper
+    compile((target / "backend" / "managers" / "privileged_manager.py").read_text(
+        encoding="utf-8"
+    ), "privileged_manager.py", "exec")
+    # managers 统一导出特权入口
+    init = (target / "backend" / "managers" / "__init__.py").read_text(encoding="utf-8")
+    assert "privileged_manager" in init
+
+    # 部署/清理脚本同样标配
     postinst = (target / "electron" / "resources" / "postinst.py").read_text(encoding="utf-8")
-    assert "polkit" not in postinst
-    # update 关闭时 updater 不生成，自然无 pkexec
+    postrm = (target / "electron" / "resources" / "postrm.py").read_text(encoding="utf-8")
+    assert "polkit-1/actions" in postinst and "polkit-1/actions" in postrm
+
+    # DEB 打包仍带 polkit 目录
+    pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
+    assert any(
+        r.get("from") == "resources/polkit" for r in pkg["build"]["extraResources"]
+    )
+
+    # 更新链路不生成，dev.py 的 polkit 管理命令可用
     assert not (target / "backend" / "services" / "updater.py").exists()
+    dev_py = (target / "dev.py").read_text(encoding="utf-8")
+    assert "polkit" in dev_py
+
+
+def test_docs_distribution(tmp_path):
+    """打包路径/版本管理/polkit 说明随所有项目分发；自动更新文档与配图仅 --update 项目。"""
+    plain = _render(tmp_path / "plain", False, False)
+    assert (plain / "docs" / "打包与运行路径说明.md").exists()
+    assert (plain / "docs" / "版本管理说明.md").exists()
+    assert (plain / "docs" / "polkit免密提权说明.md").exists()
+    assert not (plain / "docs" / "自动更新说明.md").exists()
+    assert not (plain / "docs" / "images").exists()
+
+    full = _render(tmp_path / "full", False, True)
+    for name in (
+        "打包与运行路径说明.md",
+        "版本管理说明.md",
+        "polkit免密提权说明.md",
+        "自动更新说明.md",
+    ):
+        assert (full / "docs" / name).exists(), f"缺少文档 {name}"
+    assert (full / "docs" / "images").is_dir()

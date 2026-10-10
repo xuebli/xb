@@ -176,7 +176,7 @@ def polkit_manage(sub: str) -> None:
         print("Windows 无 polkit，无需部署")
         return
     if not POLKIT_SRC.is_dir():
-        print(f"项目未生成 polkit 资源（未启用 --update）：{POLKIT_SRC} 不存在")
+        print(f"项目未生成 polkit 资源（异常，请检查模板完整性）：{POLKIT_SRC} 不存在")
         raise SystemExit(1)
 
     if sub == "status":
@@ -422,7 +422,6 @@ if action in {"start", "restart"}:
             )
     start_service("backend", [str(service_python), "backend/main.py"])
     print(f"✓ 后端已启动（PID 文件: {PID_DIR / 'backend.pid'}，端口: {backend_port}）")
-[% if enable_update %]
     if os.name != "nt" and POLKIT_SRC.is_dir():
         # 开发模式没有 DEB postinst，start 时自动部署特权入口；
         # 项目内 helper 比 部署副本新（改过分支）或尚未部署时自动同步。
@@ -439,9 +438,8 @@ if action in {"start", "restart"}:
             if _run_sudo_script(polkit_install_script()):
                 print("✓ polkit 特权入口已自动部署/同步（管理员组免密生效）")
             else:
-                print("ℹ polkit 特权入口未部署，应用内更新/特权功能不可用；"
+                print("ℹ polkit 特权入口未部署，特权功能不可用；"
                       "可稍后执行 python dev.py polkit install 重试")
-[% endif %]
     if not wait_for_port(backend_port):
         stop_service("backend")
         raise SystemExit("后端启动失败，请查看 datas/logs/backend.log")

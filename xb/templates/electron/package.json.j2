@@ -62,13 +62,11 @@
           "!secrets.yaml"
         ]
       },
-[% if enable_update %]
       {
         "from": "resources/polkit",
         "to": "polkit",
         "filter": ["**/*"]
       },
-[% endif %]
       {
         "from": "../scripts",
         "to": "scripts",

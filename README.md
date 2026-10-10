@@ -16,6 +16,7 @@
 - 可选日志中心（`--logs`，后端日志实时推送到界面，排障不用登机器）
 - 通用设置页（yaml 加一行"值 + 行尾 `# 显示名`"即自动出表单，注释回填不丢失；secrets.yaml 的 key 自动渲染为密码框）
 - 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
+- 特权操作免密提权标配（Linux polkit，管理员组无感、无密码落盘；helper 白名单执行器）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
@@ -53,14 +54,14 @@ xb init demo --terminal
 # 带日志中心
 xb init demo --logs
 
-# 启用应用内自动更新（Linux 提权走 polkit，管理员组无感更新，无密码落盘）
+# 启用应用内自动更新（Ubuntu 更新安装走 polkit 免密提权，管理员组无感）
 xb init demo --update
 
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
 
 cd demo
-# 启动开发环境
+# 启动开发环境（自动完成：依赖同步、Git hooks 安装、polkit 特权入口部署）
 xb dev
 
 # 查看状态
@@ -81,7 +82,7 @@ xb dev stop
 ❯ [ ] 应用显示名 : Demo
   [ ] 端口（后端/前端） : 8000 / 8001
   [ ] 内置终端  ✘  (Web 终端组件)
-  [ ] 应用内更新  ✘  (Linux 提权走 polkit，无密码落盘)
+  [ ] 应用内更新  ✘  (Ubuntu 更新安装走 polkit 免密提权)
   [ ] 日志中心  ✘  (实时查看后端日志，排障刚需)
   [ ] 应用图标 : 使用默认
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
@@ -152,7 +153,9 @@ xb init demo --icon ./my-icon.png
 
 > 详细原理与 AI 开发者注意事项见模板内
 > **[xb/templates/root/docs/自动更新说明.md](xb/templates/root/docs/自动更新说明.md)**
-> （生成的项目会自带 `docs/自动更新说明.md` 与配图）。
+> （生成的项目会自带 `docs/自动更新说明.md` 与配图）；
+> Ubuntu polkit 免密提权的授权机制与调试方法见
+> **[xb/templates/root/docs/polkit免密提权说明.md](xb/templates/root/docs/polkit免密提权说明.md)**。
 
 `xb init demo --update` 会让生成的项目内置自动更新能力，
 以飞书云盘的一个文件夹作为发布"货架"：
@@ -165,8 +168,11 @@ xb init demo --icon ./my-icon.png
 | `backend/services/updater.py` | 版本比较、信息拉取、下载校验、配置备份迁移、安装 |
 | `backend/services/feishu_client.py` | 飞书接口封装（文件夹列举、并发下载） |
 | `backend/managers/secret_obfuscator.py` | 敏感值混淆（`obf1:`，防围观级别） |
+| `backend/managers/privileged_manager.py` | polkit 特权客户端（pkexec 调 root 白名单执行器） |
 | `backend/app_version.py` | 后端版本号（version_manager 提交时自动同步） |
-| `frontend/src/components/UpdateChecker.vue` | 版本号徽章 + 更新弹窗 + 进度条 |
+| `frontend/src/components/version/UpdatePanel.vue` | 更新弹窗（版本信息 / 更新说明 / 迁移明细 / 进度条） |
+| `frontend/src/components/version/CommitHistoryPanel.vue` | 版本弹窗里的提交历史 |
+| `frontend/src/components/GitVersionBadge.vue` | 顶栏版本号徽章 = 更新入口 |
 | `frontend/src/composables/useUpdate.js` | 定时检查 / 下载进度轮询 |
 | `scripts/feishu_upload.py` | 发版端：安装包与版本信息上传飞书 |
 | `configs/config_changes.json` | 配置迁移清单（顶层 key 是版本号） |
@@ -184,6 +190,17 @@ postinst 预部署，管理员组无感、无密码落盘），Windows 等退出
 **飞书侧准备：** 开放平台建自建应用 → 开通 `drive:drive` 权限并发布 →
 建云盘文件夹，完整链接填入 `update_folder_url`。开发模式（源码运行）不支持
 应用内更新，检查接口返回 `packaged: false`。
+
+## 深入文档
+
+生成的项目自带 `docs/` 说明文档，模板源文件在 `xb/templates/root/docs/`：
+
+| 文档 | 内容 |
+|------|------|
+| [自动更新说明.md](xb/templates/root/docs/自动更新说明.md) | 应用内自动更新：发版流程、配置迁移清单、AI 开发者纪律 |
+| [polkit免密提权说明.md](xb/templates/root/docs/polkit免密提权说明.md) | Linux polkit 免密提权：安全模型、三件套部署、新增特权操作、排障 |
+| [打包与运行路径说明.md](xb/templates/root/docs/打包与运行路径说明.md) | 构建产物、DEB/NSIS 安装布局、运行时数据目录、三种运行形态判定 |
+| [版本管理说明.md](xb/templates/root/docs/版本管理说明.md) | 版本号 single source of truth、三模态 bump 弹窗、手动 bump、hook 纪律 |
 
 ## 生成的项目结构
 
@@ -212,6 +229,7 @@ demo/
 ├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
 ├── datas/                  # 运行时数据（gitignore）
+├── docs/                   # 说明文档（打包路径/自动更新/polkit 提权）
 ├── dev.py                  # 开发脚本（Windows/Linux）
 ├── build.py                # 打包脚本（Windows/Linux）
 └── .venv                   # Python 虚拟环境

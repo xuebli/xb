@@ -146,12 +146,14 @@ class TemplateEngine:
             context,
         )
 
+        # privileged_manager 是标配（polkit 免密提权基础设施），不随 --update 门控
+        self._render_template(
+            "backend/managers/privileged_manager.py.j2",
+            backend_dir / "managers" / "privileged_manager.py",
+            context,
+        )
+
         if context["enable_update"]:
-            self._render_template(
-                "backend/managers/privileged_manager.py.j2",
-                backend_dir / "managers" / "privileged_manager.py",
-                context,
-            )
             self._render_template(
                 "backend/managers/secret_obfuscator.py.j2",
                 backend_dir / "managers" / "secret_obfuscator.py",
@@ -301,27 +303,27 @@ class TemplateEngine:
 
         self._copy_app_icon(resources_dir / "icon.png", context)
 
-        if context["enable_update"]:
-            # polkit 特权执行器三件套：随安装包进 resources/polkit，
-            # 由 postinst（root 身份）部署到系统路径，postrm 卸载时清理
-            polkit_dir = resources_dir / "polkit"
-            polkit_dir.mkdir(exist_ok=True)
-            self._render_template(
-                "electron/resources/polkit/privileged.policy.j2",
-                polkit_dir / "privileged.policy",
-                context,
-            )
-            self._render_template(
-                "electron/resources/polkit/privileged.rules.j2",
-                polkit_dir / "privileged.rules",
-                context,
-            )
-            self._render_template(
-                "electron/resources/polkit/privileged-helper.sh.j2",
-                polkit_dir / "privileged-helper.sh",
-                context,
-                executable=True,
-            )
+        # polkit 特权执行器三件套是标配：随安装包进 resources/polkit，
+        # 由 postinst（root 身份）部署到系统路径，postrm 卸载时清理；
+        # helper 的 install-update 分支仅 --update 项目生成
+        polkit_dir = resources_dir / "polkit"
+        polkit_dir.mkdir(exist_ok=True)
+        self._render_template(
+            "electron/resources/polkit/privileged.policy.j2",
+            polkit_dir / "privileged.policy",
+            context,
+        )
+        self._render_template(
+            "electron/resources/polkit/privileged.rules.j2",
+            polkit_dir / "privileged.rules",
+            context,
+        )
+        self._render_template(
+            "electron/resources/polkit/privileged-helper.sh.j2",
+            polkit_dir / "privileged-helper.sh",
+            context,
+            executable=True,
+        )
 
 
     def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
@@ -438,11 +440,21 @@ class TemplateEngine:
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
-        # docs/：自动更新说明 + 配图，仅 --update 项目随模板分发（原样拷贝，不渲染变量）
-        if context["enable_update"]:
-            docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
-            if docs_src.exists():
-                shutil.copytree(docs_src, target_dir / "docs", dirs_exist_ok=True)
+        # docs/：随模板分发的说明文档（原样拷贝，不渲染变量）。
+        # 打包路径/版本管理/polkit 说明面向全部项目；自动更新说明仅 --update 项目分发。
+        docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
+        if docs_src.exists():
+            update_only_docs = {"自动更新说明.md", "images"}
+            docs_dst = target_dir / "docs"
+            docs_dst.mkdir(exist_ok=True)
+            for item in docs_src.iterdir():
+                if not context["enable_update"] and item.name in update_only_docs:
+                    continue
+                dest = docs_dst / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, dest)
 
         (target_dir / "datas" / "logs").mkdir(parents=True, exist_ok=True)
         (target_dir / "datas" / "pids").mkdir(parents=True, exist_ok=True)

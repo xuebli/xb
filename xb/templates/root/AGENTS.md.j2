@@ -17,9 +17,9 @@
   `~/.local/share/[[ package_name]]/datas/`，用户脚本位于
   `~/.local/share/[[ package_name]]/scripts/`。
 - **Windows**：[% if enable_terminal %]内置终端使用 ConPTY 启动 PowerShell，并安装 Windows 专用依赖 `pywinpty`；[% endif %]安装产物为
-  NSIS `.exe`；配置位于 `%APPDATA%\[[ package_name]]\`，运行数据和日志位于
-  `%LOCALAPPDATA%\[[ package_name]]\datas\`，用户脚本位于
-  `%LOCALAPPDATA%\[[ package_name]]\scripts\`。
+  NSIS `.exe`；配置位于 `C:\Users\<用户>\AppData\Roaming\[[ package_name]]\`，
+  运行数据和日志位于 `C:\Users\<用户>\AppData\Local\[[ package_name]]\datas\`，
+  用户脚本位于 `C:\Users\<用户>\AppData\Local\[[ package_name]]\scripts\`。
 - 平台分支必须由 `os.name`、`sys.platform` 或 Electron 的 `process.platform` 判断。
 [% if enable_terminal %]- 终端平台实现必须保持独立，不要改变 Unix PTY 分支来适配 Windows。
 [% endif %]
@@ -37,7 +37,7 @@
 │   ├── api/            # API 路由层；按业务域拆子目录，不要把所有路由堆在一层
 │   ├── services/       # 业务编排层；每个业务域一个子目录/模块
 │   ├── schemas/        # Pydantic 请求/响应模型；按业务域拆分
-│   └── managers/       # 基础设施单例：path_manager / logger_manager[% if enable_update %] / privileged_manager[% endif %]；不要堆业务代码
+│   └── managers/       # 基础设施单例：path_manager / logger_manager / privileged_manager；不要堆业务代码
 ├── frontend/           # Vue3 + Vite SPA
 │   ├── vite.config.js  # 构建期注入 __APP_VERSION__ + __GIT_COMMITS__
 │   └── src/
@@ -125,13 +125,13 @@
 - **单文件单职责**：一个文件只承载一个明确模块/角色。文件开始变大、同时包含路由/模型/业务/工具函数/外部接口时，必须拆分；不要写几千行的"万能文件"。经验阈值：超过约 400 行或出现 2 个以上业务域时，先拆模块再继续加代码。
 - **路径硬编码必须经 `path_manager`**：`get_config_path` / `get_log_path` / `get_report_path` / `get_script_path` / `get_frontend_path`，不要直接拼 `Path.home()` 或 `Path(__file__).parent...`。
 - **资源目录按实际需求新增，禁止预声明占位目录**：只有项目真正引入某类资源时，才创建对应目录（例如 `external/`、`firmwares/`、`vendor/`），不要提前创建空目录、常量或无实际用途的路径接口。新增后必须同步检查并按需修改：`TemplateEngine` 的生成/复制逻辑、`electron/package.json` 的 `build.extraResources`、`PathManager` 的开发态与安装态路径、需要用户写入时的首次启动初始化逻辑，以及 README 的项目结构说明。
-- **可写资源与安装资源分离**：安装包内资源是只读源；确需运行时修改的资源，Windows 放到 `%LOCALAPPDATA%\[[ package_name]]\<resource>\`，Linux 放到 `~/.local/share/[[ package_name]]/<resource>/`，并由 `path_manager` 提供统一路径。首次初始化只复制不存在的文件，不得覆盖用户已有文件；若资源应始终保持安装包版本，则直接读取安装资源目录，不复制到用户目录。
+- **可写资源与安装资源分离**：安装包内资源是只读源；确需运行时修改的资源，Windows 放到 `C:\Users\<用户>\AppData\Local\[[ package_name]]\<resource>\`，Linux 放到 `~/.local/share/[[ package_name]]/<resource>/`，并由 `path_manager` 提供统一路径。首次初始化只复制不存在的文件，不得覆盖用户已有文件；若资源应始终保持安装包版本，则直接读取安装资源目录，不复制到用户目录。
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
 - **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
 - **Electron 快捷键必须保留**：`electron/main.js` 隐藏菜单后要显式支持 `F12` / `Ctrl+Shift+I` 打开 DevTools、`F11` 全屏、`Ctrl/Cmd + +/-/0` 缩放/重置、`Ctrl/Cmd + 鼠标滚轮` 缩放。改窗口或菜单逻辑时不要破坏这些桌面基础能力。
 - **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。[% if enable_terminal %]终端 PTY、PowerShell/bash 及其[% endif %]业务子进程都必须随应用退出。
-- **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `%APPDATA%\[[ package_name]]\` 与 `%LOCALAPPDATA%\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
+- **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `C:\Users\<用户>\AppData\Roaming\[[ package_name]]\` 与 `C:\Users\<用户>\AppData\Local\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。
 - **端口配置 single source of truth = `configs/global_config.yaml` 的 `ports` 段**：backend 走 `path_manager.get_config_value("ports.backend", default=8000)`；electron 用 `js-yaml` 自己读同一个 yaml；前端通过 `dev.py` 注入的 `VITE_BACKEND_PORT` / `VITE_DEV_PORT` 环境变量拿到，Vite 将 `/api`（含 WebSocket）代理到 FastAPI，组件内统一 `import.meta.env.VITE_API_BASE || ''`（打包态走相对路径，由 backend 当静态服务器返回页面，同源访问）。端口属于启动期配置，保存后可以 reload 配置缓存，但必须重启 dev.py / Electron 才能换监听端口。
 - **配置必须有 UI**：所有写进 `configs/*.yaml` 的配置项，加一行值 + 行尾 `# 显示名` 即在"⚙ 设置"页自动生成表单（保存走 `PUT /api/app-settings`，注释会被回填不丢失）。密钥类配置同样：在 `secrets.yaml` 声明 key（值留空 + 行尾注释），设置页自动渲染为密码框；不要要求用户手改 yaml 填密钥。
 - **yaml 写回一律走 `managers/yaml_comments.py`**：`parse_yaml_labels` + `dump_yaml_with_labels` 回填行尾注释（含列表项 `path[0]`），凡"读 yaml → 改数据 → 写回"的代码（设置页保存、升级补齐、配置迁移、密钥混淆）禁止直接 `yaml.safe_dump` 落盘——注释就是设置页的显示名，丢了用户可直接感知。
@@ -160,7 +160,7 @@
   1. 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 `case` 中加分支：每个参数独立校验（路径用 `realpath` + 目录白名单、取值用正则/枚举限定）、命令用**绝对路径**、以 `exec` 执行、绝不拼接未校验的输入；
   2. 业务代码调用 `privileged_manager.run("<action>", *args)`，**必须处理 `ok=False` 分支**（`stderr` 里可能带 tar.gz 手动安装场景的部署指引，原样展示给用户）；
   3. 更新 `electron/resources/polkit/privileged-helper.sh.j2` 头部的"可用 action"注释。
-  helper 的更新随 DEB 重装自动生效（postinst 重新部署），**不需要**额外的配置迁移条目。
+  helper 的更新无需手动部署：开发模式 `dev.py start` 检测到 helper 改动会自动重新部署，发版随 DEB 重装由 postinst 自动更新，**不需要**额外的配置迁移条目。
 - **禁止的替代方案**（即使功能更"简单"也不允许）：裸 `sudo`/`pkexec 任意命令`（等于把免密 root 开放给任意进程）、把用户加进 sudoers、密码写文件、守护进程化绕过校验。
 ## 配置文件分级（关键约定）
 

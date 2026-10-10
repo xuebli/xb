@@ -4,10 +4,9 @@
 
 ## 特性
 
-- 一键启动开发环境
-- 自动构建 Linux DEB 与 Windows NSIS 安装包
-- 智能路径管理（开发/生产自动切换）
-- 版本管理（提交时更新版本号）
+- 一键启动开发环境；自动构建 Linux DEB 与 Windows NSIS 安装包
+- 智能路径管理（开发/生产自动切换）；版本管理（提交时自动 bump）
+- 特权操作免密提权（Linux polkit，管理员组无感、无密码落盘）
 - 全局亮色/暗色主题切换
 [% if enable_terminal %]
 - 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
@@ -16,48 +15,30 @@
 - 应用内自动更新（飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 [% endif %]
 
-## 技术栈
+## 环境要求
 
-**前端**: Vue 3 + Vite  
-**后端**: FastAPI + Uvicorn  
-**桌面**: Electron  
-**依赖**: uv  
-**构建**: PyInstaller + electron-builder
+- Python 3.10+、Node.js 20.19+（Vite 8 要求，低版本构建报错）、uv、Git
+- Windows 10/11 或 Ubuntu/Debian
+
+```bash
+# 安装 uv（若已有可跳过）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ## 项目结构
 
 ```
 [[ package_name]]/
-├── pyproject.toml      # Python 依赖 (uv)
-├── backend/            # FastAPI 后端
-│   ├── main.py
-│   ├── api/
-│   └── managers/
+├── backend/            # FastAPI 后端（main.py / api/ / managers/）
 ├── frontend/           # Vue 3 前端
 ├── electron/           # Electron 桌面
-├── version/            # 版本管理
-│   ├── hooks/
-│   └── scripts/
+├── version/            # 版本管理（pre-commit hook）
 ├── configs/            # 配置文件
-├── datas/              # 运行时数据
+├── datas/              # 运行时数据（gitignore）
 ├── scripts/            # 辅助脚本
+├── docs/               # 说明文档（路径 / 版本 / polkit / 自动更新）
 ├── dev.py              # 开发脚本
 └── build.py            # 打包脚本
-```
-
-## 环境要求
-
-- Python 3.10+
-- Node.js 16+
-- uv（Python 包管理器）
-- Windows 10/11 或 Ubuntu/Debian
-[% if enable_terminal %]
-- Windows 终端自动安装 `pywinpty`，提供 PowerShell 原生交互能力
-[% endif %]
-
-```bash
-# 安装 uv（若已有可跳过）
-curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ---
@@ -66,299 +47,81 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### 方式一：开发模式（日常开发）
 
-运行**源码**，数据保存在**项目目录** (`datas/`、`configs/`)。日常开发首选。
+运行**源码**，数据保存在项目目录（`configs/`、`datas/`）。
 
 ```bash
-./dev.py start     # 一键启动前端 + 后端
-./dev.py stop      # 停止所有服务
-./dev.py restart   # 重启
+./dev.py start     # 一键启动（Windows: python .\dev.py start）
+./dev.py stop      # 停止
 ./dev.py status    # 查看状态
 ```
 
-> 脚本自带 shebang 且已加可执行位，可直接用文件名运行。
-> Windows PowerShell 下推荐写作 `python .\dev.py start`；
-> Linux 可写作 `./dev.py start`。Windows 后台服务会写入
-> `datas/logs/` 并与当前 PowerShell 的输入隔离，启动命令完成后不会占用当前终端。
+也可用 `xb dev` / `xb dev stop` / `xb dev status`（需全局安装 xb，等同上述命令）。
 
-也可通过 `xb dev` 命令启动（需全局安装 xb）：
+**start 自动完成（无需手动执行）：** 依赖同步（`uv sync`）、Git hooks 安装
+（版本弹窗随 commit 自动触发）、polkit 特权入口部署/同步（Ubuntu/Linux，
+改 helper 后再次 start 自动重部署；仅本次输 sudo 密码，不落盘）、端口检查、
+拉起后端与前端（Vite 热更新）。
 
-```bash
-xb dev                # 等同于 ./dev.py start
-xb dev stop
-xb dev status
-```
+访问地址：前端 `http://<本机IP>:5173`、后端 `http://<本机IP>:8000`、
+文档 `/docs`；端口可在 `configs/global_config.yaml` 的 `ports` 段修改。
 
-**启动后自动完成：**
-- 首次启动时执行 `uv sync --extra dev` 同步 Python 依赖
-- 安装 Git Hooks（版本管理）
-- 检查端口占用
-- 启动后端（FastAPI）和前端（Vite dev server，支持热更新）
-- 开发态通过 Vite 代理转发 `/api`[% if enable_terminal %] 和 WebSocket[% endif %] 到 FastAPI
-
-[% if enable_terminal %]
-Windows 终端使用 PowerShell + ConPTY，支持命令历史、方向键、复制粘贴、
-Tab 补全和 Ctrl+C。Ubuntu/Linux 继续使用 bash + Unix PTY。
-Windows `cmd.exe` 没有 `ls` 内置命令；PowerShell 中 `ls` 是 `Get-ChildItem`
-的别名，Ubuntu/Linux 中可直接使用 `ls`。
-[% endif %]
-
-**访问地址（默认端口，可在 `configs/global_config.yaml` 的 `ports` 段修改）：**
-
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 前端页面 | `http://<本机IP>:5173` | Vite 热更新 |
-| 后端 API | `http://<本机IP>:8000` | FastAPI |
-| API 文档 | `http://<本机IP>:8000/docs` | Swagger |
-
-> 启动时自动获取本机局域网 IP，同一网络内的设备可直接访问。
-
-#### 故障排查：手动启动（dev.py 失败时）
-
-如果 `./dev.py start` 启动失败，可以手动分别启动前后端，直接看终端输出定位问题：
-
-**手动启动后端：**
-
-```bash
-# 同步依赖
-uv sync --extra dev
-
-# 直接启动（Linux/macOS，日志输出到终端，Ctrl+C 停止）
-# Linux/macOS
-.venv/bin/python backend/main.py
-```
-
-Windows PowerShell 单独启动后端：
-
-```powershell
-uv sync --extra dev
-.\.venv\Scripts\python.exe backend\main.py
-```
-
-**手动启动前端：**
-
-```bash
-cd frontend
-
-# 首次需要安装依赖
-npm install
-
-# 启动 Vite 开发服务器
-npm run dev
-```
-
----
+dev.py 失败时可手动分步启动定位问题：`uv sync --extra dev` 后
+`.venv/bin/python backend/main.py`（Windows 用 `.venv\Scripts\python.exe`），
+前端 `cd frontend && npm install && npm run dev`。
 
 ### 方式二：Electron 桌面预览（打包前验证）
 
-运行**构建产物**（PyInstaller 打包的后端 + Vite 构建的前端），以 Electron 桌面窗口呈现。数据保存在**项目目录**。
-
-用于：开发模式没问题后，验证打包构建是否正常。Linux 生成 DEB，
-Windows 生成 NSIS 安装程序。
+运行构建产物（PyInstaller 后端 + Vite 前端），无热更新。
 
 ```bash
-# 第一步：构建后端（PyInstaller → dist/server）
-./build.py -b
-
-# 第二步：构建前端（Vite → frontend/dist）
-./build.py -f
-
-# 第三步：启动 Electron 桌面窗口
+./build.py -b                        # 后端 → dist/server
+./build.py -f                        # 前端 → frontend/dist
 cd electron && npm install && npm start
 ```
 
-Windows PowerShell 等价命令：
-
-```powershell
-python .\build.py -b
-python .\build.py -f
-Set-Location electron
-npm install
-npm start
-```
-
-**Electron 启动流程：**
-1. `electron/main.js` 拉起构建好的后端可执行文件
-2. 监听后端 stdout，等待 `应用启动完成` 字样
-3. 创建桌面窗口，加载后端提供的前端页面
-
-> 此模式下前端走后端的 SPA 静态文件服务（非 Vite dev server），没有热更新。
-
----
-
 ### 方式三：打包分发（生产部署）
 
-Linux 构建完整 DEB 安装包，Windows 构建 NSIS 安装程序。安装后通过桌面图标启动。
-配置和数据目录由系统决定：
-Linux 使用 `~/.config/[[ package_name]]/`、`~/.local/share/[[ package_name]]/datas/`
-与 `~/.local/share/[[ package_name]]/scripts/`；
-Windows 使用 `C:\Users\你的用户名\AppData\Roaming\[[ package_name]]\`、
-`C:\Users\你的用户名\AppData\Local\[[ package_name]]\datas\` 与
-`C:\Users\你的用户名\AppData\Local\[[ package_name]]\scripts\`。
-
 ```bash
-# 一键构建当前平台安装包（Linux 为 DEB，Windows 为 NSIS）
-./build.py -a
+./build.py -a               # 一键构建安装包（Linux DEB / Windows NSIS）
+sudo dpkg -i electron/dist/[[ package_name]]_<version>_amd64.deb   # 安装（Linux）
+[[ package_name]]           # 启动：桌面图标或命令行
 ```
 
-构建产物位于 `electron/dist/`：
-
-- Linux：`*.deb`
-- Windows：`*.exe`
-
-```bash
-# 安装
-sudo dpkg -i electron/dist/[[ package_name]]_<version>_amd64.deb
-
-# 启动：点击桌面图标，或命令行
-[[ package_name]]
-```
-
-**生产模式路径：**
-
-| 平台 | 配置 | 数据/日志 | 用户脚本 |
-|------|------|-----------|----------|
-| Linux | `~/.config/[[ package_name]]/` | `~/.local/share/[[ package_name]]/datas/` | `~/.local/share/[[ package_name]]/scripts/` |
-| Windows | `%APPDATA%\[[ package_name]]\` | `%LOCALAPPDATA%\[[ package_name]]\datas\` | `%LOCALAPPDATA%\[[ package_name]]\scripts\` |
-| macOS | `~/Library/Application Support/[[ package_name]]/` | `~/Library/Application Support/[[ package_name]]/datas/` | `~/Library/Application Support/[[ package_name]]/scripts/` |
-
-安装包中的 `scripts/` 会在首次启动时复制到上述用户脚本目录。已有文件不会被覆盖。
-
-Windows 卸载时会显示“删除用户数据（配置、日志和脚本）”可选项，默认不勾选。
-勾选后会删除 `%APPDATA%\[[ package_name]]\` 和
-`%LOCALAPPDATA%\[[ package_name]]\`；应用升级不会触发该删除逻辑。
+> 构建产物、安装布局、各平台配置/数据目录、卸载行为详见
+> **[docs/打包与运行路径说明.md](docs/打包与运行路径说明.md)**。
 
 ---
-
-## 推荐工作流
-
-```
-日常开发          →  ./dev.py start（Windows 使用 python .\dev.py start）
-  ↓ 开发完毕
-打包前验证        →  ./build.py -b && ./build.py -f && cd electron && npm start
-  ↓ 验证通过
-打包分发          →  ./build.py -a → 得到 .deb
-```
-
----
-
-## 构建命令
-
-```bash
-./build.py -a    # 全部（当前平台安装包）
-./build.py -f    # 仅前端 → frontend/dist
-./build.py -b    # 仅后端 → dist/server（PyInstaller）
-./build.py -e    # 仅 Electron → electron/dist/*.deb
-[% if enable_update %]
-./build.py --upload-only  # 不构建，直接上传 electron/dist 最新安装包到飞书
-[% endif %]
-```
 
 ## 版本管理
 
-```bash
-# 安装 Git hooks（./dev.py start 会自动执行一次）
-./version/scripts/install_hooks.py
+提交时自动弹出版本选择（patch/minor/major/跳过），bump 后同步全部版本文件。
+hooks 由 `dev.py start` 自动安装，无需手动操作。
 
-# 提交代码时自动打开版本管理界面（SSH 会输出 Web 地址）
-git commit -m "feat: add new feature"
-```
+> 三模态弹窗、手动 bump、hook 纪律详见
+> **[docs/版本管理说明.md](docs/版本管理说明.md)**。
+
 [% if enable_update %]
-
-版本号 single source of truth 是 `electron/package.json`；提交时 bump 会自动
-同步 `pyproject.toml`、`electron/package-lock.json` 和 `backend/app_version.py`
-（打包态后端读不到 package.json，靠它取当前版本）。
-
----
-
 ## 软件自动更新
 
-应用内置「检查更新 → 下载校验 → 备份配置 → 自动安装」的完整闭环，
-以飞书云盘的一个文件夹作为发布"货架"。
+发版：`configs/secrets.yaml` 填好飞书凭证 → `./build.py -a` → 按提示上传。
+客户端自动检查更新并免密安装（Ubuntu 走 polkit）。
 
-> 完整原理、发版/升级全流程截图与配置迁移详解见
+> 全流程、secrets 混淆、配置迁移、飞书侧准备详见
 > **[docs/自动更新说明.md](docs/自动更新说明.md)**。
-
-### 发版（开发电脑）
-
-1. 在 `configs/secrets.yaml` 填好 `feishu.app_id` / `app_secret` /
-   `update_folder_url`（飞书开放平台自建应用需开通 `drive:drive` 权限并发布生效）；
-2. `./build.py -a` 构建完成后按提示输入更新说明并确认上传；
-   也可用 `./build.py --upload-only` 只传已有安装包；
-3. 安装包与版本信息文件（`update_ubuntu.json` / `update_windows.json`）
-   上传到飞书文件夹，客户端只认版本信息文件。
-
-构建时会自动把 `secrets.yaml` 内容同步到 `secrets.yaml.example`，
-并把其中的敏感键（secret/password/token）混淆成 `obf1:` 密文随包分发；
-构建结束 example 自动恢复为留空模板，真实凭证只留在本地。
-
-### 客户端（产线电脑）
-
-- 软件启动时 / 每小时 / 点击界面顶部版本号徽章时自动检查更新；
-- 开发模式（源码运行）不支持应用内更新，检查接口会直接返回 `packaged: false`；
-- 发现新版本 → 弹窗展示更新说明与配置变更明细 → 下载（4 线程分块 +
-  SHA256 校验，`.part` 临时文件防半截包）→ 备份配置到
-  `datas/config_backups/` → 按 `configs/config_changes.json` 迁移配置 →
-  Ubuntu 走 polkit 免密安装（管理员组无感，`pkexec` 调用 root 拥有的
-  privileged-helper 只装应用更新目录中的 deb），Windows 等应用退出后静默安装。
-
-### 配置迁移清单（configs/config_changes.json）
-
-顶层 key 是**变更生效前用户所处的最后版本号**（即引入变更的 commit 之前
-`electron/package.json` 里的版本；该版本及更早的用户配置还是旧结构，需要迁移）。
-应用条件：`用户当前版本 <= 块版本 < 要安装的包版本`——块 `"1.0.0"` 的变更随
-1.1.0 发布时，1.0.0 升 1.1.0 会应用，1.1.0 升 1.2.0 不再应用。每个条目支持：
-
-| action | 说明 |
-|--------|------|
-| `merge` | YAML 增量合并：`add_items` 补齐缺失键、`overwrite_items` 覆盖/删除键、`delete_items` 删除键、`keep_items` 保护名单 |
-| `create` | 新建文件（已存在则跳过） |
-| `overwrite` | 整文件覆盖（启动时会自动用包内文件对齐，覆盖前留 `.bak`） |
-
-`add_items`/`overwrite_items` 条目不携带 `value` 时，值从包内
-`<filename>.example` 模板取——secrets 类条目规范写法，真实值不进仓库。
-
-### 飞书侧准备
-
-1. [飞书开放平台](https://open.feishu.cn) 创建企业自建应用，得到
-   `app_id` / `app_secret`；
-2. 开通 **`drive:drive`** 权限并**创建版本发布**（只开通不发布 = 没开通）；
-3. 建一个云盘文件夹，把浏览器地址栏完整链接（形如
-   `https://xxx.feishu.cn/drive/folder/一串字符`）填入
-   `configs/secrets.yaml` 的 `feishu.update_folder_url`。
 [% endif %]
 
-## 主题切换
+## 特权操作（polkit）
 
-项目内置全局亮色/暗色主题切换（顶栏 🌙/☀ 按钮），用户偏好保存在 `localStorage`，首次访问跟随系统设置。
+需要 root 的操作统一走 `privileged_manager.run("<action>", ...)` 免密执行，
+**禁止**业务代码弹 sudo 密码、**禁止**密码落盘。
 
-## 特权操作（polkit 白名单执行器）
-
-需要 root 的操作不使用 sudo 密码，统一走 polkit：白名单执行器
-`/usr/local/share/[[ package_name ]]/privileged-helper` 由 DEB 安装脚本自动部署；
-pkexec 判定固定走 `org.freedesktop.policykit.exec`，管理员组成员的免密放行由
-rules 按 program 白名单（仅 privileged-helper）实现，全程无密码落盘。
-
-业务代码中执行特权操作：
-
-```python
-from managers import privileged_manager
-
-result = privileged_manager.run("install-update", deb_path)
-if not result["ok"]:
-    ...
-```
-
-新增特权操作：在 `electron/resources/polkit/privileged-helper.sh.j2` 的
-case 中加一个分支（参数逐一校验、绝对路径、exec 执行），业务侧用
-`privileged_manager.run("<action>", ...)` 调用。**禁止**业务代码临时弹
-sudo 密码，**禁止**把密码写入任何文件。
-
+> 授权机制、部署调试、新增特权操作纪律详见
+> **[docs/polkit免密提权说明.md](docs/polkit免密提权说明.md)**。
 
 ## API 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api` | 欢迎信息 |
 | GET | `/api/health` | 健康检查 |
 [% if enable_terminal %]
 | WS | `/api/terminal/ws` | 本地交互式终端 |
@@ -373,92 +136,24 @@ sudo 密码，**禁止**把密码写入任何文件。
 
 ## 常见问题
 
-**后端启动失败**
 ```bash
+# 后端启动失败：先看日志和端口
 cat datas/logs/backend.log
-lsof -i :8000   # 检查端口占用（改过端口换成实际值）
+lsof -i :8000 -i :5173        # 或 ./dev.py stop 清理旧进程
 ```
 
-Windows PowerShell 查看日志和端口：
-
 ```powershell
+# Windows 等价命令
 Get-Content .\datas\logs\backend.log -Tail 80
 Get-NetTCPConnection -LocalPort 8000,5173 -State Listen
-```
-
-**前端构建失败**
-```bash
-cd frontend && rm -rf node_modules && npm install
-```
-
-以上命令适用于 Linux/macOS；Windows 请使用下面的 PowerShell 命令。
-
-Windows PowerShell：
-
-```powershell
-Remove-Item -Recurse -Force .\frontend\node_modules
-Set-Location frontend
-npm install
-```
-
-**Python 依赖同步慢或失败**
-
-uv 镜像源由项目内置的并行测速自动管理：首次依赖同步（`dev.py`）与后端构建
-（`build.py -b/-a`）前会实测各镜像（必须返回 HTTP 200 且下载到真实内容），
-自动切换到最快可用源（约 1-6 秒，写入 uv 用户级配置，对本机所有项目生效）；
-没有可用镜像时保持现有配置不动。不依赖 chsrc——其 `first` 模式不本地测速，
-曾出现写入被网络封锁镜像（403）的坏配置。
-
-**npm install 慢或超时**
-
-项目的 npm 源由 [nrm](https://github.com/Pana/nrm) 全局管理。`./build.py` 在
-npm install 前会自动 `nrm test` 测速所有内置源并切换到最快的；没有 nrm 时会
-自动 `npm install -g nrm`。手动操作：
-
-```bash
-nrm ls          # 查看所有内置源（* 为当前源）
-nrm test        # 测速所有源
-nrm use taobao  # 手动切换（示例）
-nrm current     # 查看当前源
-```
-
-项目不放 `.npmrc`，npm 源完全由 nrm 全局管理（构建时自动测速切换）。
-
-Electron 的二进制镜像由 `build.py` 和 `electron/prepare.js`
-通过 `ELECTRON_MIRROR` 环境变量注入。
-若安装 Electron npm 包后网络中断，`npm start` / `npm run build` 会在
-`prestart` / `prebuild` 阶段检查 `node_modules/electron/dist/` 和 `path.txt`，
-缺失时自动重新下载。
-
-自动修复仍失败时，可手动指定镜像补装：
-
-```powershell
-$env:ELECTRON_MIRROR = "https://mirrors.huaweicloud.com/electron/"
-node .\node_modules\electron\install.js
-```
-
-**Electron 窗口空白**
-```bash
-# 确认前后端已构建
-./build.py -b && ./build.py -f
-cd electron && npm start
-# 按 F12 打开 DevTools 查看控制台错误
-```
-
-**端口被占用**
-```bash
-./dev.py stop          # 先停止旧进程
-lsof -i :8000 -i :5173   # 查看占用情况
-# 或修改 configs/global_config.yaml 中的端口号
-```
-
-Windows PowerShell：
-
-```powershell
 python .\dev.py stop
-Get-NetTCPConnection -LocalPort 8000,5173 -State Listen
-# 或修改 configs\global_config.yaml 中的端口号后重启 dev.py
 ```
+
+- **依赖装不上/慢**：uv 与 npm 源在 `dev.py start` / `build.py` 时自动实测
+  切换到最快镜像（npm 由 nrm 全局管理，项目不放 `.npmrc`），一般无需手动干预；
+  前端构建失败可 `cd frontend && rm -rf node_modules && npm install` 重装。
+- **Electron 窗口空白**：先 `./build.py -b && ./build.py -f`，再
+  `cd electron && npm start`，按 F12 看控制台错误。
 
 ## 许可证
 

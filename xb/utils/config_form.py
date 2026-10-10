@@ -54,7 +54,7 @@ class ConfigForm:
             {
                 "key": "update", "label": "应用内更新", "type": "toggle",
                 "checked": bool(cli.get("update")),
-                "hint": "Linux 提权走 polkit，无密码落盘",
+                "hint": "Ubuntu 更新安装走 polkit 免密提权",
             },
             {
                 "key": "logs", "label": "日志中心", "type": "toggle",

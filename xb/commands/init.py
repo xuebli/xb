@@ -258,8 +258,8 @@ class XbGroup(click.Group):
     default=False,
     help=(
         "启用应用内自动更新（飞书云盘发布 + 版本检查 + 下载安装）。"
-        "Linux 提权走 polkit：DEB 安装时自动部署授权规则，"
-        "管理员组用户全程无感更新，无密码落盘"
+        "Ubuntu 更新安装复用标配的 polkit 免密提权，"
+        "管理员组用户全程无感、无密码落盘"
     ),
 )
 @click.option(
@@ -371,8 +371,8 @@ def init_command(
 
     if update and not sys.platform.startswith("win"):
         console.print(
-            "[cyan]ℹ[/cyan] 已启用 --update：Linux 提权走 polkit，"
-            "DEB 安装时自动部署授权规则（管理员组无感更新，无密码落盘）"
+            "[cyan]ℹ[/cyan] 已启用 --update：Ubuntu 更新安装复用标配的 "
+            "polkit 免密提权（管理员组无感，无密码落盘）"
         )
 
     # 创建项目
