@@ -319,6 +319,14 @@ defineExpose({ open })
   border-left-color: #ef4444;
 }
 
+/* .preview 是白底（为 HTML 报告 iframe 服务）；暗色下半透明 surface-soft
+   叠在白底上会变中灰，浅色文字对比度极低，故日志区改用不透明深底 */
+:root[data-theme='dark'] .preview pre,
+:root[data-theme='dark'] .history-log {
+  background: #12151c;
+  color: #d1d5db;
+}
+
 :root[data-theme='dark'] .history-log-line-failed {
   color: #fca5a5;
   background: rgba(127, 29, 29, 0.34);
