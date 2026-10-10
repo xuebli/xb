@@ -53,7 +53,7 @@ function handleStart() {
       </div>
 
       <div class="manual-actions">
-        <button v-if="!autoCheck" class="btn btn-start" @click="handleStart" :disabled="isExecuting">
+        <button class="btn btn-start" @click="handleStart" :disabled="isExecuting">
           <span v-if="!isExecuting">▶️ 开始测试</span>
           <span v-else class="executing">
             <span class="spinner">⚙️</span>

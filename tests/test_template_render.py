@@ -437,6 +437,15 @@ def test_csv_test_assets(tmp_path):
     agents = (target / "AGENTS.md").read_text(encoding="utf-8")
     assert "CSV 测试引擎纪律" in agents
 
+    # 人工确认弹窗：开始测试按钮必须无条件显示（准备确认 autoCheck 模式
+    # 只有这一个按钮，被门控会让弹窗无按钮且无法关闭，测试卡死）
+    banner = (target / "frontend" / "src" / "components" / "factory_test" / "ManualConfirmBanner.vue").read_text(
+        encoding="utf-8"
+    )
+    assert 'class="btn btn-start"' in banner
+    assert "isKeyTest" not in banner
+    assert not re.search(r'<button[^>]*v-if="!autoCheck"[^>]*class="btn btn-start"', banner)
+
     # demo CSV 可被生成的 definition 表头解析（用 pandas-free 手工断言）
     import csv as csv_module
     with open(target / "configs" / "test_plan.csv", encoding="utf-8") as f:
