@@ -1,0 +1,329 @@
+<script setup>
+/** CSV 测试引擎主页：一键测试、分组进度、日志、人工确认、历史报告 */
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import CsvEditor from '../components/factory_test/CsvEditor.vue'
+import ManualConfirmBanner from '../components/factory_test/ManualConfirmBanner.vue'
+import TestDataViewer from '../components/factory_test/TestDataViewer.vue'
+import TestGroupTable from '../components/factory_test/TestGroupTable.vue'
+import TestLogPanel from '../components/factory_test/TestLogPanel.vue'
+import { factoryTestApi } from '../services/factoryTestApi'
+
+const sn = ref('')
+const session = ref(null)
+const loading = ref(false)
+const csvEditorRef = ref(null)
+const testDataViewerRef = ref(null)
+let pollTimer = null
+
+const isActive = computed(() => ['running', 'paused', 'stopping'].includes(session.value?.status))
+const isPaused = computed(() => session.value?.status === 'paused')
+const isFinished = computed(() => ['passed', 'failed', 'stopped'].includes(session.value?.status))
+
+const currentManualItem = computed(() => {
+  if (!isPaused.value || !session.value) return null
+  return session.value.items.find((i) => i.status === 'running' && (
+    i.command_key.startsWith('manual_confirm') ||
+    i.command_key.startsWith('precheck_confirm')
+  ))
+})
+
+const groups = computed(() => {
+  if (!session.value) return []
+  const map = new Map()
+  for (const item of session.value.items) {
+    if (!map.has(item.category)) map.set(item.category, { title: item.category, items: [] })
+    map.get(item.category).items.push(item)
+  }
+  return [...map.values()]
+})
+
+async function toggleStandalone(item) {
+  // 单选模式：勾选当前项时取消其他项
+  const newValue = !item.standalone
+  const allItems = session.value.items
+  const updates = []
+
+  for (const i of allItems) {
+    if (i.id === item.id) {
+      updates.push({ item: i, oldValue: i.standalone, newValue: newValue })
+      i.standalone = newValue
+    } else if (i.standalone && newValue) {
+      updates.push({ item: i, oldValue: true, newValue: false })
+      i.standalone = false
+    }
+  }
+
+  try {
+    await factoryTestApi.updateItemStandalone(item.id, newValue)
+    for (const update of updates) {
+      if (update.item.id !== item.id) {
+        await factoryTestApi.updateItemStandalone(update.item.id, false)
+      }
+    }
+  } catch (e) {
+    console.error('保存单独测试状态失败:', e)
+    for (const update of updates) {
+      update.item.standalone = update.oldValue
+    }
+  }
+}
+
+const summaryText = computed(() => {
+  const s = session.value?.summary
+  if (!s) return ''
+  return `共 ${s.total} 项 · 通过 ${s.passed} · 失败 ${s.failed} · 跳过 ${s.skipped} · 待测 ${s.pending}`
+})
+
+const resultBanner = computed(() => {
+  if (!isFinished.value) return null
+  const map = {
+    passed: { cls: 'result-pass', text: '✅ 测试通过 PASS' },
+    failed: { cls: 'result-fail', text: '❌ 测试失败 FAIL' },
+    stopped: { cls: 'result-stop', text: '⏹ 测试已停止' },
+  }
+  return map[session.value.status]
+})
+
+async function startTest() {
+  loading.value = true
+  try {
+    session.value = await factoryTestApi.run(sn.value.trim())
+    startPolling()
+  } catch (e) {
+    alert(`启动测试失败: ${e.message}`)
+    console.error(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function stopTest() {
+  try {
+    session.value = await factoryTestApi.stop()
+  } catch (e) {
+    alert(`停止失败: ${e.message}`)
+    console.error(e)
+  }
+}
+
+async function startManual() {
+  try {
+    session.value = await factoryTestApi.startManual()
+  } catch (e) {
+    alert(`开始测试失败: ${e.message}`)
+    console.error(e)
+  }
+}
+
+async function confirmManual() {
+  try {
+    session.value = await factoryTestApi.resume()
+  } catch (e) {
+    alert(`操作失败: ${e.message}`)
+    console.error(e)
+  }
+}
+
+async function rejectManual() {
+  try {
+    session.value = await factoryTestApi.failManual()
+  } catch (e) {
+    alert(`操作失败: ${e.message}`)
+    console.error(e)
+  }
+}
+
+async function poll() {
+  try {
+    session.value = await factoryTestApi.getCurrentSession()
+    if (isFinished.value) stopPolling()
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(poll, 500)
+}
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+}
+
+async function loadPlanPreview() {
+  const plan = await factoryTestApi.getPlan()
+  session.value = {
+    status: 'ready',
+    summary: { total: plan.total_items, passed: 0, failed: 0, pending: plan.total_items, skipped: 0 },
+    items: plan.items,
+    logs: [],
+  }
+}
+
+async function onCsvSaved() {
+  try {
+    if (!isActive.value) await loadPlanPreview()
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+onMounted(async () => {
+  try {
+    const current = await factoryTestApi.getCurrentSession()
+    if (current && current.status !== 'ready') {
+      session.value = current
+      if (['running', 'paused', 'stopping'].includes(current.status)) startPolling()
+    } else {
+      await loadPlanPreview()
+    }
+  } catch (e) {
+    alert(`加载测试计划失败: ${e.message}`)
+    console.error(e)
+  }
+})
+
+onBeforeUnmount(stopPolling)
+</script>
+
+<template>
+  <div class="factory-test">
+    <div class="control-bar">
+      <input
+        v-model="sn"
+        class="sn-input"
+        placeholder="板卡序列号 SN（可扫码枪录入，可留空）"
+        :disabled="isActive"
+      />
+      <button class="btn btn-start" :disabled="isActive || loading" @click="startTest">
+        ▶ 开始测试
+      </button>
+      <button class="btn btn-stop" :disabled="!isActive" @click="stopTest">⏹ 停止</button>
+      <button class="btn btn-plain" :disabled="isActive" @click="testDataViewerRef?.open()">📊 历史报告</button>
+      <button class="btn btn-plain" :disabled="isActive" @click="csvEditorRef?.open()">📝 编辑测试项</button>
+      <span class="summary-text">{{ summaryText }}</span>
+    </div>
+
+    <CsvEditor ref="csvEditorRef" @saved="onCsvSaved" />
+    <TestDataViewer ref="testDataViewerRef" />
+
+    <div v-if="resultBanner" class="result-banner" :class="resultBanner.cls">
+      {{ resultBanner.text }}
+      <span v-if="session?.total_duration" class="result-duration">耗时 {{ session.total_duration }}s</span>
+    </div>
+
+    <ManualConfirmBanner
+      v-if="currentManualItem"
+      :key="currentManualItem.id"
+      :item-name="currentManualItem.name"
+      :method="currentManualItem.method"
+      :command-key="currentManualItem.command_key"
+      :auto-check="currentManualItem.command_key.startsWith('precheck_confirm')"
+      @start="startManual"
+      @confirm="confirmManual"
+      @reject="rejectManual"
+    />
+
+    <div class="content-grid">
+      <div class="groups-col">
+        <TestGroupTable v-for="g in groups" :key="g.title" :group="g" @toggle-standalone="toggleStandalone" />
+      </div>
+      <TestLogPanel :logs="session?.logs || []" />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.factory-test {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 4px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.control-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.sn-input {
+  flex: 0 0 320px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.btn {
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #fff;
+}
+
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-start { background: var(--green); }
+.btn-stop { background: #ef4444; }
+.btn-plain {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-plain:not(:disabled):hover { border-color: var(--border-strong); }
+.btn:not(.btn-plain):not(:disabled):hover { filter: brightness(1.1); }
+
+.summary-text {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.result-banner {
+  padding: 18px;
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  font-size: 24px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.result-pass { background: var(--green-soft); color: var(--green); border: 2px solid var(--green); }
+.result-fail { background: rgba(239, 68, 68, 0.14); color: #dc2626; border: 2px solid #ef4444; }
+.result-stop { background: var(--amber-soft); color: var(--amber); border: 2px solid var(--amber); }
+
+.result-duration {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 12px;
+  color: var(--muted);
+}
+
+:root[data-theme='dark'] .result-fail { color: #fca5a5; }
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .content-grid { grid-template-columns: 1fr; }
+}
+</style>

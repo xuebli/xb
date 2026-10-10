@@ -1,0 +1,329 @@
+<script setup>
+/** 历史测试数据查看器：左侧会话列表，右侧报告/日志预览 */
+import { computed, ref } from 'vue'
+import { factoryTestApi } from '../../services/factoryTestApi'
+
+const visible = ref(false)
+const loading = ref(false)
+const detailLoading = ref(false)
+const sessions = ref([])
+const selected = ref(null)
+const activeTab = ref('report')
+
+const hasSessions = computed(() => sessions.value.length > 0)
+
+const historyLogEntries = computed(() => {
+  const text = selected.value?.log_text || ''
+  if (!text) return []
+
+  const lines = text.split('\n')
+  const sections = []
+  let current = null
+
+  for (const [index, line] of lines.entries()) {
+    if (/测试项 \d+\/\d+：/.test(line) || /测试项 \d+\/\d+:/.test(line)) {
+      current = { start: index, failed: false }
+      sections.push(current)
+    } else if (current && /判定:\s*failed|测试失败/.test(line)) {
+      current.failed = true
+    }
+  }
+
+  return lines.map((line, index) => {
+    const section = [...sections].reverse().find((item) => item.start <= index)
+    return { text: line, failed: Boolean(section?.failed) }
+  })
+})
+
+const formatTime = (timestamp) => {
+  if (!timestamp) return '-'
+  return new Date(timestamp * 1000).toLocaleString('zh-CN')
+}
+
+const formatSize = (bytes) => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+const loadSessions = async () => {
+  loading.value = true
+  try {
+    sessions.value = await factoryTestApi.getTestDataList()
+    if (sessions.value.length > 0) {
+      await loadDetail(sessions.value[0].session_id)
+    } else {
+      selected.value = null
+    }
+  } catch (err) {
+    alert(`读取测试数据失败: ${err.message}`)
+    console.error(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadDetail = async (sessionId) => {
+  detailLoading.value = true
+  try {
+    selected.value = await factoryTestApi.getTestDataDetail(sessionId)
+    activeTab.value = selected.value.report_html ? 'report' : 'log'
+  } catch (err) {
+    alert(`读取测试数据详情失败: ${err.message}`)
+    console.error(err)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+const open = async () => {
+  visible.value = true
+  await loadSessions()
+}
+
+const close = () => {
+  visible.value = false
+}
+
+defineExpose({ open })
+</script>
+
+<template>
+  <Teleport to="body">
+    <div v-if="visible" class="mask" @click="close">
+      <section class="panel" @click.stop>
+        <header class="header">
+          <div>
+            <h2>历史测试报告</h2>
+            <p>每次测试的 HTML 报告和完整日志按会话归档</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn" type="button" :disabled="loading" @click="loadSessions">刷新</button>
+            <button class="btn" type="button" @click="close">关闭</button>
+          </div>
+        </header>
+
+        <div class="layout">
+          <aside class="session-list">
+            <div v-if="loading" class="empty">正在读取...</div>
+            <div v-else-if="!hasSessions" class="empty">暂无历史测试数据</div>
+            <button
+              v-for="s in sessions"
+              v-else
+              :key="s.session_id"
+              type="button"
+              class="session-item"
+              :class="{ active: selected?.session_id === s.session_id }"
+              @click="loadDetail(s.session_id)"
+            >
+              <strong>{{ s.sn }}</strong>
+              <span>{{ s.created_at || formatTime(s.updated_at) }}</span>
+              <small>
+                <b v-if="s.report_file">报告</b>
+                <b v-if="s.log_file">日志</b>
+              </small>
+            </button>
+          </aside>
+
+          <main class="detail">
+            <div v-if="detailLoading" class="empty">正在加载...</div>
+            <div v-else-if="!selected" class="empty">请选择一条测试记录</div>
+            <template v-else>
+              <div class="summary">
+                <div><span>SN</span><strong>{{ selected.sn }}</strong></div>
+                <div><span>测试时间</span><strong>{{ selected.created_at || formatTime(selected.updated_at) }}</strong></div>
+                <div>
+                  <span>文件</span>
+                  <strong>
+                    <em v-for="file in selected.files" :key="file.name">{{ file.name }} · {{ formatSize(file.size) }}</em>
+                  </strong>
+                </div>
+              </div>
+
+              <div class="tabs">
+                <button type="button" :class="{ active: activeTab === 'report' }" :disabled="!selected.report_html" @click="activeTab = 'report'">测试报告</button>
+                <button type="button" :class="{ active: activeTab === 'log' }" :disabled="!selected.log_text" @click="activeTab = 'log'">测试日志</button>
+              </div>
+
+              <div class="preview">
+                <iframe v-if="activeTab === 'report' && selected.report_html" :srcdoc="selected.report_html" title="测试报告预览"></iframe>
+                <div v-else-if="activeTab === 'log' && selected.log_text" class="history-log">
+                  <div
+                    v-for="(entry, i) in historyLogEntries"
+                    :key="i"
+                    class="history-log-line"
+                    :class="{ 'history-log-line-failed': entry.failed }"
+                  >{{ entry.text || '\u00a0' }}</div>
+                </div>
+                <div v-else class="empty">该会话没有{{ activeTab === 'report' ? '报告' : '日志' }}</div>
+              </div>
+            </template>
+          </main>
+        </div>
+      </section>
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.panel {
+  width: min(1200px, 94vw);
+  height: min(820px, 90vh);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h2 { margin: 0; font-size: 17px; color: var(--text-h); }
+.header p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.header-actions { display: flex; gap: 8px; }
+
+.btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { border-color: var(--border-strong); }
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+.session-list {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-item {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.session-item strong { color: var(--text-h); font-size: 13px; word-break: break-all; }
+.session-item span { font-size: 12px; color: var(--muted); }
+.session-item small b {
+  font-size: 11px;
+  color: var(--accent);
+  margin-right: 6px;
+  font-weight: 600;
+}
+.session-item.active { border-color: var(--accent); background: var(--accent-soft); }
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 14px;
+  gap: 10px;
+}
+
+.summary {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.summary span { color: var(--muted); margin-right: 6px; }
+.summary strong { color: var(--text-h); }
+.summary em { font-style: normal; font-weight: 400; margin-right: 10px; font-size: 12px; }
+
+.tabs { display: flex; gap: 8px; }
+.tabs button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.preview {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #fff;
+}
+
+.preview iframe { width: 100%; height: 100%; border: none; }
+
+.preview pre,
+.history-log {
+  margin: 0;
+  padding: 12px;
+  height: 100%;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-soft);
+  box-sizing: border-box;
+}
+
+.history-log-line {
+  min-height: 1.6em;
+  padding: 0 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 3px solid transparent;
+}
+
+.history-log-line-failed {
+  color: #b42318;
+  background: rgba(239, 68, 68, 0.12);
+  border-left-color: #ef4444;
+}
+
+:root[data-theme='dark'] .history-log-line-failed {
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.34);
+  border-left-color: #f87171;
+}
+
+.empty { padding: 30px; text-align: center; color: var(--muted); }
+</style>

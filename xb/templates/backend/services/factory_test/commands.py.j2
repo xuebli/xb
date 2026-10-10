@@ -1,0 +1,36 @@
+"""项目指令注册表：CSV 的"指令键"列在这里接入实际硬件/业务指令。
+
+handler 约定（与 command_executor.CommandRegistry 一致）：
+    def handler(sn: str = "", item_id: str = "", on_output=None, **_) -> str
+
+- 返回字符串 = 执行成功，返回值交给 ResultComparator 按 CSV"判断PASS标准"判定
+- 抛异常   = 执行失败；抛 ConnectionError 子类视为环境类故障（fatal），
+  runner 会中止后续测试项，避免工装问题导致整批误判
+
+内置控制流指令键（无需在此注册）：delay:N、manual_confirm[:指令]、
+precheck_confirm:指令、空指令键（占位跳过）。
+
+注册方式：command_registry.register("指令键", handler)
+下面的 demo_echo 是模板示例，接入真实硬件后可删除。
+"""
+from managers import get_logger
+from .command_executor import command_registry
+
+logger = get_logger(__name__)
+
+
+def _demo_echo(sn: str = "", **_) -> str:
+    """示例指令：回显 SN，演示注册方式；接入真实硬件后可删除。"""
+    logger.info(f"demo_echo 被调用: sn={sn!r}")
+    return f"echo:{sn or 'no-sn'}"
+
+
+command_registry.register("demo_echo", _demo_echo)
+
+# 在此继续注册项目指令，例如：
+#
+# def _read_voltage(sn: str = "", **_) -> str:
+#     """读电压示例：串口/仪表交互后返回测量值字符串（如 "5.02V"）。"""
+#     ...
+#
+# command_registry.register("read_voltage", _read_voltage)

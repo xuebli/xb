@@ -1,0 +1,169 @@
+<script setup>
+/** 测试日志面板：滚动展示执行日志 */
+import { computed, nextTick, ref, watch } from 'vue'
+
+const props = defineProps({
+  logs: { type: Array, default: () => [] },
+})
+
+const logEl = ref(null)
+const fullscreen = ref(false)
+const fullscreenLogEl = ref(null)
+
+const logEntries = computed(() => {
+  const entries = []
+  let current = null
+
+  for (const [index, text] of props.logs.entries()) {
+    if (/测试项 \d+\/\d+：/.test(text) || /测试项 \d+\/\d+:/.test(text)) {
+      current = { start: index, failed: false }
+      entries.push(current)
+    } else if (current && /判定:\s*failed|测试失败/.test(text)) {
+      current.failed = true
+    }
+  }
+
+  return props.logs.map((text, index) => {
+    const entry = [...entries].reverse().find((candidate) => candidate.start <= index)
+    return { text, failed: Boolean(entry?.failed) }
+  })
+})
+
+function scrollToBottom() {
+  for (const el of [logEl.value, fullscreenLogEl.value]) {
+    if (el) el.scrollTop = el.scrollHeight
+  }
+}
+
+watch(
+  () => props.logs.length,
+  async () => {
+    await nextTick()
+    scrollToBottom()
+  },
+)
+</script>
+
+<template>
+  <section class="log-card">
+    <header class="log-header">
+      <span>执行日志</span>
+      <button type="button" class="log-fullscreen-btn" @click="fullscreen = true">⛶ 全屏查看</button>
+    </header>
+    <div ref="logEl" class="log-body">
+      <div
+        v-for="(entry, i) in logEntries"
+        :key="i"
+        class="log-line"
+        :class="{ 'log-line-failed': entry.failed }"
+      >{{ entry.text }}</div>
+      <div v-if="!logs.length" class="log-empty">暂无日志</div>
+    </div>
+  </section>
+
+  <Teleport to="body">
+    <div v-if="fullscreen" class="log-fullscreen" @keydown.esc="fullscreen = false">
+      <section class="log-fullscreen-card">
+        <header class="log-header">
+          <span>执行日志（全屏）</span>
+          <button type="button" class="log-fullscreen-btn" @click="fullscreen = false">✕ 关闭</button>
+        </header>
+        <div ref="fullscreenLogEl" class="log-body log-fullscreen-body">
+          <div
+            v-for="(entry, i) in logEntries"
+            :key="i"
+            class="log-line"
+            :class="{ 'log-line-failed': entry.failed }"
+          >{{ entry.text }}</div>
+          <div v-if="!logs.length" class="log-empty">暂无日志</div>
+        </div>
+      </section>
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.log-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-weight: 600;
+  color: var(--text-h);
+  border-bottom: 1px solid var(--border);
+}
+
+.log-fullscreen-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.log-fullscreen-btn:hover { border-color: var(--border-strong); }
+
+.log-body {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 320px;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.log-line {
+  padding: 1px 4px;
+  border-left: 3px solid transparent;
+}
+
+.log-line-failed {
+  color: #b42318;
+  background: rgba(239, 68, 68, 0.12);
+  border-left-color: #ef4444;
+}
+
+:root[data-theme='dark'] .log-line-failed {
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.34);
+  border-left-color: #f87171;
+}
+
+.log-empty {
+  color: var(--muted);
+}
+
+.log-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(15, 18, 25, 0.78);
+}
+.log-fullscreen-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.log-fullscreen-body { max-height: none; }
+:root[data-theme='dark'] .log-fullscreen { background: rgba(15, 18, 25, 0.9); }
+</style>

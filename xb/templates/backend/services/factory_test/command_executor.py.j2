@@ -1,0 +1,42 @@
+"""指令键执行入口：CSV 里的"指令键"列在这里注册对应的处理函数。"""
+from dataclasses import dataclass
+from typing import Callable
+
+
+@dataclass(slots=True)
+class CommandResult:
+    ok: bool
+    value: str = ""
+    error: str = ""
+    # 环境类故障（ConnectionError 子类，如工装/设备连不上）标记 fatal，
+    # runner 据此中止后续测试项，避免工装问题导致整批误判不良
+    fatal: bool = False
+
+
+CommandHandler = Callable[..., str]
+
+
+class CommandRegistry:
+    """指令键注册表。handler 返回字符串表示执行成功（值为应答内容），抛异常表示失败。"""
+
+    def __init__(self):
+        self._handlers: dict[str, CommandHandler] = {}
+
+    def register(self, command_key: str, handler: CommandHandler) -> None:
+        self._handlers[command_key] = handler
+
+    def execute(self, command_key: str, *, sn: str, item_id: str, on_output=None) -> CommandResult:
+        handler = self._handlers.get(command_key)
+        if handler is None:
+            return CommandResult(ok=False, error=f"指令未接入: {command_key}")
+        try:
+            return CommandResult(ok=True, value=str(handler(sn=sn, item_id=item_id, on_output=on_output) or ""))
+        except Exception as exc:
+            return CommandResult(
+                ok=False,
+                error=str(exc),
+                fatal=isinstance(exc, ConnectionError),
+            )
+
+
+command_registry = CommandRegistry()

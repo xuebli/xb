@@ -1,9 +1,10 @@
-"""模板渲染矩阵测试：terminal x update x logs 全组合。
+"""模板渲染矩阵测试：terminal x update x logs 全组合 + csv_test 专项。
 
 渲染到临时目录，校验：
 - 条件文件按开关出现/缺席（防止模板改坏条件渲染）
 - 所有生成的 .py 能通过 compile() 语法检查（防止模板产出非法 Python）
 - polkit 三件套为标配（全组合生成），helper 的 install-update 分支随 --update
+- CSV 测试引擎随 --csv-test 生成（产测专用参数）
 """
 
 import itertools
@@ -19,7 +20,7 @@ COMBOS = list(itertools.product([False, True], repeat=3))
 
 
 def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
-            display_name=None, backend_port=None):
+            display_name=None, backend_port=None, enable_csv_test=False):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -29,6 +30,7 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
         enable_terminal=enable_terminal,
         enable_update=enable_update,
         enable_logs=enable_logs,
+        enable_csv_test=enable_csv_test,
     )
     return target
 
@@ -346,12 +348,13 @@ def test_polkit_assets_standard_without_update(tmp_path):
 
 
 def test_docs_distribution(tmp_path):
-    """打包路径/版本管理/polkit 说明随所有项目分发；自动更新文档与配图仅 --update 项目。"""
+    """打包路径/版本管理/polkit 说明随所有项目分发；功能文档按开关分发。"""
     plain = _render(tmp_path / "plain", False, False)
     assert (plain / "docs" / "打包与运行路径说明.md").exists()
     assert (plain / "docs" / "版本管理说明.md").exists()
     assert (plain / "docs" / "polkit免密提权说明.md").exists()
     assert not (plain / "docs" / "自动更新说明.md").exists()
+    assert not (plain / "docs" / "csv测试引擎说明.md").exists()
     assert not (plain / "docs" / "images").exists()
 
     full = _render(tmp_path / "full", False, True)
@@ -363,3 +366,113 @@ def test_docs_distribution(tmp_path):
     ):
         assert (full / "docs" / name).exists(), f"缺少文档 {name}"
     assert (full / "docs" / "images").is_dir()
+
+
+def test_csv_test_assets(tmp_path):
+    """--csv-test 生成 CSV 测试引擎全套：后端引擎 + 前端页面 + demo CSV + 文档。"""
+    target = _render(tmp_path, False, False, enable_csv_test=True)
+
+    # 后端：引擎九件 + schemas + api
+    for rel in (
+        "backend/schemas/factory_test.py",
+        "backend/services/__init__.py",
+        "backend/services/factory_test/__init__.py",
+        "backend/services/factory_test/command_executor.py",
+        "backend/services/factory_test/commands.py",
+        "backend/services/factory_test/definition.py",
+        "backend/services/factory_test/report.py",
+        "backend/services/factory_test/result_compare.py",
+        "backend/services/factory_test/runner.py",
+        "backend/services/factory_test/test_control.py",
+        "backend/services/factory_test/test_data.py",
+        "backend/api/factory_test/__init__.py",
+        "backend/api/factory_test/routes.py",
+    ):
+        assert (target / rel).exists(), f"缺少文件 {rel}"
+
+    # main.py 注册路由；backend_build 收录隐式导入
+    main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "factory_test_router" in main_py
+    build_py = (target / "backend" / "backend_build.py").read_text(encoding="utf-8")
+    assert "services.factory_test" in build_py and "schemas.factory_test" in build_py
+
+    # 引擎不绑硬件：无 pyserial、无烧录/飞书残留
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    assert "serial_channel" not in runner and "upload_queue" not in runner
+    assert "pyserial" not in (target / "pyproject.toml").read_text(encoding="utf-8")
+
+    # demo CSV：列齐全、能被 definition 的表头约定解析
+    csv_text = (target / "configs" / "test_plan.csv").read_text(encoding="utf-8")
+    assert csv_text.splitlines()[0].startswith("分组,测试功能,测试方法,判断PASS标准,指令键")
+    assert "demo_echo" in csv_text and "delay:2" in csv_text
+
+    # commands.py 注册了 demo_echo 示例指令
+    commands = (target / "backend" / "services" / "factory_test" / "commands.py").read_text(encoding="utf-8")
+    assert 'command_registry.register("demo_echo"' in commands
+
+    # 前端：主页 + 5 组件 + API 客户端 + 导航
+    for rel in (
+        "frontend/src/views/FactoryTestView.vue",
+        "frontend/src/services/factoryTestApi.js",
+        "frontend/src/components/factory_test/CsvEditor.vue",
+        "frontend/src/components/factory_test/ManualConfirmBanner.vue",
+        "frontend/src/components/factory_test/TestDataViewer.vue",
+        "frontend/src/components/factory_test/TestGroupTable.vue",
+        "frontend/src/components/factory_test/TestLogPanel.vue",
+    ):
+        assert (target / rel).exists(), f"缺少文件 {rel}"
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "FactoryTestView" in app_vue and "产测" in app_vue
+    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(encoding="utf-8")
+    assert "feishu" not in api_js
+
+    # report.py 的板卡名用显示名渲染
+    report_py = (target / "backend" / "services" / "factory_test" / "report.py").read_text(encoding="utf-8")
+    assert 'BOARD_NAME = "Demo"' in report_py
+
+    # 文档随开关分发
+    assert (target / "docs" / "csv测试引擎说明.md").exists()
+
+    # AGENTS.md 有产测约定
+    agents = (target / "AGENTS.md").read_text(encoding="utf-8")
+    assert "CSV 测试引擎纪律" in agents
+
+    # demo CSV 可被生成的 definition 表头解析（用 pandas-free 手工断言）
+    import csv as csv_module
+    with open(target / "configs" / "test_plan.csv", encoding="utf-8") as f:
+        rows = list(csv_module.DictReader(f))
+    assert len(rows) >= 4
+    assert all(row.get("是否测试") == "是" for row in rows)
+
+    # 产测组件同样遵守 Vue 约定：无重复 const、setTimeout 目标已声明
+    for vue in (target / "frontend" / "src").rglob("*.vue"):
+        text = vue.read_text(encoding="utf-8")
+        if "<script setup>" not in text:
+            continue
+        script = text.split("<script setup>")[1].split("</script>")[0]
+        decls = re.findall(r"^const (\w+)", script, re.M)
+        dupes = sorted(d for d in set(decls) if decls.count(d) > 1)
+        assert not dupes, f"{vue.name} 重复声明: {dupes}"
+        declared = set(decls) | set(re.findall(r"^let (\w+)", script, re.M))
+        for timer_target in re.findall(r"(\w+) = setTimeout", script):
+            assert timer_target in declared, f"{vue.name} 未声明的 timer: {timer_target}"
+        for timer_target in re.findall(r"(\w+) = setInterval", script):
+            assert timer_target in declared, f"{vue.name} 未声明的 interval: {timer_target}"
+
+
+def test_csv_test_assets_absent_by_default(tmp_path):
+    """不开 --csv-test 时引擎文件、路由、导航、文档都不生成。"""
+    target = _render(tmp_path, False, False)
+    assert not (target / "backend" / "schemas").exists()
+    assert not (target / "backend" / "services" / "factory_test").exists()
+    assert not (target / "backend" / "api" / "factory_test").exists()
+    assert not (target / "configs" / "test_plan.csv").exists()
+    assert not (target / "frontend" / "src" / "views" / "FactoryTestView.vue").exists()
+    assert not (target / "frontend" / "src" / "services" / "factoryTestApi.js").exists()
+    assert not (target / "docs" / "csv测试引擎说明.md").exists()
+    main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "factory_test" not in main_py
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "FactoryTestView" not in app_vue
+    # services/__init__.py 仅在 update/csv_test 任一启用时生成
+    assert not (target / "backend" / "services").exists()

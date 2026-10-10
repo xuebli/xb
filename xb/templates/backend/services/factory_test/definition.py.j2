@@ -1,0 +1,124 @@
+"""从 configs/test_plan.csv 加载测试流程定义。
+
+CSV 列：分组,测试功能,测试方法,判断PASS标准,指令键,夹具,是否测试,是否隐藏,是否单独测试,说明
+- 是否测试=否：整行不进入测试流程
+- 是否隐藏=是：前端不展示
+- 指令键为空：作为流程/占位项跳过自动执行
+- 是否单独测试=是：只执行该行（全局单选，前端勾选即时保存）
+"""
+import csv
+import re
+import shutil
+
+from managers import path_manager
+from schemas.factory_test import TestCsvData, TestGroup, TestItem, TestPlan
+
+CSV_HEADERS = ["分组", "测试功能", "测试方法", "判断PASS标准", "指令键", "夹具", "是否测试", "是否隐藏", "是否单独测试", "说明"]
+
+
+class TestDefinition:
+    """从 CSV 加载测试流程定义。"""
+
+    CSV_FILE = "test_plan.csv"
+
+    def get_plan(self) -> TestPlan:
+        rows = self._load_rows()
+        groups: list[TestGroup] = []
+        group_index: dict[str, TestGroup] = {}
+        ordered_items: list[TestItem] = []
+
+        for row_index, row in enumerate(rows, start=1):
+            if row.get("是否测试", "是") != "是":
+                continue
+
+            group_title = row.get("分组", "未分组") or "未分组"
+            if group_title not in group_index:
+                group = TestGroup(
+                    id=self._slug(group_title),
+                    title=group_title,
+                    description="",
+                    items=[],
+                )
+                group_index[group_title] = group
+                groups.append(group)
+
+            command_key = row.get("指令键", "")
+            note = row.get("说明", "")
+            if not note:
+                note = "待执行" if command_key else "流程占位项"
+            item = TestItem(
+                id=f"{self._slug(group_title)}-{row_index:02d}",
+                name=row.get("测试功能", ""),
+                category=group_title,
+                method=row.get("测试方法", ""),
+                pass_standard=row.get("判断PASS标准", ""),
+                command_key=command_key,
+                fixture=row.get("夹具", ""),
+                note=note,
+                hidden=row.get("是否隐藏", "否") == "是",
+                standalone=row.get("是否单独测试", "否") == "是",
+            )
+            group_index[group_title].items.append(item)
+            ordered_items.append(item)
+
+        return TestPlan(
+            board_name="[[ display_name ]]",
+            source=self.CSV_FILE,
+            total_items=len(ordered_items),
+            groups=groups,
+            items=ordered_items,
+        )
+
+    def get_csv_data(self) -> TestCsvData:
+        return TestCsvData(headers=CSV_HEADERS, rows=self._load_rows())
+
+    def save_csv_rows(self, rows: list[dict[str, str]]) -> TestCsvData:
+        csv_path = path_manager.get_config_path(self.CSV_FILE)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        if csv_path.exists():
+            shutil.copy2(csv_path, csv_path.with_suffix(".csv.bak"))
+
+        normalized_rows = [self._normalize_row(row) for row in rows]
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(normalized_rows)
+        return TestCsvData(headers=CSV_HEADERS, rows=normalized_rows)
+
+    def _load_rows(self) -> list[dict[str, str]]:
+        csv_path = path_manager.get_config_path(self.CSV_FILE)
+        if not csv_path.exists():
+            raise FileNotFoundError(f"找不到测试项CSV: {csv_path}")
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+            return [self._normalize_row(row) for row in csv.DictReader(f)]
+
+    @staticmethod
+    def _normalize_row(row: dict[str, str]) -> dict[str, str]:
+        normalized = {header: str(row.get(header, "") or "").strip() for header in CSV_HEADERS}
+        normalized["是否测试"] = normalized["是否测试"] or "是"
+        normalized["是否隐藏"] = normalized["是否隐藏"] or "否"
+        normalized["是否单独测试"] = normalized["是否单独测试"] or "否"
+        return normalized
+
+    def update_item_standalone(self, item_id: str, standalone: bool) -> TestCsvData:
+        """更新测试项的单独测试状态。"""
+        rows = self._load_rows()
+        # item_id 格式为 "{group_slug}-{row_index:02d}"，row_index 从 1 开始（不含表头）
+        parts = item_id.rsplit("-", 1)
+        if len(parts) != 2:
+            raise ValueError(f"无效的 item_id: {item_id}")
+
+        try:
+            row_index = int(parts[1]) - 1  # 转换为 0-based 索引
+        except ValueError:
+            raise ValueError(f"无效的 item_id: {item_id}")
+
+        if 0 <= row_index < len(rows):
+            rows[row_index]["是否单独测试"] = "是" if standalone else "否"
+            return self.save_csv_rows(rows)
+        raise ValueError(f"无效的 item_id: {item_id}")
+
+    @staticmethod
+    def _slug(value: str) -> str:
+        slug = re.sub(r"[^0-9A-Za-z]+", "-", value).strip("-").lower()
+        return slug or f"group-{abs(hash(value))}"

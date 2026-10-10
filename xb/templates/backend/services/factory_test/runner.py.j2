@@ -1,0 +1,351 @@
+"""测试执行引擎：按 CSV 行顺序逐项执行。
+
+内置控制流指令键（无需注册）：
+- 空指令键：占位项，自动跳过
+- delay / delay:N：延时 N 秒（缺省 1 秒），期间可停止
+- precheck_confirm / precheck_confirm:实际指令：准备确认项——暂停等待操作员
+  确认准备完成后，自动执行冒号后的实际指令并按 PASS 标准判定
+- manual_confirm / manual_confirm:实际指令：人工确认项——操作员可多次执行
+  实际指令观察效果，然后人工判定通过/不通过
+
+其余指令键走 commands.py 注册的 handler，返回值交给 ResultComparator 判定。
+"""
+from datetime import datetime
+from threading import Event
+from time import monotonic, sleep
+
+from managers import get_logger
+from schemas.factory_test import TestItem, TestSession, TestSummary
+from .command_executor import CommandRegistry
+from .definition import TestDefinition
+from .report import report_service
+from .result_compare import ResultComparator
+
+logger = get_logger(__name__)
+
+
+class TestRunner:
+    """CSV 测试执行入口。"""
+
+    def __init__(self, definition: TestDefinition, registry: CommandRegistry):
+        self.definition = definition
+        self.registry = registry
+        self.comparator = ResultComparator()
+        self.report_service = report_service
+        self._pause_requested = Event()
+        self._stop_requested = Event()
+        self._manual_start_requested = Event()
+        self._manual_failed = Event()
+        self.on_progress = None  # callback(session)
+        self._active_items: list[TestItem] = []
+        self._active_logs: list[str] = []
+        self._active_sn = ""
+        self._session_id = ""
+        self._started_at = 0.0
+
+    # ---- 外部控制 ----
+    def pause_current(self) -> None:
+        self._pause_requested.set()
+
+    def resume_current(self) -> None:
+        self._pause_requested.clear()
+
+    def start_manual_current(self) -> None:
+        self._manual_start_requested.set()
+
+    def fail_manual_current(self) -> None:
+        self._manual_failed.set()
+        self._pause_requested.clear()
+
+    def stop_current(self) -> None:
+        self._stop_requested.set()
+        self._pause_requested.clear()
+        self._manual_start_requested.set()
+
+    def reset_control(self) -> None:
+        self._pause_requested.clear()
+        self._stop_requested.clear()
+        self._manual_start_requested.clear()
+        self._manual_failed.clear()
+
+    def control_state(self) -> str:
+        if self._stop_requested.is_set():
+            return "stopping"
+        if self._pause_requested.is_set():
+            return "paused"
+        return "running"
+
+    # ---- 会话 ----
+    @staticmethod
+    def _ts() -> str:
+        return datetime.now().strftime("%H:%M:%S")
+
+    def _log(self, logs: list[str], msg: str) -> None:
+        logs.append(f"[{self._ts()}] {msg}")
+        logger.info(msg)
+
+    def create_preview_session(self, sn: str) -> TestSession:
+        plan = self.definition.get_plan()
+        items = [TestItem(**item.model_dump()) for item in plan.items]
+        return TestSession(
+            session_id=self._make_session_id(sn),
+            sn=sn.strip(),
+            status="ready",
+            summary=TestSummary(total=len(items), pending=len(items)),
+            items=items,
+            logs=["已加载 CSV 测试计划，等待开始测试。"],
+        )
+
+    def run_once(self, sn: str) -> TestSession:
+        sn = sn.strip()
+        plan = self.definition.get_plan()
+        all_items = [TestItem(**item.model_dump()) for item in plan.items]
+        logs: list[str] = []
+
+        # 有"是否单独测试"勾选项时只执行该行（单选模式）
+        standalone_item = next((item for item in all_items if item.standalone), None)
+        if standalone_item:
+            items = [standalone_item]
+            self._log(logs, f"单独测试模式，仅执行: {standalone_item.name}")
+        else:
+            items = all_items
+
+        self._active_items, self._active_sn, self._active_logs = items, sn, logs
+        self._session_id = self._make_session_id(sn)
+        self._started_at = monotonic()
+        self._log(logs, f"开始测试: SN={sn or '(未输入)'}")
+        self._log(logs, f"测试项来源: {plan.source}，共 {len(items)} 项，按 CSV 行顺序执行")
+        passed = failed = skipped = 0
+        stopped = False
+        aborted = False
+        abort_reason = ""
+
+        for index, item in enumerate(items, start=1):
+            if self._wait_if_paused(logs) or self._stop_requested.is_set():
+                stopped = True
+                skipped += self._mark_remaining_skipped(items[index - 1:], logs)
+                break
+
+            self._log(logs, f"测试项 {index}/{len(items)}: {item.name}")
+            item.status = "running"
+            # 立即推送 running 状态，让前端在长耗时指令期间可见
+            self._notify_progress(sn, items, logs, passed, failed, skipped)
+            item_start = monotonic()
+
+            outcome, fatal = self._execute_item(item, logs, sn)
+            item.duration = round(monotonic() - item_start, 2)
+            if outcome == "passed":
+                passed += 1
+            elif outcome == "failed":
+                failed += 1
+            else:
+                skipped += 1
+
+            self._notify_progress(sn, items, logs, passed, failed, skipped)
+            if outcome == "stopped":
+                stopped = True
+                skipped += self._mark_remaining_skipped(items[index:], logs)
+                break
+            if fatal:
+                # 环境类故障（工装/链路连不上）：后续项无意义，按未执行跳过
+                aborted = True
+                abort_reason = f"指令 {item.command_key} 连接异常: {item.result_message}"
+                self._log(logs, f"⚠ {abort_reason}，停止后续测试项")
+                skipped += self._mark_remaining_skipped(items[index:], logs)
+                break
+
+        if aborted:
+            status = "stopped"
+        else:
+            status = "stopped" if stopped else ("passed" if failed == 0 else "failed")
+        total_duration = round(monotonic() - self._started_at, 2)
+        summary = TestSummary(total=len(items), passed=passed, failed=failed, pending=0, skipped=skipped)
+        self._log(logs, f"测试{'已停止' if stopped else '完成'}: "
+                        f"通过={passed} 失败={failed} 跳过={skipped} 总耗时={total_duration}s")
+        session = TestSession(
+            session_id=self._session_id,
+            sn=sn, status=status, summary=summary,
+            items=items, logs=logs, total_duration=total_duration,
+            abort_reason=abort_reason,
+        )
+        try:
+            report_path = self.report_service.generate(session)
+            self._log(session.logs, f"报告已归档: {report_path}")
+        except Exception as exc:
+            logger.error(f"生成测试报告失败: {exc}", exc_info=True)
+            self._log(session.logs, f"报告生成失败: {exc}")
+        if self.on_progress:
+            self.on_progress(session)
+        return session
+
+    # ---- 单项执行 ----
+    def _execute_item(self, item: TestItem, logs: list[str], sn: str) -> tuple[str, bool]:
+        """执行单个测试项，返回 (结果, 是否环境类致命故障)。"""
+        key = item.command_key.strip()
+        if not key:
+            item.status = "skipped"
+            item.result_message = "无指令键（占位/待接入项）"
+            self._log(logs, f"跳过: {item.name}")
+            return "skipped", False
+        if key == "delay" or key.startswith("delay:"):
+            return self._run_delay(item, logs), False
+        if key.startswith("precheck_confirm"):
+            return self._run_precheck_confirm(item, logs, sn)
+        if key.startswith("manual_confirm"):
+            return self._run_manual_confirm(item, logs, sn)
+        return self._run_command_item(item, logs, sn)
+
+    def _run_delay(self, item: TestItem, logs: list[str]) -> str:
+        arg = item.command_key.split(":", 1)[1].strip() if ":" in item.command_key else "1"
+        try:
+            seconds = max(float(arg), 0.0)
+        except ValueError:
+            seconds = 1.0
+        self._log(logs, f"延时 {seconds:g} 秒")
+        deadline = monotonic() + seconds
+        while monotonic() < deadline:
+            if self._stop_requested.is_set():
+                item.status = "skipped"
+                item.result_message = "延时期间停止测试"
+                return "stopped"
+            sleep(min(0.1, max(deadline - monotonic(), 0)))
+        item.status = "passed"
+        item.result_message = f"延时{seconds:g}秒完成"
+        return "passed"
+
+    def _run_manual_confirm(self, item: TestItem, logs: list[str], sn: str) -> tuple[str, bool]:
+        """人工确认项：可多次执行实际指令观察效果，操作员判定通过/不通过。"""
+        actual_cmd = self._command_suffix(item.command_key)
+        if actual_cmd:
+            result = self.registry.execute(actual_cmd, sn=sn, item_id=item.id)
+            item.actual_value = result.value
+            self._log(logs, f"指令: {actual_cmd} -> {result.value or result.error}")
+            if not result.ok:
+                item.status = "failed"
+                item.result_message = result.error or "指令执行失败"
+                return "failed", result.fatal
+
+        item.manual_stage = "await_confirm"
+        self._manual_failed.clear()
+        self._pause_requested.set()
+        self._log(logs, f"⏸ 人工确认项: {item.name}，等待操作员判定...")
+        self._notify_current()
+        while self._pause_requested.is_set() and not self._stop_requested.is_set():
+            sleep(0.1)
+
+        item.manual_stage = ""
+        if self._stop_requested.is_set():
+            item.status = "skipped"
+            item.result_message = "操作员停止测试"
+            return "stopped", False
+        if self._manual_failed.is_set():
+            self._manual_failed.clear()
+            item.status = "failed"
+            item.result_message = "操作员判定不通过"
+            self._log(logs, "判定: failed - 操作员判定不通过")
+            return "failed", False
+
+        item.status = "passed"
+        item.result_message = "操作员确认通过"
+        self._log(logs, "判定: passed - 操作员确认通过")
+        return "passed", False
+
+    def _run_precheck_confirm(self, item: TestItem, logs: list[str], sn: str) -> tuple[str, bool]:
+        """准备确认项：操作员完成前置操作后点开始，自动执行实际指令并判定。"""
+        actual_cmd = self._command_suffix(item.command_key)
+        if not actual_cmd:
+            item.status = "failed"
+            item.result_message = "准备确认项未配置实际指令（precheck_confirm:指令键）"
+            self._log(logs, f"判定: failed - {item.result_message}")
+            return "failed", False
+
+        item.manual_stage = "await_start"
+        self._manual_start_requested.clear()
+        self._pause_requested.set()
+        self._log(logs, f"⏸ 准备确认项: {item.name}，等待操作员完成准备...")
+        self._notify_current()
+        while not self._manual_start_requested.is_set() and not self._stop_requested.is_set():
+            sleep(0.1)
+        self._manual_start_requested.clear()
+        self._pause_requested.clear()
+        item.manual_stage = ""
+        if self._stop_requested.is_set():
+            item.status = "skipped"
+            item.result_message = "操作员停止测试"
+            return "stopped", False
+
+        self._log(logs, f"▶ 准备已确认，执行指令: {actual_cmd}")
+        original_key = item.command_key
+        item.command_key = actual_cmd
+        try:
+            return self._run_command_item(item, logs, sn)
+        finally:
+            item.command_key = original_key
+
+    def _run_command_item(self, item: TestItem, logs: list[str], sn: str) -> tuple[str, bool]:
+        """普通指令项：registry 执行 + comparator 判定。"""
+        result = self.registry.execute(item.command_key, sn=sn, item_id=item.id)
+        item.actual_value = result.value
+        self._log(logs, f"指令: {item.command_key} -> {result.value or result.error}")
+
+        if not result.ok:
+            item.status = "failed"
+            item.result_message = result.error or "指令执行失败"
+            self._log(logs, f"判定: failed - {item.result_message}")
+            return "failed", result.fatal
+
+        compare = self.comparator.compare(standard=item.pass_standard, response=result.value, sn=sn)
+        item.status = "passed" if compare.passed else "failed"
+        item.result_message = compare.message
+        self._log(logs, f"标准: {item.pass_standard or '有返回值'} | 判定: {item.status} - {compare.message}")
+        return item.status, False
+
+    # ---- 内部工具 ----
+    def _wait_if_paused(self, logs: list[str]) -> bool:
+        pause_logged = False
+        while self._pause_requested.is_set() and not self._stop_requested.is_set():
+            if not pause_logged:
+                self._log(logs, "测试已暂停。")
+                pause_logged = True
+            sleep(0.1)
+        return self._stop_requested.is_set()
+
+    @staticmethod
+    def _command_suffix(command_key: str) -> str:
+        return command_key.split(":", 1)[1].strip() if ":" in command_key else ""
+
+    def _mark_remaining_skipped(self, items: list[TestItem], logs: list[str]) -> int:
+        count = 0
+        for item in items:
+            if item.status in {"pending", "running"}:
+                item.status = "skipped"
+                item.manual_stage = ""
+                item.result_message = "测试已停止，未执行"
+                count += 1
+        self._log(logs, "剩余测试项已跳过。")
+        return count
+
+    def _notify_progress(self, sn, items, logs, passed, failed, skipped):
+        if not self.on_progress:
+            return
+        pending = len(items) - passed - failed - skipped
+        self.on_progress(TestSession(
+            session_id=self._session_id,
+            sn=sn, status=self.control_state(),
+            summary=TestSummary(total=len(items), passed=passed, failed=failed,
+                                pending=max(pending, 0), skipped=skipped),
+            items=items, logs=list(logs),
+            total_duration=round(monotonic() - self._started_at, 2),
+        ))
+
+    def _notify_current(self):
+        passed = sum(item.status == "passed" for item in self._active_items)
+        failed = sum(item.status == "failed" for item in self._active_items)
+        skipped = sum(item.status == "skipped" for item in self._active_items)
+        self._notify_progress(self._active_sn, self._active_items, self._active_logs,
+                              passed, failed, skipped)
+
+    @staticmethod
+    def _make_session_id(sn: str) -> str:
+        safe_sn = "".join(ch for ch in sn.strip() if ch.isalnum() or ch in {"-", "_"}) or "UNKNOWN"
+        return f"{safe_sn}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

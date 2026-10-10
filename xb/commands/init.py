@@ -270,6 +270,16 @@ class XbGroup(click.Group):
     help="启用日志中心（后端日志 SSE 实时推送 + 级别/关键词过滤 + 导出）",
 )
 @click.option(
+    "--csv-test",
+    "csv_test",
+    is_flag=True,
+    default=False,
+    help=(
+        "启用 CSV 测试引擎（产测专用）：configs/test_plan.csv 定义测试项，"
+        "按行执行/人工确认/PASS 判定/HTML 报告归档与历史查看"
+    ),
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
@@ -291,6 +301,7 @@ def init_command(
     icon: str | None,
     update: bool,
     logs: bool,
+    csv_test: bool,
     skip_install: bool,
 ):
     """
@@ -354,6 +365,7 @@ def init_command(
         "terminal": terminal,
         "update": update,
         "logs": logs,
+        "csv_test": csv_test,
         "icon": icon,
         "skip_install": skip_install,
     })
@@ -362,6 +374,7 @@ def init_command(
     terminal = form_result["terminal"]
     update = form_result["update"]
     logs = form_result["logs"]
+    csv_test = form_result["csv_test"]
     icon = form_result["icon"]
     skip_install = form_result["skip_install"]
 
@@ -373,6 +386,12 @@ def init_command(
         console.print(
             "[cyan]ℹ[/cyan] 已启用 --update：Ubuntu 更新安装复用标配的 "
             "polkit 免密提权（管理员组无感，无密码落盘）"
+        )
+    if csv_test:
+        console.print(
+            "[cyan]ℹ[/cyan] 已启用 --csv-test：CSV 测试引擎 + HTML 报告，"
+            "测试项在 configs/test_plan.csv 维护，指令键在 "
+            "backend/services/factory_test/commands.py 注册"
         )
 
     # 创建项目
@@ -389,6 +408,7 @@ def init_command(
             enable_terminal=terminal,
             enable_update=update,
             enable_logs=logs,
+            enable_csv_test=csv_test,
             icon_path=icon_path,
         )
 

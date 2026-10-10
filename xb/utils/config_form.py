@@ -62,6 +62,11 @@ class ConfigForm:
                 "hint": "实时查看后端日志，排障刚需",
             },
             {
+                "key": "csv_test", "label": "CSV 测试引擎", "type": "toggle",
+                "checked": bool(cli.get("csv_test")),
+                "hint": "产测专用：CSV 测试项 + HTML 报告",
+            },
+            {
                 "key": "icon", "label": "应用图标", "type": "text",
                 "checked": False,
                 "value": str(cli.get("icon") or ""),
@@ -253,6 +258,7 @@ class ConfigForm:
 
         update = self._row("update")["checked"]
         logs = self._row("logs")["checked"]
+        csv_test = self._row("csv_test")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
@@ -260,6 +266,7 @@ class ConfigForm:
         flags = f"  终端: {enabled if self._row('terminal')['checked'] else disabled}" \
                 f"   更新: {enabled if update else disabled}" \
                 f"   日志: {enabled if logs else disabled}" \
+                f"   产测: {enabled if csv_test else disabled}" \
                 f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
         port_text = f"{port}/{port + 1}" if port else "8000/5173"
         sys.stdout.write(
@@ -274,6 +281,7 @@ class ConfigForm:
             "terminal": self._row("terminal")["checked"],
             "update": update,
             "logs": logs,
+            "csv_test": csv_test,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
             "skip_install": self._row("skip_install")["checked"],
         }
@@ -288,6 +296,7 @@ def run_config_form(package: str, cli: dict) -> dict:
             "terminal": bool(cli.get("terminal")),
             "update": bool(cli.get("update")),
             "logs": bool(cli.get("logs")),
+            "csv_test": bool(cli.get("csv_test")),
             "icon": cli.get("icon"),
             "skip_install": bool(cli.get("skip_install")),
         }

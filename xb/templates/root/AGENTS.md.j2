@@ -71,6 +71,9 @@
 | 改通用设置页 | 后端 `backend/api/settings.py` + 前端 `SettingsView.vue` | yaml 全量叶子 key 自动出表单，行尾 `#` 注释就是显示名（含列表项，写回经 `managers/yaml_comments.py` 回填不丢）；`SETTINGS_SCHEMA` 只做校验增强（PUT `/api/app-settings`）；应用配置与密钥的唯一图形入口 |
 [% if enable_logs %]| 改日志中心 | 后端 `backend/api/logs.py` + 前端 `LogViewer.vue` | loguru sink 进内存环形缓冲（2000 条），SSE 0.5s 增量推送；级别/关键词过滤在前端 |
 [% endif %]
+[% if enable_csv_test %]| 加/改测试项 | `configs/test_plan.csv`（前端"📝 编辑测试项"可视化编辑，保存即生效） | 列语义与 PASS 标准格式见 `docs/csv测试引擎说明.md`；新指令键在 `backend/services/factory_test/commands.py` 注册 |
+| 改 CSV 测试引擎 | 后端 `backend/services/factory_test/` + `api/factory_test/routes.py` + 前端 `views/FactoryTestView.vue` 与 `components/factory_test/` | runner/判定/报告是通用底座，改动需评估已在产线运行的项目 |
+[% endif %]
 | 改 DEB/NSIS 打包内容 | `electron/package.json` 的 `build.extraResources` | server / dist / configs / scripts |
 | 改安装/卸载副作用 | `electron/resources/postinst.py` / `postrm.py` / `uninstaller.nsh` | Linux DEB 使用 Python 钩子；Windows NSIS 卸载复选项在 `uninstaller.nsh` |
 | 改 Electron 窗口尺寸/菜单 | `electron/main.js` | `BrowserWindow` 构造参数 |
@@ -421,6 +424,16 @@ Windows 下服务不会继承当前 PowerShell 的 stdin，也不会弹出后台
 ## E. 测试
 
 默认**不**主动写单元测试，除非用户明确要求。要写时用 `pytest`（已在 `pyproject.toml` 的 dev extras 里），文件放 `tests/` 镜像 `backend/` 结构，mock `path_manager` 用 `monkeypatch._config_cache`，不要真写 yaml。
+[% if enable_csv_test %]
+
+## E2. CSV 测试引擎纪律（产测项目）
+
+- **测试项只加在 `configs/test_plan.csv`**：新功能 = commands.py 注册指令键 + CSV 加行；禁止把测试流程硬编码进 runner；
+- **`runner.py` / `result_compare.py` / `report.py` 是通用引擎底座**：已在产线项目运行，改动必须向后兼容，不要为单个测试项改引擎；
+- **handler 签名** `(sn="", item_id="", on_output=None, **_) -> str`：返回字符串交 PASS 标准判定；`ConnectionError` 子类 = 环境类故障 fatal（中止后续测试项），被测件不合格正常返回失败，不要滥用 fatal；
+- **CSV 列名是接口**：前端编辑器与 `definition.CSV_HEADERS` 强耦合，不要改列名/列序；
+- 人工确认弹窗的引导文案优先写进 CSV 的"测试方法"列（弹窗会展示），不要在 `ManualConfirmBanner.vue` 里堆项目特定分支。
+[% endif %]
 
 ## F. 改动前先读现有代码
 

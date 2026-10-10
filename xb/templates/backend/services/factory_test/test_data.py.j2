@@ -1,0 +1,106 @@
+"""历史测试数据：读取 datas/reports/ 下按会话归档的报告和日志。"""
+from pathlib import Path
+
+from fastapi import HTTPException
+
+from managers import path_manager
+from schemas.factory_test import TestDataDetail, TestDataFile, TestDataSession
+
+
+class TestDataService:
+    """读取按测试会话归档的报告和日志。"""
+
+    def list_sessions(self) -> list[TestDataSession]:
+        reports_dir = path_manager.get_report_path("")
+        if not reports_dir.exists():
+            return []
+
+        sessions: list[TestDataSession] = []
+        for session_dir in reports_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            files = self._list_session_files(session_dir)
+            if not files:
+                continue
+            sessions.append(TestDataSession(
+                session_id=session_dir.name,
+                sn=self._parse_sn(session_dir.name),
+                created_at=self._parse_created_at(session_dir.name),
+                updated_at=session_dir.stat().st_mtime,
+                report_file=next((f.name for f in files if f.kind == "report"), ""),
+                log_file=next((f.name for f in files if f.kind == "log"), ""),
+                files=files,
+            ))
+
+        return sorted(sessions, key=lambda item: item.updated_at, reverse=True)
+
+    def get_session(self, session_id: str) -> TestDataDetail:
+        session_dir = self._get_session_dir(session_id)
+        files = self._list_session_files(session_dir)
+        if not files:
+            raise HTTPException(status_code=404, detail="未找到测试报告或测试日志")
+
+        report_file = next((f for f in files if f.kind == "report"), None)
+        log_file = next((f for f in files if f.kind == "log"), None)
+        return TestDataDetail(
+            session_id=session_dir.name,
+            sn=self._parse_sn(session_dir.name),
+            created_at=self._parse_created_at(session_dir.name),
+            updated_at=session_dir.stat().st_mtime,
+            report_file=report_file.name if report_file else "",
+            log_file=log_file.name if log_file else "",
+            files=files,
+            report_html=self._read_text(session_dir / report_file.name) if report_file else "",
+            log_text=self._read_text(session_dir / log_file.name) if log_file else "",
+        )
+
+    def _get_session_dir(self, session_id: str) -> Path:
+        if not session_id or "/" in session_id or "\\" in session_id or session_id in {".", ".."}:
+            raise HTTPException(status_code=400, detail="测试数据目录名非法")
+        reports_dir = path_manager.get_report_path("").resolve()
+        session_dir = (reports_dir / session_id).resolve()
+        if reports_dir not in session_dir.parents and session_dir != reports_dir:
+            raise HTTPException(status_code=400, detail="测试数据目录越界")
+        if not session_dir.exists() or not session_dir.is_dir():
+            raise HTTPException(status_code=404, detail="测试数据不存在")
+        return session_dir
+
+    @staticmethod
+    def _list_session_files(session_dir: Path) -> list[TestDataFile]:
+        files: list[TestDataFile] = []
+        for file_path in sorted(session_dir.iterdir(), key=lambda item: item.name):
+            if not file_path.is_file():
+                continue
+            suffix = file_path.suffix.lower()
+            if suffix == ".html":
+                kind = "report"
+            elif suffix == ".log":
+                kind = "log"
+            else:
+                continue
+            stat = file_path.stat()
+            files.append(TestDataFile(name=file_path.name, kind=kind, size=stat.st_size,
+                                      updated_at=stat.st_mtime))
+        return files
+
+    @staticmethod
+    def _read_text(file_path: Path) -> str:
+        return file_path.read_text(encoding="utf-8", errors="replace")
+
+    @staticmethod
+    def _parse_sn(session_id: str) -> str:
+        parts = session_id.rsplit("_", 2)
+        return parts[0] if len(parts) == 3 else session_id
+
+    @staticmethod
+    def _parse_created_at(session_id: str) -> str:
+        parts = session_id.rsplit("_", 2)
+        if len(parts) != 3:
+            return ""
+        date_part, time_part = parts[1], parts[2]
+        if len(date_part) != 8 or len(time_part) != 6:
+            return ""
+        return f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+
+
+test_data_service = TestDataService()

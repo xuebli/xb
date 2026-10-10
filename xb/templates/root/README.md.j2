@@ -8,6 +8,9 @@
 - 智能路径管理（开发/生产自动切换）；版本管理（提交时自动 bump）
 - 特权操作免密提权（Linux polkit，管理员组无感、无密码落盘）
 - 全局亮色/暗色主题切换
+[% if enable_csv_test %]
+- CSV 测试引擎（产测：CSV 定义测试项 + HTML 报告归档 + 历史查看）
+[% endif %]
 [% if enable_terminal %]
 - 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
 [% endif %]
@@ -117,6 +120,17 @@ hooks 由 `dev.py start` 自动安装，无需手动操作。
 
 > 授权机制、部署调试、新增特权操作纪律详见
 > **[docs/polkit免密提权说明.md](docs/polkit免密提权说明.md)**。
+[% if enable_csv_test %]
+## CSV 测试引擎
+
+测试项在 `configs/test_plan.csv` 维护（前端可可视化编辑），「产测」页执行，
+每轮自动归档 HTML 报告与日志，「历史报告」弹窗查看。内置控制流指令
+（delay/人工确认/准备确认），硬件指令在
+`backend/services/factory_test/commands.py` 注册。
+
+> CSV 格式、PASS 标准、指令注册纪律详见
+> **[docs/csv测试引擎说明.md](docs/csv测试引擎说明.md)**。
+[% endif %]
 
 ## API 接口
 

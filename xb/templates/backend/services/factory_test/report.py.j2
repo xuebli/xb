@@ -1,0 +1,182 @@
+"""测试报告归档：每个会话一个目录，生成 HTML 报告 + 文本日志。"""
+import html
+from datetime import datetime
+from pathlib import Path
+
+from managers import get_logger, path_manager
+from schemas.factory_test import TestItem, TestSession
+
+logger = get_logger(__name__)
+
+BOARD_NAME = "[[ display_name ]]"
+REPORT_CSS = """
+        body { font-family: Arial, 'Microsoft YaHei', sans-serif; margin: 20px; min-height: 100vh; font-size: 14px; color: #222; }
+        .header { background-color: #f5f5f5; padding: 20px; border-radius: 5px; position: relative; overflow: hidden; text-align: center; }
+        .summary { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .failed-summary { margin: 20px 0; padding: 15px; border: 2px solid #ffcccc; border-radius: 5px; background-color: #fff5f5; }
+        .failed-summary h2 { color: #d32f2f; margin-top: 0; }
+        .passed { color: green; } .failed { color: red; } .skipped { color: #777; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; table-layout: auto; }
+        th, td { border: 1px solid #ddd; padding: 6px 4px; text-align: left; vertical-align: top; word-wrap: break-word; }
+        th { background-color: #f2f2f2; font-size: 13px; text-align: center; font-weight: bold; }
+        th:nth-child(1), td:nth-child(1) { width: 5%; min-width: 40px; text-align: center; }
+        th:nth-child(2), td:nth-child(2) { width: 16%; min-width: 110px; }
+        th:nth-child(3), td:nth-child(3) { width: 6%; min-width: 50px; text-align: center; }
+        th:nth-child(4), td:nth-child(4) { width: 6%; min-width: 50px; text-align: center; }
+        th:nth-child(5), td:nth-child(5) { width: 8%; min-width: 60px; text-align: center; }
+        th:nth-child(6), td:nth-child(6) { width: 32%; min-width: 200px; word-break: break-word; white-space: pre-wrap; }
+        th:nth-child(7), td:nth-child(7) { width: 28%; min-width: 180px; word-break: break-word; white-space: pre-wrap; }
+        tr:hover { background-color: #f5f5f5; }
+        .stamp { position: absolute; right: 50px; top: 50px; width: 200px; height: 200px; opacity: 0.15; transform: rotate(15deg); z-index: 10; pointer-events: none; }
+        .passed-stamp, .failed-stamp { border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 36px; font-weight: bold; }
+        .passed-stamp { border: 15px solid rgba(46, 204, 113, 0.3); color: rgba(39, 174, 96, 0.8); }
+        .failed-stamp { border: 15px solid rgba(231, 76, 60, 0.3); color: rgba(192, 57, 43, 0.8); }
+        .stamp-text { transform: rotate(-15deg); text-align: center; line-height: 1.2; }
+        .stamp-main { font-size: 50px; font-weight: bold; } .stamp-sub { font-size: 18px; margin-top: 5px; }
+        .footer { text-align: center; margin-top: 30px; padding: 20px; color: #777; font-size: 14px; border-top: 1px solid #eee; }
+        .summary-stats { display: flex; justify-content: space-around; margin: 20px 0; font-size: 16px; font-weight: bold; }
+        .stat-item { text-align: center; padding: 8px; border-radius: 5px; background-color: #f8f8f8; flex: 1; margin: 0 5px; }
+        .stat-value { font-size: 20px; display: block; }
+        .stat-value.clickable { cursor: pointer; text-decoration: underline; transition: opacity 0.2s; }
+        .stat-value.clickable:hover { opacity: 0.7; }
+        .stat-value.clickable.active { background: #ffebee; border-radius: 4px; }
+        .overall-result { text-align: center; margin: 30px 0; padding: 15px; border-radius: 8px; border: 2px solid; }
+        .overall-passed { background-color: #e8f5e9; border-color: #4caf50; }
+        .overall-failed { background-color: #ffebee; border-color: #f44336; }
+        .overall-title { margin: 0; font-size: 24px; }
+        @media (max-width: 768px) { body { margin: 10px; font-size: 12px; } .summary-stats { flex-direction: column; gap: 10px; } .stamp { display: none; } }
+"""
+
+
+class ReportService:
+    def generate(self, session: TestSession) -> Path:
+        session_dir = path_manager.get_report_path(session.session_id)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        html_path = session_dir / f"{session.session_id}.html"
+        log_path = session_dir / f"{session.session_id}.log"
+        html_path.write_text(self._render_html(session), encoding="utf-8")
+        log_path.write_text(self._render_log(session), encoding="utf-8")
+        logger.info(f"已生成测试报告: {html_path}")
+        return html_path
+
+    def _render_html(self, session: TestSession) -> str:
+        total = session.summary.total
+        passed = session.summary.passed
+        failed = session.summary.failed
+        skipped = session.summary.skipped
+        success_rate = round((passed / total * 100) if total else 0, 1)
+        total_duration = session.total_duration
+        is_passed = session.status == "passed"
+        status_text = "通过" if is_passed else "失败"
+        status_mark = "PASS" if is_passed else "FAIL"
+        stamp_class = "passed-stamp" if is_passed else "failed-stamp"
+        overall_class = "overall-passed" if is_passed else "overall-failed"
+        overall_color = "#2e7d32" if is_passed else "#d32f2f"
+        failed_summary = self._render_failed_summary(session.items)
+        rows = "".join(self._render_item_row(index, item) for index, item in enumerate(session.items, start=1))
+        test_time = self._parse_session_time(session.session_id) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sn = html.escape(session.sn or "(未输入)")
+
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{BOARD_NAME}测试报告 - {sn}</title>
+    <style>{REPORT_CSS}</style>
+</head>
+<body>
+    <div class="stamp {stamp_class}"><div class="stamp-text"><div class="stamp-main">{status_text}</div><div class="stamp-sub">整体测试结果</div></div></div>
+    <div class="header"><h1>{BOARD_NAME}测试报告</h1><p style="font-size: 1.4em; font-weight: bold; margin-top: 10px;">PCBA SN号: {sn}</p><p>测试时间: {html.escape(test_time)}</p></div>
+    <div class="summary">
+        <h2>测试概览</h2>
+        <div class="summary-stats">
+            <div class="stat-item"><span class="stat-value">{total}</span><span>总测试项</span></div>
+            <div class="stat-item passed"><span class="stat-value">{passed}</span><span>通过项</span></div>
+            <div class="stat-item failed"><span class="stat-value clickable" id="filter-failed" onclick="toggleFilterFailed()">{failed}</span><span>失败项</span></div>
+            <div class="stat-item skipped"><span class="stat-value">{skipped}</span><span>跳过项</span></div>
+            <div class="stat-item"><span class="stat-value">{success_rate}%</span><span>通过率</span></div>
+            <div class="stat-item"><span class="stat-value">{total_duration}s</span><span>总耗时</span></div>
+        </div>
+        <div class="overall-result {overall_class}"><h2 class="overall-title" style="color: {overall_color}">整体测试结果: <span style="font-size: 1.2em;">{status_mark} {status_text}</span></h2></div>
+    </div>
+    {failed_summary}
+    <h2>详细测试结果</h2>
+    <table><thead><tr><th>序号</th><th>测试项</th><th>状态</th><th>耗时</th><th>测试方式</th><th>测试结果</th><th>测试标准</th></tr></thead><tbody>{rows}</tbody></table>
+    <div class="footer">报告生成时间: {report_time}<br>{BOARD_NAME}生产测试平台</div>
+    <script>
+    function toggleFilterFailed() {{
+        var btn = document.getElementById('filter-failed');
+        var rows = document.querySelectorAll('tbody tr');
+        var isActive = btn.classList.toggle('active');
+        rows.forEach(function(row) {{
+            if (isActive) {{
+                row.style.display = row.classList.contains('failed') ? '' : 'none';
+            }} else {{
+                row.style.display = '';
+            }}
+        }});
+    }}
+    </script>
+</body>
+</html>"""
+
+    def _render_failed_summary(self, items: list[TestItem]) -> str:
+        failed_items = [item for item in items if item.status == "failed"]
+        if not failed_items:
+            return ""
+        failed_list = "".join(
+            f"<li>{html.escape(item.name)}: {html.escape(item.result_message or '未知原因')}</li>"
+            for item in failed_items
+        )
+        return f'<div class="failed-summary"><h2>测试失败项详情</h2><ul>{failed_list}</ul></div>'
+
+    def _render_item_row(self, index: int, item: TestItem) -> str:
+        passed = item.status == "passed"
+        failed = item.status == "failed"
+        row_class = "passed" if passed else "failed" if failed else "skipped"
+        status_text = "通过" if passed else "失败" if failed else "跳过"
+        duration_text = f"{item.duration}s" if item.duration else "-"
+        is_manual = not item.command_key or item.command_key.startswith("manual_confirm")
+        test_method = "人工判断" if is_manual else "自动判断"
+        result_text = "PASSED" if passed else "FAILED" if failed else "SKIPPED"
+        detail = item.actual_value or item.result_message or "-"
+        if detail and detail != result_text:
+            detail_html = html.escape(detail).replace("\n", "<br>")
+            result_text += f'<br><span style="color: #666; font-size: 0.9em;">{detail_html}</span>'
+        standard = item.pass_standard or ("无，人工判定" if is_manual else "执行成功")
+        standard_html = html.escape(standard).replace("|", "<br>")
+        return (f'<tr class="{row_class}"><td>{index}</td><td>{html.escape(item.name)}</td>'
+                f'<td>{status_text}</td><td>{duration_text}</td><td>{html.escape(test_method)}</td>'
+                f'<td>{result_text}</td><td>{standard_html}</td></tr>')
+
+    def _render_log(self, session: TestSession) -> str:
+        header = [
+            f"测试报告: {session.session_id}",
+            f"SN: {session.sn}",
+            f"整体结果: {session.status}",
+            f"总测试项: {session.summary.total}",
+            f"通过项: {session.summary.passed}",
+            f"失败项: {session.summary.failed}",
+            f"跳过项: {session.summary.skipped}",
+            f"总耗时: {session.total_duration}s",
+            "",
+            "=" * 80,
+            "完整测试日志:",
+            "=" * 80,
+            "",
+        ]
+        return "\n".join(header + session.logs) + "\n"
+
+    @staticmethod
+    def _parse_session_time(session_id: str) -> str:
+        parts = session_id.rsplit("_", 2)
+        if len(parts) != 3:
+            return ""
+        date_part, time_part = parts[1], parts[2]
+        if len(date_part) != 8 or len(time_part) != 6:
+            return ""
+        return f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+
+
+report_service = ReportService()

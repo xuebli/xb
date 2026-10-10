@@ -40,6 +40,7 @@ class TemplateEngine:
         enable_terminal: bool = False,
         enable_update: bool = False,
         enable_logs: bool = False,
+        enable_csv_test: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +61,7 @@ class TemplateEngine:
             "enable_terminal": enable_terminal,
             "enable_update": enable_update,
             "enable_logs": enable_logs,
+            "enable_csv_test": enable_csv_test,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -153,6 +155,16 @@ class TemplateEngine:
             context,
         )
 
+        # services/ 包：自动更新与 CSV 测试引擎任一启用都需要
+        if context["enable_update"] or context["enable_csv_test"]:
+            services_dir = backend_dir / "services"
+            services_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/services/__init__.py.j2",
+                services_dir / "__init__.py",
+                context,
+            )
+
         if context["enable_update"]:
             self._render_template(
                 "backend/managers/secret_obfuscator.py.j2",
@@ -162,13 +174,6 @@ class TemplateEngine:
             self._render_template(
                 "backend/app_version.py.j2", backend_dir / "app_version.py", context
             )
-            services_dir = backend_dir / "services"
-            services_dir.mkdir(exist_ok=True)
-            self._render_template(
-                "backend/services/__init__.py.j2",
-                services_dir / "__init__.py",
-                context,
-            )
             self._render_template(
                 "backend/services/updater.py.j2",
                 services_dir / "updater.py",
@@ -177,6 +182,50 @@ class TemplateEngine:
             self._render_template(
                 "backend/services/feishu_client.py.j2",
                 services_dir / "feishu_client.py",
+                context,
+            )
+
+        if context["enable_csv_test"]:
+            # CSV 测试引擎（产测专用）：CSV 定义测试项 + 指令注册表执行 +
+            # HTML 报告归档 + 历史报告浏览
+            schemas_dir = backend_dir / "schemas"
+            schemas_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/schemas/__init__.py.j2", schemas_dir / "__init__.py", context
+            )
+            self._render_template(
+                "backend/schemas/factory_test.py.j2",
+                schemas_dir / "factory_test.py",
+                context,
+            )
+            factory_test_dir = backend_dir / "services" / "factory_test"
+            factory_test_dir.mkdir(parents=True, exist_ok=True)
+            for name in (
+                "__init__",
+                "command_executor",
+                "commands",
+                "definition",
+                "report",
+                "result_compare",
+                "runner",
+                "test_control",
+                "test_data",
+            ):
+                self._render_template(
+                    f"backend/services/factory_test/{name}.py.j2",
+                    factory_test_dir / f"{name}.py",
+                    context,
+                )
+            factory_test_api_dir = backend_dir / "api" / "factory_test"
+            factory_test_api_dir.mkdir(parents=True, exist_ok=True)
+            self._render_template(
+                "backend/api/factory_test/__init__.py.j2",
+                factory_test_api_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/api/factory_test/routes.py.j2",
+                factory_test_api_dir / "routes.py",
                 context,
             )
 
@@ -272,6 +321,36 @@ class TemplateEngine:
                 composables_dir / "useUpdate.js",
                 context,
             )
+        if context["enable_csv_test"]:
+            # CSV 测试引擎前端：产测主页 + 编辑器/表格/日志/人工确认/历史报告
+            factory_components_dir = components_dir / "factory_test"
+            factory_components_dir.mkdir(exist_ok=True)
+            views_dir = src_dir / "views"
+            views_dir.mkdir(exist_ok=True)
+            services_dir = src_dir / "services"
+            services_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "frontend/src/services/factoryTestApi.js.j2",
+                services_dir / "factoryTestApi.js",
+                context,
+            )
+            self._render_template(
+                "frontend/src/views/FactoryTestView.vue.j2",
+                views_dir / "FactoryTestView.vue",
+                context,
+            )
+            for name in (
+                "CsvEditor",
+                "ManualConfirmBanner",
+                "TestDataViewer",
+                "TestGroupTable",
+                "TestLogPanel",
+            ):
+                self._render_template(
+                    f"frontend/src/components/factory_test/{name}.vue.j2",
+                    factory_components_dir / f"{name}.vue",
+                    context,
+                )
 
     def _create_electron(self, target_dir: Path, context: Dict[str, Any]):
         electron_dir = target_dir / "electron"
@@ -376,6 +455,12 @@ class TemplateEngine:
                 configs_dir / "config_changes.json",
                 context,
             )
+        if context["enable_csv_test"]:
+            self._render_template(
+                "configs/test_plan.csv.j2",
+                configs_dir / "test_plan.csv",
+                context,
+            )
 
     def _create_scripts(self, target_dir: Path, context: Dict[str, Any]):
         scripts_dir = target_dir / "scripts"
@@ -441,14 +526,19 @@ class TemplateEngine:
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
         # docs/：随模板分发的说明文档（原样拷贝，不渲染变量）。
-        # 打包路径/版本管理/polkit 说明面向全部项目；自动更新说明仅 --update 项目分发。
+        # 打包路径/版本管理/polkit 说明面向全部项目；功能文档按开关分发。
         docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
         if docs_src.exists():
-            update_only_docs = {"自动更新说明.md", "images"}
+            gated_docs = {
+                "自动更新说明.md": "enable_update",
+                "images": "enable_update",
+                "csv测试引擎说明.md": "enable_csv_test",
+            }
             docs_dst = target_dir / "docs"
             docs_dst.mkdir(exist_ok=True)
             for item in docs_src.iterdir():
-                if not context["enable_update"] and item.name in update_only_docs:
+                gate = gated_docs.get(item.name)
+                if gate and not context[gate]:
                     continue
                 dest = docs_dst / item.name
                 if item.is_dir():

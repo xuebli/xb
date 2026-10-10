@@ -16,6 +16,7 @@
 - 可选日志中心（`--logs`，后端日志实时推送到界面，排障不用登机器）
 - 通用设置页（yaml 加一行"值 + 行尾 `# 显示名`"即自动出表单，注释回填不丢失；secrets.yaml 的 key 自动渲染为密码框）
 - 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
+- 可选 CSV 测试引擎（`--csv-test`，产测专用：CSV 定义测试项、人工确认、PASS 判定、HTML 报告归档与历史查看）
 - 特权操作免密提权标配（Linux polkit，管理员组无感、无密码落盘；helper 白名单执行器）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
@@ -57,6 +58,9 @@ xb init demo --logs
 # 启用应用内自动更新（Ubuntu 更新安装走 polkit 免密提权，管理员组无感）
 xb init demo --update
 
+# 启用 CSV 测试引擎（产测：测试项 CSV + 人工确认 + HTML 报告）
+xb init demo --csv-test
+
 # 带自定义图标
 xb init demo --icon ~/icons/app.png
 
@@ -84,11 +88,12 @@ xb dev stop
   [ ] 内置终端  ✘  (Web 终端组件)
   [ ] 应用内更新  ✘  (Ubuntu 更新安装走 polkit 免密提权)
   [ ] 日志中心  ✘  (实时查看后端日志，排障刚需)
+  [ ] CSV 测试引擎  ✘  (产测专用：测试项 CSV + HTML 报告)
   [ ] 应用图标 : 使用默认
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
 ```
 
-- `--name/--port/--terminal/--update/--icon/--skip-install` 传了的参数
+- `--name/--port/--terminal/--update/--logs/--csv-test/--icon/--skip-install` 传了的参数
   直接预填进表单并勾上，回车即确认，老用法不受影响
 - 文本行（显示名/端口/图标）勾选时若仍是默认值则自动清空，直接输入即可
 - stdin 非终端时（脚本/CI 管道调用）自动跳过表单，沿用 CLI 参数
@@ -200,6 +205,7 @@ postinst 预部署，管理员组无感、无密码落盘），Windows 等退出
 | [自动更新说明.md](xb/templates/root/docs/自动更新说明.md) | 应用内自动更新：发版流程、配置迁移清单、AI 开发者纪律 |
 | [polkit免密提权说明.md](xb/templates/root/docs/polkit免密提权说明.md) | Linux polkit 免密提权：安全模型、三件套部署、新增特权操作、排障 |
 | [打包与运行路径说明.md](xb/templates/root/docs/打包与运行路径说明.md) | 构建产物、DEB/NSIS 安装布局、运行时数据目录、三种运行形态判定 |
+| [csv测试引擎说明.md](xb/templates/root/docs/csv测试引擎说明.md) | 产测 CSV 引擎：测试项格式、指令键注册、HTML 报告、纪律（`--csv-test` 项目） |
 | [版本管理说明.md](xb/templates/root/docs/版本管理说明.md) | 版本号 single source of truth、三模态 bump 弹窗、手动 bump、hook 纪律 |
 
 ## 生成的项目结构

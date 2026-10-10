@@ -1,0 +1,161 @@
+"""工厂测试 API：测试计划、执行控制、CSV 管理、历史报告。"""
+from fastapi import APIRouter, HTTPException
+
+from managers import get_logger
+from schemas.factory_test import TestCsvSaveRequest, TestRunRequest
+from services.factory_test import (
+    TestControlService,
+    TestDefinition,
+    TestRunner,
+    command_registry,
+)
+import services.factory_test.commands  # noqa: F401  注册指令键
+from services.factory_test.test_data import test_data_service
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+definition = TestDefinition()
+runner = TestRunner(definition=definition, registry=command_registry)
+test_control_service = TestControlService(runner)
+
+
+@router.get("/plan")
+async def get_test_plan():
+    """读取测试计划（CSV 中的测试项，按分组组织）。"""
+    try:
+        return definition.get_plan()
+    except Exception as e:
+        logger.error(f"读取测试计划失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取测试计划失败: {str(e)}")
+
+
+@router.get("/test-csv")
+async def get_test_csv():
+    """读取测试项 CSV 原始内容。"""
+    try:
+        return definition.get_csv_data()
+    except Exception as e:
+        logger.error(f"读取测试项CSV失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取测试项CSV失败: {str(e)}")
+
+
+@router.put("/test-csv")
+async def save_test_csv(req: TestCsvSaveRequest):
+    """保存测试项 CSV（写前自动备份 .csv.bak）。"""
+    try:
+        return definition.save_csv_rows(req.rows)
+    except Exception as e:
+        logger.error(f"保存测试项CSV失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存测试项CSV失败: {str(e)}")
+
+
+@router.post("/run")
+async def run_test(req: TestRunRequest):
+    """开始一轮测试（后台线程执行，轮询 /current-session 获取进度）。"""
+    try:
+        return test_control_service.start(req.sn)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"启动测试失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动测试失败: {str(e)}")
+
+
+@router.get("/current-session")
+async def get_current_session():
+    try:
+        return test_control_service.get_current()
+    except Exception as e:
+        logger.error(f"读取当前测试状态失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取当前测试状态失败: {str(e)}")
+
+
+@router.post("/pause")
+async def pause_test():
+    try:
+        return test_control_service.pause()
+    except Exception as e:
+        logger.error(f"暂停测试失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"暂停测试失败: {str(e)}")
+
+
+@router.post("/resume")
+async def resume_test():
+    try:
+        return test_control_service.resume()
+    except Exception as e:
+        logger.error(f"继续测试失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"继续测试失败: {str(e)}")
+
+
+@router.post("/manual-start")
+async def start_manual_test():
+    """人工类测试项：操作员点击开始，触发实际测试指令。"""
+    try:
+        return test_control_service.start_manual()
+    except Exception as e:
+        logger.error(f"人工确认开始失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"人工确认开始失败: {str(e)}")
+
+
+@router.post("/stop")
+async def stop_test():
+    try:
+        return test_control_service.stop()
+    except Exception as e:
+        logger.error(f"停止测试失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"停止测试失败: {str(e)}")
+
+
+@router.post("/fail-manual")
+async def fail_manual_test():
+    """人工确认项：操作员判定不通过。"""
+    try:
+        return test_control_service.fail_manual()
+    except Exception as e:
+        logger.error(f"人工判定失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"人工判定失败: {str(e)}")
+
+
+@router.post("/preview-session")
+async def create_preview_session(req: TestRunRequest):
+    try:
+        return runner.create_preview_session(req.sn)
+    except Exception as e:
+        logger.error(f"创建测试会话失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"创建测试会话失败: {str(e)}")
+
+
+@router.get("/test-data")
+async def list_test_data():
+    """历史测试会话列表（按时间倒序）。"""
+    try:
+        return test_data_service.list_sessions()
+    except Exception as e:
+        logger.error(f"读取测试数据列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取测试数据列表失败: {str(e)}")
+
+
+@router.get("/test-data/{session_id}")
+async def get_test_data(session_id: str):
+    """单次测试的报告 HTML + 日志全文。"""
+    try:
+        return test_data_service.get_session(session_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"读取测试数据详情失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取测试数据详情失败: {str(e)}")
+
+
+@router.put("/item-standalone")
+async def update_item_standalone(item_id: str, standalone: bool):
+    """更新测试项的单独测试状态。"""
+    try:
+        return definition.update_item_standalone(item_id, standalone)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"更新单独测试状态失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新单独测试状态失败: {str(e)}")

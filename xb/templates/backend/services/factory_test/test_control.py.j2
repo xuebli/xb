@@ -1,0 +1,95 @@
+"""托管当前测试任务：后台线程执行 + 暂停/继续/停止控制。"""
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
+from threading import Lock
+
+from managers import get_logger
+from schemas.factory_test import TestSession
+from .runner import TestRunner
+
+logger = get_logger(__name__)
+
+
+class TestControlService:
+    def __init__(self, runner: TestRunner):
+        self.runner = runner
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="factory-test")
+        self._lock = Lock()
+        self._future: Future | None = None
+        self._session: TestSession | None = None
+
+    def start(self, sn: str) -> TestSession:
+        with self._lock:
+            if self._future and not self._future.done():
+                raise RuntimeError("已有测试正在执行")
+            self.runner.reset_control()
+            self._future = None
+            preview = self.runner.create_preview_session(sn)
+            preview.status = "running"
+            started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info("=" * 72)
+            logger.info(f"开始新一轮测试 · 会话ID: {preview.session_id} · SN: {sn.strip() or '(未输入)'}")
+            logger.info("=" * 72)
+            # 每轮测试以醒目的边界开始，便于日志面板和导出日志区分连续测试。
+            preview.logs.extend([
+                "",
+                "=" * 72,
+                f"[{started_at}] 开始新一轮测试 · 会话ID: {preview.session_id}",
+                "=" * 72,
+            ])
+            self._session = preview
+            self._future = self._executor.submit(self._run, sn)
+            return self._session
+
+    def pause(self) -> TestSession:
+        self.runner.pause_current()
+        return self.get_current()
+
+    def resume(self) -> TestSession:
+        self.runner.resume_current()
+        return self.get_current()
+
+    def start_manual(self) -> TestSession:
+        self.runner.start_manual_current()
+        return self.get_current()
+
+    def stop(self) -> TestSession:
+        self.runner.stop_current()
+        return self.get_current()
+
+    def fail_manual(self) -> TestSession:
+        self.runner.fail_manual_current()
+        return self.get_current()
+
+    def get_current(self) -> TestSession:
+        with self._lock:
+            self._sync_finished_locked()
+            if self._session is None:
+                return self.runner.create_preview_session("")
+            return self._session
+
+    def _run(self, sn: str) -> TestSession:
+        def update_progress(session: TestSession):
+            with self._lock:
+                self._session = session
+
+        self.runner.on_progress = update_progress
+        try:
+            session = self.runner.run_once(sn)
+        finally:
+            self.runner.on_progress = None
+        with self._lock:
+            self._session = session
+        return session
+
+    def _sync_finished_locked(self) -> None:
+        if not self._future or not self._future.done():
+            return
+        try:
+            self._session = self._future.result()
+        except Exception as exc:
+            if self._session:
+                self._session.status = "failed"
+                self._session.logs.append(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] 测试执行异常: {exc}"
+                )

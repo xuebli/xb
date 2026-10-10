@@ -1,0 +1,72 @@
+"""PASS 判定：把指令返回值与 CSV 的"判断PASS标准"列比对。
+
+支持的标准格式：
+- 空标准：有返回值即通过
+- 通配符："*"（任意值通过，仅记录）
+- 范围："720~1340"
+- 阈值：">=3.3"、"<5" 等
+- 多段精确匹配："aaa|bbb"（每段都要出现在返回值中，{sn} 会替换为实际 SN）
+"""
+import re
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class CompareResult:
+    passed: bool
+    message: str
+
+
+class ResultComparator:
+    STANDARD_SEPARATOR = "|"
+
+    def compare(self, *, standard: str, response: str, sn: str = "") -> CompareResult:
+        standard = (standard or "").strip()
+        response = response or ""
+
+        if not standard:
+            if response.strip():
+                return CompareResult(True, "未配置标准值，有返回值即通过")
+            return CompareResult(False, "未收到返回值")
+
+        if standard == "*":
+            if response.strip():
+                return CompareResult(True, "通配符标准，任意值通过")
+            return CompareResult(False, "未收到返回值")
+
+        if self._looks_like_range(standard):
+            return self._compare_range(standard=standard, response=response)
+
+        parts = [p.strip() for p in standard.replace("{sn}", sn.strip()).split(self.STANDARD_SEPARATOR) if p.strip()]
+        missing = [part for part in parts if part not in response]
+        if not missing:
+            return CompareResult(True, "返回值匹配PASS标准")
+        return CompareResult(False, f"返回值缺少: {'; '.join(missing)}")
+
+    @staticmethod
+    def _looks_like_range(standard: str) -> bool:
+        return bool(re.fullmatch(r"([<>]=?\s*)?-?\d+(\.\d+)?\s*([~\-]\s*-?\d+(\.\d+)?)?\s*[A-Za-z%℃°/]*", standard)
+                    and ("~" in standard or standard.strip().startswith(("<", ">", "<=", ">="))))
+
+    @staticmethod
+    def _compare_range(*, standard: str, response: str) -> CompareResult:
+        # 响应可能带通道标识，例如“5V=5167mV”；取最后一个数值，避免把“5V”误当成测量值。
+        value_matches = re.findall(r"-?\d+(?:\.\d+)?", response)
+        if not value_matches:
+            return CompareResult(False, f"返回值中未解析到数值: {response!r}")
+        value = float(value_matches[-1])
+
+        threshold_match = re.match(r"([<>]=?)\s*(-?\d+(?:\.\d+)?)", standard)
+        if threshold_match:
+            op, threshold = threshold_match.group(1), float(threshold_match.group(2))
+            passed = {"<": value < threshold, "<=": value <= threshold,
+                      ">": value > threshold, ">=": value >= threshold}[op]
+            return CompareResult(passed, f"实际值 {value:g}，标准 {op}{threshold:g}")
+
+        between_match = re.match(r"(-?\d+(?:\.\d+)?)\s*~\s*(-?\d+(?:\.\d+)?)", standard)
+        if between_match:
+            low, high = float(between_match.group(1)), float(between_match.group(2))
+            passed = min(low, high) <= value <= max(low, high)
+            return CompareResult(passed, f"实际值 {value:g}，标准范围 {low:g}~{high:g}")
+
+        return CompareResult(False, f"无法解析标准范围: {standard}")

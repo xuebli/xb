@@ -1,0 +1,89 @@
+"""CSV 测试引擎的数据模型（产测专用，--csv-test 生成）。"""
+from pydantic import BaseModel, Field
+
+
+class TestItem(BaseModel):
+    id: str
+    name: str
+    category: str
+    method: str = ""
+    pass_standard: str = ""
+    command_key: str = ""
+    fixture: str = ""
+    note: str = ""
+    hidden: bool = False
+    standalone: bool = False  # 是否单独测试
+    status: str = "pending"  # pending / running / passed / failed / skipped
+    manual_stage: str = ""  # ""/await_start/await_confirm，人工确认类指令使用
+    actual_value: str = ""
+    result_message: str = ""
+    duration: float = 0.0  # 耗时（秒）
+
+
+class TestGroup(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    items: list[TestItem]
+
+
+class TestPlan(BaseModel):
+    board_name: str
+    source: str
+    total_items: int
+    groups: list[TestGroup]
+    items: list[TestItem] = Field(default_factory=list)
+
+
+class TestSummary(BaseModel):
+    total: int
+    passed: int = 0
+    failed: int = 0
+    pending: int = 0
+    skipped: int = 0
+
+
+class TestSession(BaseModel):
+    session_id: str
+    sn: str
+    status: str  # ready / running / paused / stopping / stopped / passed / failed
+    summary: TestSummary
+    items: list[TestItem]
+    logs: list[str] = Field(default_factory=list)
+    total_duration: float = 0.0
+    abort_reason: str = ""  # 非空 = 因环境类故障/操作员停止中止
+
+
+class TestRunRequest(BaseModel):
+    sn: str = Field(default="", max_length=64)
+
+
+class TestCsvData(BaseModel):
+    headers: list[str]
+    rows: list[dict[str, str]]
+
+
+class TestCsvSaveRequest(BaseModel):
+    rows: list[dict[str, str]]
+
+
+class TestDataFile(BaseModel):
+    name: str
+    kind: str  # report / log
+    size: int
+    updated_at: float
+
+
+class TestDataSession(BaseModel):
+    session_id: str
+    sn: str
+    created_at: str = ""
+    updated_at: float
+    report_file: str = ""
+    log_file: str = ""
+    files: list[TestDataFile] = Field(default_factory=list)
+
+
+class TestDataDetail(TestDataSession):
+    report_html: str = ""
+    log_text: str = ""

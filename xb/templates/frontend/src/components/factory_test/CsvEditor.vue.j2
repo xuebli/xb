@@ -1,0 +1,290 @@
+<script setup>
+/** 测试项 CSV 在线编辑器：增删改排序，保存后立即生效 */
+import { computed, ref } from 'vue'
+import { factoryTestApi } from '../../services/factoryTestApi'
+
+const emit = defineEmits(['saved'])
+
+const visible = ref(false)
+const loading = ref(false)
+const saving = ref(false)
+const headers = ref([])
+const rows = ref([])
+
+const rowCountText = computed(() => `${rows.value.length} 项`)
+const editableHeaders = computed(() => headers.value.filter((h) => h !== '说明'))
+
+const normalizeRow = (row = {}) => {
+  const next = {}
+  headers.value.forEach((header) => {
+    next[header] = row[header] || ''
+  })
+  next['是否测试'] = next['是否测试'] || '是'
+  next['是否隐藏'] = next['是否隐藏'] || '否'
+  return next
+}
+
+const loadCsv = async () => {
+  loading.value = true
+  try {
+    const data = await factoryTestApi.getTestCsv()
+    headers.value = data.headers || []
+    rows.value = (data.rows || []).map(normalizeRow)
+  } catch (err) {
+    alert(`读取CSV失败: ${err.message}`)
+    console.error(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+const open = async () => {
+  visible.value = true
+  await loadCsv()
+}
+
+const close = () => {
+  if (saving.value) return
+  visible.value = false
+}
+
+const addRow = () => {
+  rows.value.push(normalizeRow({ 分组: rows.value.at(-1)?.分组 || '未分组' }))
+}
+
+const removeRow = (index) => {
+  rows.value.splice(index, 1)
+}
+
+const moveRow = (index, direction) => {
+  const target = index + direction
+  if (target < 0 || target >= rows.value.length) return
+  const nextRows = [...rows.value]
+  const current = nextRows[index]
+  nextRows[index] = nextRows[target]
+  nextRows[target] = current
+  rows.value = nextRows
+}
+
+const onStandaloneChange = (index, checked) => {
+  // 单选模式：勾选一项时取消其他所有
+  rows.value.forEach((row, i) => {
+    if (i === index) {
+      row['是否单独测试'] = checked ? '是' : '否'
+    } else {
+      row['是否单独测试'] = '否'
+    }
+  })
+}
+
+const save = async () => {
+  const invalidIndex = rows.value.findIndex((row) => !row['测试功能']?.trim())
+  if (invalidIndex !== -1) {
+    alert(`第 ${invalidIndex + 1} 行缺少"测试功能"`)
+    return
+  }
+
+  saving.value = true
+  try {
+    const data = await factoryTestApi.saveTestCsv(rows.value)
+    rows.value = (data.rows || []).map(normalizeRow)
+    emit('saved')
+    visible.value = false
+    alert('CSV已保存，测试项已刷新并立即生效')
+  } catch (err) {
+    alert(`保存CSV失败: ${err.message}`)
+    console.error(err)
+  } finally {
+    saving.value = false
+  }
+}
+
+defineExpose({ open })
+</script>
+
+<template>
+  <Teleport to="body">
+    <div v-if="visible" class="mask" @click="close">
+      <section class="panel" @click.stop>
+        <header class="header">
+          <div>
+            <h2>测试项编辑（CSV）</h2>
+            <p>{{ rowCountText }}，保存后立即生效，无需重启</p>
+          </div>
+          <button class="btn" type="button" @click="close">关闭</button>
+        </header>
+
+        <div class="toolbar">
+          <button class="btn" type="button" :disabled="loading || saving" @click="addRow">➕ 新增测试项</button>
+          <button class="btn" type="button" :disabled="loading || saving" @click="loadCsv">重新读取</button>
+          <button class="btn btn-primary" type="button" :disabled="loading || saving" @click="save">
+            {{ saving ? '保存中...' : '💾 保存生效' }}
+          </button>
+        </div>
+
+        <div v-if="loading" class="empty">正在读取CSV...</div>
+        <div v-else class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="row-index">#</th>
+                <th v-for="header in editableHeaders" :key="header">{{ header }}</th>
+                <th class="row-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in rows" :key="index">
+                <td class="row-index">{{ index + 1 }}</td>
+                <td v-for="header in editableHeaders" :key="header">
+                  <select v-if="header === '是否测试' || header === '是否隐藏'" v-model="row[header]">
+                    <option value="是">是</option>
+                    <option value="否">否</option>
+                  </select>
+                  <label v-else-if="header === '是否单独测试'" class="checkbox-label">
+                    <input type="checkbox" :checked="row[header] === '是'" @change="onStandaloneChange(index, $event.target.checked)" />
+                  </label>
+                  <textarea v-else-if="header === '测试方法' || header === '判断PASS标准'" v-model="row[header]" rows="2"></textarea>
+                  <input v-else v-model="row[header]" type="text" />
+                </td>
+                <td class="row-actions">
+                  <button type="button" :disabled="index === 0" @click="moveRow(index, -1)">上移</button>
+                  <button type="button" :disabled="index === rows.length - 1" @click="moveRow(index, 1)">下移</button>
+                  <button type="button" class="danger" @click="removeRow(index)">删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="rows.length === 0" class="empty">暂无测试项，请新增</div>
+        </div>
+      </section>
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.panel {
+  width: min(1400px, 96vw);
+  height: min(860px, 92vh);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h2 { margin: 0; font-size: 17px; color: var(--text-h); }
+.header p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { border-color: var(--border-strong); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.table-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 0 18px 14px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--surface);
+  color: var(--text-h);
+  position: sticky;
+  top: 0;
+  white-space: nowrap;
+}
+
+.row-index { width: 36px; text-align: center; color: var(--muted); }
+.row-actions { width: 150px; white-space: nowrap; }
+
+td input[type="text"],
+td textarea,
+td select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+td textarea { resize: vertical; }
+
+.row-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 8px;
+  margin-right: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.row-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.row-actions button.danger { color: #ef4444; border-color: #ef4444; }
+
+.empty { padding: 30px; text-align: center; color: var(--muted); }
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+</style>

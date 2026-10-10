@@ -1,0 +1,33 @@
+/** CSV 测试引擎 API 客户端封装 */
+const BASE = import.meta.env.VITE_API_BASE || ''
+
+async function request(path, options = {}) {
+  const resp = await fetch(`${BASE}/api/factory-test${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  })
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}))
+    throw new Error(body.detail || `请求失败: ${resp.status}`)
+  }
+  return resp.json()
+}
+
+export const factoryTestApi = {
+  getPlan: () => request('/plan'),
+  getCurrentSession: () => request('/current-session'),
+  run: (sn) => request('/run', {
+    method: 'POST',
+    body: JSON.stringify({ sn }),
+  }),
+  stop: () => request('/stop', { method: 'POST' }),
+  pause: () => request('/pause', { method: 'POST' }),
+  resume: () => request('/resume', { method: 'POST' }),
+  startManual: () => request('/manual-start', { method: 'POST' }),
+  failManual: () => request('/fail-manual', { method: 'POST' }),
+  getTestDataList: () => request('/test-data'),
+  getTestDataDetail: (sessionId) => request(`/test-data/${encodeURIComponent(sessionId)}`),
+  getTestCsv: () => request('/test-csv'),
+  saveTestCsv: (rows) => request('/test-csv', { method: 'PUT', body: JSON.stringify({ rows }) }),
+  updateItemStandalone: (itemId, standalone) => request(`/item-standalone?item_id=${encodeURIComponent(itemId)}&standalone=${standalone}`, { method: 'PUT' }),
+}

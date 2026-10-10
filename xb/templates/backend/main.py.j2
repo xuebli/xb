@@ -18,6 +18,9 @@ from api.update import router as update_router
 [% if enable_logs %]
 from api.logs import attach_log_sink, router as logs_router
 [% endif %]
+[% if enable_csv_test %]
+from api.factory_test import router as factory_test_router
+[% endif %]
 from api.settings import router as settings_router
 
 logger = get_logger(__name__)
@@ -110,6 +113,9 @@ if path_manager.is_packaged:
 
 app.include_router(config_router, prefix="/api")
 app.include_router(ports_router, prefix="/api")
+[% if enable_csv_test %]
+app.include_router(factory_test_router, prefix="/api/factory-test")
+[% endif %]
 [% if enable_terminal %]
 app.include_router(terminal_router, prefix="/api")
 [% endif %]

@@ -1,0 +1,166 @@
+<script setup>
+/** 分组测试项表格：展示一组测试项的执行状态 */
+const props = defineProps({
+  group: { type: Object, required: true },
+})
+
+const emit = defineEmits(['toggle-standalone'])
+
+const STATUS_MAP = {
+  pending: { icon: '⏳', label: '等待', cls: 'st-pending' },
+  running: { icon: '🔄', label: '执行中', cls: 'st-running' },
+  passed: { icon: '✅', label: '通过', cls: 'st-passed' },
+  failed: { icon: '❌', label: '失败', cls: 'st-failed' },
+  skipped: { icon: '⏭', label: '跳过', cls: 'st-skipped' },
+}
+
+function onToggleStandalone(item) {
+  emit('toggle-standalone', item)
+}
+</script>
+
+<template>
+  <section class="group-card">
+    <header class="group-header">
+      <h3>{{ group.title }}</h3>
+      <span v-if="group.description" class="group-desc">{{ group.description }}</span>
+    </header>
+    <table class="item-table">
+      <thead>
+        <tr>
+          <th class="col-status">状态</th>
+          <th class="col-name">测试功能</th>
+          <th class="col-method">测试方法</th>
+          <th class="col-std">PASS标准</th>
+          <th class="col-standalone">单独测试</th>
+          <th class="col-result">结果</th>
+          <th class="col-duration">耗时</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="item in group.items.filter((i) => !i.hidden)" :key="item.id" :class="STATUS_MAP[item.status]?.cls">
+          <td class="col-status">
+            <span class="status-icon">{{ STATUS_MAP[item.status]?.icon }}</span>
+            {{ STATUS_MAP[item.status]?.label }}
+          </td>
+          <td class="item-name">{{ item.name }}</td>
+          <td class="col-method">{{ item.method }}</td>
+          <td class="col-std">{{ item.pass_standard || '—' }}</td>
+          <td class="col-standalone">
+            <label class="standalone-checkbox">
+              <input type="checkbox" :checked="item.standalone" @change="onToggleStandalone(item)" />
+              <span class="checkmark"></span>
+            </label>
+          </td>
+          <td class="col-result">
+            <span v-if="item.actual_value" class="actual">{{ item.actual_value }}</span>
+            {{ item.result_message }}
+          </td>
+          <td class="col-duration">{{ item.duration ? `${item.duration}s` : '' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</template>
+
+<style scoped>
+.group-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.group-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-h);
+}
+
+.group-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.item-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.item-table th,
+.item-table td {
+  text-align: left;
+  vertical-align: middle;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.item-table th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.col-name { width: 15%; }
+.col-method { width: 26%; }
+.col-std { width: 15%; }
+.col-standalone { width: 60px; text-align: center; }
+.col-result { width: 24%; }
+
+.item-name {
+  font-weight: 600;
+  color: var(--text-h);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.col-status { width: 90px; white-space: nowrap; }
+.col-method { color: var(--muted); overflow-wrap: anywhere; }
+.col-std { white-space: normal; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
+.col-duration { width: 70px; color: var(--muted); }
+.col-result { color: var(--text); overflow-wrap: anywhere; }
+
+.actual {
+  font-family: var(--mono);
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+tr.st-running td { background: var(--blue-soft); }
+tr.st-passed td { background: var(--green-soft); }
+tr.st-failed td { background: rgba(239, 68, 68, 0.14); }
+tr.st-skipped td { opacity: 0.55; }
+
+tr.st-failed .col-result { color: #dc2626; font-weight: 600; }
+
+:root[data-theme='dark'] tr.st-failed td { background: rgba(239, 68, 68, 0.2); }
+:root[data-theme='dark'] tr.st-failed .col-result { color: #fca5a5; }
+
+.standalone-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.standalone-checkbox input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--blue);
+}
+
+.standalone-checkbox input:checked {
+  background-color: var(--blue);
+}
+</style>

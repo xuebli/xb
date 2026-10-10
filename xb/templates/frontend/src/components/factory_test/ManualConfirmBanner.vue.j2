@@ -1,0 +1,324 @@
+<script setup>
+/** 人工确认模态框：测试暂停等待操作员确认时显示（人工确认/准备确认两种形态） */
+import { ref } from 'vue'
+
+const props = defineProps({
+  itemName: { type: String, default: '' },
+  method: { type: String, default: '' },
+  commandKey: { type: String, default: '' },
+  autoCheck: { type: Boolean, default: false },
+})
+
+const emit = defineEmits(['start', 'confirm', 'reject'])
+
+const isExecuting = ref(false)
+
+function handleStart() {
+  isExecuting.value = true
+  emit('start')
+  setTimeout(() => {
+    isExecuting.value = false
+  }, 2000)
+}
+</script>
+
+<template>
+  <div class="manual-modal-overlay" @click.self="() => {}">
+    <div class="manual-modal">
+      <div class="manual-header">
+        <span class="manual-icon">🔔</span>
+        <div class="manual-title-group">
+          <h2 class="manual-title">{{ autoCheck ? '准备确认' : '人工确认测试' }}</h2>
+          <p class="manual-item-label">当前测试项</p>
+          <p class="manual-item-name">{{ itemName }}</p>
+        </div>
+      </div>
+
+      <div class="manual-body">
+        <div class="manual-method" v-if="method">
+          <div class="method-label">测试方法</div>
+          <div class="method-content">{{ method }}</div>
+        </div>
+        <div class="manual-instruction">
+          <template v-if="autoCheck">
+            <p>1️⃣ 按测试方法完成准备工作（接线/放置工装等）</p>
+            <p>2️⃣ 点击「开始测试」，系统自动执行指令并按 PASS 标准判定</p>
+          </template>
+          <template v-else>
+            <p>1️⃣ 点击「开始测试」按钮，观察设备效果</p>
+            <p>2️⃣ 可以多次点击「开始测试」重复观察</p>
+            <p>3️⃣ 确认效果后，选择测试结果</p>
+          </template>
+        </div>
+      </div>
+
+      <div class="manual-actions">
+        <button v-if="!autoCheck" class="btn btn-start" @click="handleStart" :disabled="isExecuting">
+          <span v-if="!isExecuting">▶️ 开始测试</span>
+          <span v-else class="executing">
+            <span class="spinner">⚙️</span>
+            执行中...
+          </span>
+        </button>
+        <button v-if="!autoCheck" class="btn btn-pass" @click="emit('confirm')" :disabled="isExecuting">
+          ✅ 确认通过
+        </button>
+        <button v-if="!autoCheck" class="btn btn-fail" @click="emit('reject')" :disabled="isExecuting">
+          ❌ 不通过
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.manual-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease-out;
+}
+
+:root[data-theme='dark'] .manual-modal-overlay {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.manual-modal {
+  background: var(--bg);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 560px;
+  width: 90%;
+  animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border: 1px solid var(--border);
+}
+
+:root[data-theme='dark'] .manual-modal {
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.manual-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--blue-soft);
+  animation: headerPulse 0.8s ease-out;
+}
+
+.manual-icon {
+  font-size: 36px;
+  line-height: 1;
+}
+
+.manual-title-group {
+  flex: 1;
+}
+
+.manual-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.manual-item-label {
+  margin: 7px 0 0;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.manual-item-name {
+  margin: 1px 0 0;
+  font-size: 23px;
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--text-h);
+}
+
+:root[data-theme='dark'] .manual-item-name {
+  color: #f8fafc;
+}
+
+.manual-body {
+  padding: 20px 28px;
+}
+
+.manual-method {
+  margin-bottom: 18px;
+  padding: 14px;
+  background: var(--bg-soft);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+:root[data-theme='dark'] .manual-method {
+  background: #1a1f2e;
+}
+
+.method-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.method-content {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.manual-instruction {
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.manual-instruction p {
+  margin: 8px 0;
+}
+
+.manual-actions {
+  display: flex;
+  gap: 12px;
+  padding: 20px 28px 24px;
+  border-top: 1px solid var(--border);
+}
+
+.btn {
+  flex: 1;
+  border: none;
+  border-radius: 8px;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-start {
+  background: var(--blue);
+  color: #fff;
+}
+
+.btn-start:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+:root[data-theme='dark'] .btn-start:hover {
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-pass {
+  background: var(--green);
+  color: #fff;
+}
+
+.btn-pass:hover {
+  background: #16a34a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+}
+
+:root[data-theme='dark'] .btn-pass:hover {
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+}
+
+.btn-fail {
+  background: #ef4444;
+  color: #fff;
+}
+
+.btn-fail:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+:root[data-theme='dark'] .btn-fail:hover {
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.executing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner {
+  display: inline-block;
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes headerPulse {
+  0% {
+    background: var(--green-soft);
+  }
+  55% {
+    background: var(--amber-soft);
+  }
+  100% {
+    background: var(--blue-soft);
+  }
+}
+</style>
