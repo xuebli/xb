@@ -15,6 +15,18 @@ def test_upgrade_option_runs_without_subcommand(monkeypatch):
     assert "Missing command" not in result.output
 
 
+def test_upgrade_subcommand_registered(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "ensure_check", lambda _v: None)
+    monkeypatch.setattr(cli, "get_pending_upgrade_hint", lambda _v: None)
+    monkeypatch.setattr("xb.commands.upgrade.run_upgrade", lambda: called.append(True))
+
+    result = CliRunner().invoke(cli.main, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert called == [True]
+
+
 def _invoke_init(monkeypatch, tmp_path, args, platform="linux"):
     """跑 init 命令但替换掉耗时/有副作用的步骤，捕获传给模板引擎的参数。"""
     captured = {}

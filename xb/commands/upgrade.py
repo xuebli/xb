@@ -67,9 +67,12 @@ def install_upgrade(target_version: str) -> bool:
 
     console.print(f"[dim]运行: {' '.join(cmd)}[/dim]")
     try:
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, check=False, timeout=600)
     except FileNotFoundError:
         console.print("[red]❌ uv 命令执行失败[/red]")
+        return False
+    except subprocess.TimeoutExpired:
+        console.print("[red]❌ 升级安装超时（10 分钟），请检查 uv 软件源后重试。[/red]")
         return False
 
     if result.returncode != 0:

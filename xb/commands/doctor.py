@@ -110,9 +110,17 @@ def _collect_checks() -> list[CheckResult]:
         minimum = MIN_VERSIONS.get(command)
         if minimum and ok:
             parsed = _version_tuple(version)
-            if parsed is not None and parsed < minimum[0]:
-                ok = False
-                detail = f"{version}（版本过低，{minimum[1]}）"
+            if parsed is not None:
+                if command == "node":
+                    # Vite 8 engines 是分段区间：^20.19.0 || >=22.12.0，奇数版本 21 不支持。
+                    ok = (parsed[0] == 20 and parsed >= (20, 19)) or (
+                        parsed[0] >= 22 and parsed >= (22, 12)
+                    )
+                    if not ok:
+                        detail = f"{version}（版本过低，{minimum[1]}）"
+                elif parsed < minimum[0]:
+                    ok = False
+                    detail = f"{version}（版本过低，{minimum[1]}）"
         checks.append(CheckResult(label, ok, detail, fixable=label == "uv"))
 
     # 源管理工具：缺失时 init / build / dev.py 会自动安装，只作提醒不阻塞
@@ -264,6 +272,10 @@ def _run_fixers(checks: list[CheckResult]) -> tuple[int, int]:
     return fixed, failed
 
 
+def _blocking_failed(checks: list[CheckResult]) -> bool:
+    return any(not item.ok and not item.optional for item in checks)
+
+
 def _print_table(checks: list[CheckResult], fix: bool, heading: str = "环境检查") -> None:
     console.print(f"[bold green]{heading}[/bold green] [dim]xb {__version__}[/dim]")
 
@@ -294,16 +306,18 @@ def doctor(fix: bool) -> None:
     _print_table(checks, fix=fix)
 
     if not fix:
-        blocking_failed = any(not item.ok and not item.optional for item in checks)
-        if blocking_failed:
+        if _blocking_failed(checks):
             console.print(
                 "[yellow]提示:[/yellow] 缺失或版本过低的工具可手动安装/升级后重新运行 xb doctor 检查。"
             )
+            raise SystemExit(1)
         return
 
     fixed, failed = _run_fixers(checks)
     if fixed == 0 and failed == 0:
         console.print("[dim]没有可自动修复的问题。[/dim]")
+        if _blocking_failed(checks):
+            raise SystemExit(1)
         return
 
     rechecks = _collect_checks()
@@ -316,3 +330,4 @@ def doctor(fix: bool) -> None:
             f"[yellow]提示:[/yellow] 仍有未解决项: {', '.join(remaining)}，"
             "可手动处理后重新运行 xb doctor 检查。"
         )
+        raise SystemExit(1)

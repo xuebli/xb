@@ -18,7 +18,7 @@ def test_doctor_plain_run_does_not_fix(monkeypatch):
 
     result = CliRunner().invoke(cli.main, ["doctor"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert called == []
     assert "需要处理" in result.output
     assert "正在修复" not in result.output
@@ -38,7 +38,7 @@ def test_doctor_fix_invokes_fixer_and_rechecks(monkeypatch):
 
     result = CliRunner().invoke(cli.main, ["doctor", "--fix"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert calls == ["uv"]
     assert "可自动修复" in result.output
     assert "uv 已修复" in result.output
@@ -57,8 +57,26 @@ def test_doctor_fix_reports_failure(monkeypatch):
 
     result = CliRunner().invoke(cli.main, ["doctor", "--fix"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "uv 修复失败" in result.output
+
+
+def test_node_21_is_rejected(monkeypatch):
+    """Vite 8 的分段区间不包含奇数版本 Node 21。"""
+    versions = {
+        "uv": "uv 0.5.0",
+        "node": "v21.0.0",
+        "npm": "10.0.0",
+        "git": "git version 2.43.0",
+        "nrm": "2.0.0",
+    }
+    monkeypatch.setattr(doctor_module, "_command_version", lambda command, args=None: versions.get(command))
+    monkeypatch.setattr(doctor_module.shutil, "which", lambda command: f"/bin/{command}")
+    monkeypatch.setattr(doctor_module, "_git_global_config", lambda key: "xb" if key == "user.name" else "x@b.c")
+
+    checks = doctor_module._collect_checks()
+    node = next(item for item in checks if item.name == "Node.js")
+    assert node.ok is False
 
 
 def test_doctor_fix_nothing_fixable(monkeypatch):
@@ -70,7 +88,7 @@ def test_doctor_fix_nothing_fixable(monkeypatch):
 
     result = CliRunner().invoke(cli.main, ["doctor", "--fix"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "没有可自动修复的问题" in result.output
 
 
@@ -81,10 +99,14 @@ def test_doctor_fix_git_identity(monkeypatch):
         commands.append(cmd)
         return subprocess.CompletedProcess(cmd, 0)
 
+    # 首次检查失败，修复成功后复查通过。
     monkeypatch.setattr(
         doctor_module,
         "_collect_checks",
-        lambda: [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
+        lambda iter_values=iter([
+            [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
+            [CheckResult("git 身份", True, "张三 <zhangsan@test.com>", fixable=True)],
+        ]): next(iter_values),
     )
     monkeypatch.setattr(doctor_module.shutil, "which", lambda name: "/usr/bin/git")
     monkeypatch.setattr(doctor_module.subprocess, "run", fake_run)

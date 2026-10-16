@@ -23,7 +23,7 @@ xb 自动更新检查
 缓存格式：
 {
     "checked_at": 1716470000.0,    # unix 秒
-    "latest": "1.2.0",              # PyPI 最新版本号
+    "latest": "1.2.0" 或 null,      # PyPI 最新版本号；拉取失败也写 null，避免离线反复同步卡启动
     "current": "1.1.3"              # 写缓存时的本地版本
 }
 """
@@ -124,14 +124,14 @@ def run_check_and_write_cache(current_version: str, timeout: float = HTTP_TIMEOU
     """
     try:
         latest = _fetch_latest_from_pypi(timeout=timeout)
-        if latest:
-            _write_cache(
-                {
-                    "checked_at": time.time(),
-                    "latest": latest,
-                    "current": current_version,
-                }
-            )
+        # 失败也落缓存（latest=None）：离线/弱网环境下不能每次启动都同步卡 1.5s。
+        _write_cache(
+            {
+                "checked_at": time.time(),
+                "latest": latest,
+                "current": current_version,
+            }
+        )
     except Exception:
         pass
 
