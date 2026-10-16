@@ -91,7 +91,6 @@ app = FastAPI(title=[[ display_name | tojson ]], lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -150,7 +149,15 @@ async def serve_frontend(full_path: str):
 
     frontend_path = str(path_manager.get_frontend_path())
 
-    file_path = os.path.join(frontend_path, full_path)
+    # full_path 来自通配路由，可能带 ../；必须限制在 frontend 目录内，
+    # 否则打包态会把本接口变成任意文件读取。
+    root = os.path.abspath(frontend_path)
+    file_path = os.path.abspath(os.path.join(root, full_path))
+    try:
+        if os.path.commonpath((root, file_path)) != root:
+            return {"error": "File not found"}
+    except ValueError:
+        return {"error": "File not found"}
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return FileResponse(file_path, headers={"Cache-Control": "no-cache"})
 
