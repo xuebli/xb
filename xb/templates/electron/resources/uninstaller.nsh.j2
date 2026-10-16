@@ -38,6 +38,8 @@
         RMDir /r "$APPDATA\[[ package_name]]"
         DetailPrint "删除用户运行数据: $LOCALAPPDATA\[[ package_name]]"
         RMDir /r "$LOCALAPPDATA\[[ package_name]]"
+        DetailPrint "删除 Electron 会话缓存: $APPDATA\[[ package_name]]-electron"
+        RMDir /r "$APPDATA\[[ package_name]]-electron"
       ${endIf}
     ${endIf}
   !macroend

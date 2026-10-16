@@ -171,9 +171,17 @@ app.whenReady().then(() => {
     }, 60000);
 
     backend.on('exit', (code, signal) => {
-        if (win) return;
         clearTimeout(startupTimeout);
-        require('electron').dialog.showErrorBox(
+        const dialog = require('electron').dialog;
+        if (win) {
+            dialog.showErrorBox(
+                '后端已退出',
+                `后端进程运行中退出（code=${code} signal=${signal}），应用将无法访问本地服务，即将关闭。`
+            );
+            app.quit();
+            return;
+        }
+        dialog.showErrorBox(
             '应用启动失败',
             `后端进程提前退出（code=${code} signal=${signal}）。`
         );

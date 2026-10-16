@@ -70,6 +70,13 @@ def test_frontend_and_launcher_regressions(tmp_path):
     launcher = (target / "electron" / "launcher.js").read_text(encoding="utf-8")
     assert "function writeBackendPort" in launcher
     assert "yaml.dump(config" not in launcher
+    assert "mainLoaded = false" in launcher
+
+    electron_main = (target / "electron" / "main.js").read_text(encoding="utf-8")
+    assert "后端进程运行中退出" in electron_main
+    uninstaller = (target / "electron" / "resources" / "uninstaller.nsh").read_text(encoding="utf-8")
+    assert "[[ package_name]]-electron" not in uninstaller  # 渲染后应为真实包名
+    assert "-electron" in uninstaller
 
 
 def test_legacy_config_api_preserves_yaml_comments(tmp_path):

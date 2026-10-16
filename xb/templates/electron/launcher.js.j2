@@ -193,7 +193,12 @@ function saveBackendPort(port) {
 function loadMain() {
     if (mainLoaded) return { ok: true, message: '应用已经在重启中' };
     mainLoaded = true;
-    require('./main');
+    try {
+        require('./main');
+    } catch (error) {
+        mainLoaded = false;
+        return { ok: false, message: `主进程加载失败: ${error.message}` };
+    }
     if (diagnosticsWindow && !diagnosticsWindow.isDestroyed()) {
         diagnosticsWindow.webContents.send('port-diagnostics:launching');
         setTimeout(() => {
