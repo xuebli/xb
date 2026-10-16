@@ -415,13 +415,15 @@ class TemplateEngine:
             if not icon_path.exists():
                 raise FileNotFoundError(f"图标文件不存在: {icon_path}")
             self._resize_icon(icon_path, output_path)
+            # Windows NSIS 的 package.json 引用 resources/icon.ico，必须同步生成。
+            self._resize_icon(icon_path, output_path.with_suffix(".ico"), fmt="ICO")
             return
 
         # 未指定图标时不复制任何默认图标，使用 Electron 原始默认图标
 
     @staticmethod
-    def _resize_icon(src: Path, dst: Path, size: int = 256):
-        """将任意图片转换为 size x size 的 PNG 图标。
+    def _resize_icon(src: Path, dst: Path, size: int = 256, fmt: str = "PNG"):
+        """将任意图片转换为 size x size 的 PNG/ICO 图标。
 
         非正方形图片居中裁剪后再缩放，避免直接 resize 导致的拉伸变形。
         """
@@ -435,7 +437,10 @@ class TemplateEngine:
             top = (height - side) // 2
             img = img.crop((left, top, left + side, top + side))
             img = img.resize((size, size), Image.LANCZOS)
-            img.save(dst, "PNG")
+            if fmt == "ICO":
+                img.save(dst, "ICO", sizes=[(size, size)])
+            else:
+                img.save(dst, "PNG")
 
     def _create_configs(self, target_dir: Path, context: Dict[str, Any]):
         configs_dir = target_dir / "configs"

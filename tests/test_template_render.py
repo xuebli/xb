@@ -35,6 +35,27 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
     return target
 
 
+def test_icon_generates_png_and_ico(tmp_path):
+    """--icon 项目 Windows 打包引用 resources/icon.ico，必须真实生成且进 files 白名单。"""
+    from PIL import Image
+
+    icon = tmp_path / "icon.png"
+    Image.new("RGBA", (32, 32), (255, 0, 0, 255)).save(icon)
+    target = tmp_path / "demo"
+    TemplateEngine().render_project(
+        target_dir=target,
+        package_name="demo",
+        display_name="Demo",
+        icon_path=icon,
+    )
+
+    assert (target / "electron" / "resources" / "icon.png").exists()
+    assert (target / "electron" / "resources" / "icon.ico").exists()
+    pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
+    assert "resources/icon.ico" in pkg["build"]["files"]
+    assert pkg["build"]["win"]["icon"] == "resources/icon.ico"
+
+
 @pytest.mark.parametrize(
     ("enable_terminal", "enable_update", "enable_logs"), COMBOS
 )
