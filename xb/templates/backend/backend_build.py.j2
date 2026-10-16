@@ -13,6 +13,9 @@ for _stream in (sys.stdout, sys.stderr):
 project_root = Path(__file__).parent.parent
 dist_dir = project_root / "dist"
 
+# 若后续新增 --add-data 打包业务资源，源/目标分隔符必须用 os.pathsep
+#（Windows 为 ;，POSIX 为 :），不要硬编码 ":"，否则 Windows 打包直接失败。
+
 PyInstaller.__main__.run(
     [
         str(Path(__file__).parent / "main.py"),
