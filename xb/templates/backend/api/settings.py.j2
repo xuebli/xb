@@ -84,6 +84,21 @@ def _set_nested(data: dict, dotted: str, value) -> None:
     node[keys[-1]] = value
 
 
+def _get_nested(data: dict, dotted: str, default=None):
+    node = data
+    for key in dotted.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return default
+        node = node[key]
+    return node
+
+
+def _masked_values(schema: list[dict], values: dict) -> dict:
+    """密钥字段只回传是否已设置，不回传值本身（含 obf1 密文）。"""
+    secret_keys = {field["key"] for field in schema if field.get("secret")}
+    return {key: ("" if key in secret_keys else value) for key, value in values.items()}
+
+
 def _validate(field: dict, value):
     """校验并转换单个字段，返回 (转换后的值, 错误信息)。"""
     ftype = field.get("type", "str")
@@ -92,9 +107,9 @@ def _validate(field: dict, value):
         if ftype == "int":
             if isinstance(value, bool):
                 raise ValueError("必须是整数")
-            value = int(value)
-            if value != float(value):
+            if isinstance(value, float) and not value.is_integer():
                 raise ValueError("必须是整数")
+            value = int(value)
         elif ftype == "float":
             if isinstance(value, bool):
                 raise ValueError("必须是数字")
@@ -193,7 +208,9 @@ async def get_app_settings():
     for field in schema:
         if field["key"] not in values and "default" in field:
             values[field["key"]] = field["default"]
-    return {"schema": schema, "values": values}
+        if field.get("secret"):
+            field["has_value"] = bool(values.get(field["key"]))
+    return {"schema": schema, "values": _masked_values(schema, values)}
 
 
 @router.put("/app-settings")
@@ -223,6 +240,14 @@ async def put_app_settings(payload: dict):
     for key, field in fields.items():
         if key not in incoming:
             continue
+        # 密钥字段回传被脱敏为空串；空串语义 = 不修改已有密钥，避免保存
+        # 无关配置时把已有密码清空。新密钥仍允许填写，已有密钥要改就填新值。
+        if (
+            key in secret_keys
+            and incoming[key] == ""
+            and _get_nested(secrets, key, "") not in ("", None)
+        ):
+            continue
         value, err = _validate(field, incoming[key])
         if err:
             errors.append(err)
@@ -247,13 +272,23 @@ async def put_app_settings(payload: dict):
         for key, value in updates_secret.items():
             _set_nested(secrets, key, value)
         dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_path), secrets_path)
+        if path_manager.is_packaged:
+            # 运行期写入的明文密钥立即混淆，不等下次启动兜底。
+            # secret_obfuscator 目前随 --update 项目生成，非更新项目允许缺失。
+            try:
+                from managers.secret_obfuscator import obfuscate_file_plain_secrets
+            except ImportError:
+                pass
+            else:
+                obfuscate_file_plain_secrets(secrets_path)
         path_manager.reload_config(SECRETS_FILE)
 
+    fresh_values = {
+        **dict(_flatten(_load_fresh("global_config.yaml"))),
+        **dict(_flatten(_load_fresh(SECRETS_FILE))),
+    }
     return {
-        "values": {
-            **dict(_flatten(_load_fresh("global_config.yaml"))),
-            **dict(_flatten(_load_fresh(SECRETS_FILE))),
-        },
+        "values": _masked_values(list(fields.values()), fresh_values),
         "restart_required": sorted(set(restart_keys)),
         "ignored_unknown": unknown,
     }

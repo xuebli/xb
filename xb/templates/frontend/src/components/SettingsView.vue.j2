@@ -56,9 +56,9 @@ const save = async () => {
       return
     }
     form.value = data.values
-    restartKeys.value = data.restart_required
-    message.value = data.restart_required.length
-      ? `已保存；${data.restart_required.join('、')} 需重启应用后生效`
+    restartKeys.value = data.restart_required || []
+    message.value = restartKeys.value.length
+      ? `已保存；${restartKeys.value.join('、')} 需重启应用后生效`
       : '已保存并即时生效'
   } catch (e) {
     error.value = `保存失败: ${e.message}`
@@ -94,6 +94,7 @@ onMounted(load)
           <span class="field-label" :title="field.key">
             {{ field.label }}
             <em v-if="field.secret" class="field-secret">密钥</em>
+            <em v-if="field.secret && field.has_value" class="field-secret">已设置</em>
             <em v-if="needsRestart(field)" class="field-restart">需重启生效</em>
           </span>
 
@@ -122,6 +123,7 @@ onMounted(load)
             v-model="form[field.key]"
             :type="field.secret ? 'password' : 'text'"
             :autocomplete="field.secret ? 'new-password' : 'off'"
+            :placeholder="field.secret && field.has_value ? '留空表示不修改' : ''"
           />
         </label>
       </section>
