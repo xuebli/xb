@@ -71,7 +71,12 @@ async def check_update(force: bool = False):
             info.get("config_changes") or {}, current_version, latest_version
         )
         config_changes = info.get("config_changes") or {}
-        config_summary = config_changes.get("summary", "")
+        hit_blocks = {str(item.get("block_version")) for item in config_files}
+        summaries = []
+        for block_version, block in config_changes.items():
+            if str(block_version) in hit_blocks and isinstance(block, dict) and block.get("summary"):
+                summaries.append(str(block["summary"]))
+        config_summary = "；".join(dict.fromkeys(summaries))
         if config_files and not config_summary:
             config_summary = f"有 {len(config_files)} 个配置文件需要更新"
 

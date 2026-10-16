@@ -262,12 +262,13 @@ class UpdateService:
         """启动后台下载。重复调用时若已在下载中则直接返回当前状态。"""
         package = info.get("package") or {}
         file_token = package.get("file_token") or ""
-        filename = package.get("filename") or ""
+        # filename 来自远端版本信息，只允许裸文件名，杜绝 ../ 与路径分隔符。
+        filename = Path(package.get("filename") or "").name
 
         if not file_token:
             raise ValueError("版本信息缺少 package.file_token，无法下载安装包")
-        if not filename:
-            raise ValueError("版本信息缺少 package.filename，无法下载安装包")
+        if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+            raise ValueError("版本信息 package.filename 非法，无法下载安装包")
 
         with self._lock:
             if self._download_state["status"] in ("downloading", "verifying"):
@@ -349,8 +350,8 @@ class UpdateService:
         try:
             hasher = hashlib.new(algo)
         except ValueError:
-            logger.warning(f"不支持的哈希算法: {algo}，跳过校验")
-            return True
+            logger.error(f"不支持的哈希算法: {algo}")
+            return False
 
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -405,7 +406,10 @@ class UpdateService:
             except Exception as e:
                 logger.error(f"应用配置变更失败: {filename} - {e}", exc_info=True)
                 results.append({"filename": filename, "success": False, "error": str(e)})
-        self.reload_all_configs()
+        # 精确失效本次成功变更的文件缓存；不要全清，避免无端废掉其他文件缓存。
+        for item in results:
+            if item.get("success") and item.get("filename"):
+                path_manager.reload_config(item["filename"])
         return results
 
     def merge_config(self, filename: str, change_info: dict) -> bool:
@@ -421,11 +425,20 @@ class UpdateService:
         if not filename:
             logger.warning("配置变更条目缺少 filename")
             return False
+        # filename 来自远端 config_changes，必须是裸文件名且落在配置目录内。
+        safe_name = Path(filename).name
+        if safe_name != filename or not re.fullmatch(r"[A-Za-z0-9._-]+", safe_name):
+            logger.warning(f"配置变更条目 filename 非法: {filename}")
+            return False
         if self._is_empty_change(change_info):
             return True  # 未修改文件的占位条目，静默跳过
 
         action = change_info.get("action", "merge")
-        config_path = self.get_config_dir() / filename
+        config_dir = self.get_config_dir().resolve()
+        config_path = (config_dir / safe_name).resolve()
+        if config_path.parent != config_dir:
+            logger.warning(f"配置变更路径越界: {filename}")
+            return False
 
         if action == "create":
             return self._create_config(config_path, change_info)
@@ -693,11 +706,13 @@ class UpdateService:
             # 特权入口缺失（未走 DEB 安装）时提前失败并给出部署指引
             if not privileged_manager.helper_available():
                 raise RuntimeError(privileged_manager.deploy_hint())
-            command = (
-                f'pkexec "{privileged_manager.HELPER}" '
-                f'install-update "{package}"'
-            )
-            args = ["/bin/bash", "-c", command]
+            # 列表参数直连 pkexec/helper，不走 bash -c，避免安装包路径被 shell 二次解析。
+            args = [
+                "pkexec",
+                str(privileged_manager.HELPER),
+                "install-update",
+                str(package),
+            ]
             kwargs = {"start_new_session": True}
             delay_seconds = 0
 

@@ -73,3 +73,16 @@ def test_init_with_update_renders_update_files(render_project):
     badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(encoding="utf-8")
     assert "UpdatePanel" in badge
     assert "CommitHistoryPanel" in badge
+
+    # 更新安装链安全基线：远端文件名白名单、未知 hash 失败关闭、安装不走 bash -c、配置迁移逐文件 reload。
+    updater = (target / "backend" / "services" / "updater.py").read_text(encoding="utf-8")
+    assert 'filename = Path(package.get("filename") or "").name' in updater
+    assert 're.fullmatch(r"[A-Za-z0-9._-]+", filename)' in updater
+    assert 'logger.error(f"不支持的哈希算法: {algo}")' in updater
+    assert '"/bin/bash", "-c"' not in updater
+    assert 'path_manager.reload_config(item["filename"])' in updater
+    assert 'safe_name = Path(filename).name' in updater
+
+    update_api = (target / "backend" / "api" / "update" / "__init__.py").read_text(encoding="utf-8")
+    assert "hit_blocks" in update_api
+    assert 'config_changes.get("summary", "")' not in update_api
