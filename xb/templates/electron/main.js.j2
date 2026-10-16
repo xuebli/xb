@@ -159,8 +159,29 @@ app.whenReady().then(() => {
         stdio: ['ignore', 'pipe', 'pipe']
     });
     backendPid = backend.pid;
+    let backendStdout = '';
+    const startupTimeout = setTimeout(() => {
+        if (win) return;
+        require('electron').dialog.showErrorBox(
+            '应用启动失败',
+            '后端启动超时：未在 60 秒内收到启动完成信号。'
+        );
+        shutdownBackendTree();
+        app.quit();
+    }, 60000);
+
+    backend.on('exit', (code, signal) => {
+        if (win) return;
+        clearTimeout(startupTimeout);
+        require('electron').dialog.showErrorBox(
+            '应用启动失败',
+            `后端进程提前退出（code=${code} signal=${signal}）。`
+        );
+        app.quit();
+    });
 
     backend.on('error', (error) => {
+        clearTimeout(startupTimeout);
         console.error('[Backend] 启动失败:', error);
         require('electron').dialog.showErrorBox(
             '应用启动失败',
@@ -171,9 +192,12 @@ app.whenReady().then(() => {
 
     backend.stdout.on('data', (data) => {
         const output = data.toString();
+        // 标记串可能被管道拆成多个 chunk，必须累计缓冲后再匹配。
+        backendStdout = (backendStdout + output).slice(-16384);
         console.log('[Backend]', output);
 
-        if (output.includes('应用启动完成')) {
+        if (!win && backendStdout.includes('应用启动完成')) {
+            clearTimeout(startupTimeout);
             win = new BrowserWindow({
                 width: 1200,
                 height: 800,
