@@ -5,6 +5,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from managers import path_manager, get_logger
+from managers.yaml_comments import dump_yaml_with_labels, parse_yaml_labels
 
 
 router = APIRouter()
@@ -57,8 +58,8 @@ def _write_global_config(config: dict, config_file: pathlib.Path) -> None:
         shutil.copy2(config_file, backup_path)
         logger.info(f"已备份配置文件: {backup_path}")
 
-    with open(config_file, "w", encoding="utf-8") as f:
-        yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+    # 写回必须回填行尾注释：设置页显示名就是 yaml 里的 `# 注释`。
+    dump_yaml_with_labels(config, parse_yaml_labels(config_file), config_file)
 
     path_manager.reload_config("global_config.yaml")
 
@@ -78,8 +79,15 @@ def _save_secret(key: str, value: str) -> None:
         shutil.copy2(secrets_file, backup_path)
 
     secrets[key] = value
-    with open(secrets_file, "w", encoding="utf-8") as f:
-        yaml.safe_dump(secrets, f, allow_unicode=True, sort_keys=False)
+    dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_file), secrets_file)
+    if path_manager.is_packaged:
+        # 运行期写入的明文密钥立即混淆，不等下次启动兜底；非 --update 项目允许缺模块。
+        try:
+            from managers.secret_obfuscator import obfuscate_file_plain_secrets
+        except ImportError:
+            pass
+        else:
+            obfuscate_file_plain_secrets(secrets_file)
 
     path_manager.reload_config("secrets.yaml")
 

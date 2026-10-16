@@ -72,6 +72,15 @@ def test_frontend_and_launcher_regressions(tmp_path):
     assert "yaml.dump(config" not in launcher
 
 
+def test_legacy_config_api_preserves_yaml_comments(tmp_path):
+    target = _render(tmp_path, False, True)
+    config_api = (target / "backend" / "api" / "config.py").read_text(encoding="utf-8")
+    assert "dump_yaml_with_labels(config, parse_yaml_labels(config_file), config_file)" in config_api
+    assert "dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_file), secrets_file)" in config_api
+    assert "yaml.safe_dump(config" not in config_api
+    assert "obfuscate_file_plain_secrets" in config_api
+
+
 @pytest.mark.parametrize(
     ("enable_terminal", "enable_update", "enable_logs"), COMBOS
 )
