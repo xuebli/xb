@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +13,19 @@ if action not in {"remove", "purge"}:
     raise SystemExit(1)
 
 app = "[[ package_name]]"
+
+# 撤销 postinst 注册的全局命令入口，避免卸载后 /usr/bin 残留悬空链接。
+if os.name != "nt":
+    if shutil.which("update-alternatives"):
+        subprocess.run(
+            ["update-alternatives", "--remove", app, f"/opt/[[ package_name_capitalized ]]/{app}"],
+            check=False,
+        )
+    else:
+        try:
+            Path(f"/usr/bin/{app}").unlink(missing_ok=True)
+        except OSError:
+            pass
 
 # Debian 卸载前后清理 Electron/前端资源缓存，避免旧 assets 残留。
 if os.name != "nt":
