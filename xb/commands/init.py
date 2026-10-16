@@ -40,6 +40,10 @@ def _prompt_upgrade_before_init() -> None:
     if not latest:
         return
 
+    if not sys.stdin.isatty():
+        console.print("[dim]检测到新版 xb，但当前是非交互环境，跳过升级询问。[/dim]\n")
+        return
+
     if not Confirm.ask(
         f"[yellow]检测到 xb {latest} 可用[/yellow]，是否先升级再创建项目？",
         default=True,
@@ -237,7 +241,7 @@ class XbGroup(click.Group):
 @click.option(
     "--port",
     "port",
-    type=click.IntRange(min=1, max=65535),
+    type=click.IntRange(min=1, max=65534),
     default=None,
     help=(
         "后端端口，写入生成的 configs/global_config.yaml；"
@@ -324,12 +328,19 @@ def init_command(
     # 检测到 PyPI 有新版 xb 时，先询问是否升级再创建项目，避免用旧模板生成项目
     _prompt_upgrade_before_init()
 
-    # 解析路径：支持绝对路径、相对路径和纯包名
-    raw_path = Path(package)
-    if raw_path.is_absolute():
-        target_dir = raw_path
-    else:
-        target_dir = Path.cwd() / raw_path
+    # 解析路径：支持绝对路径、相对路径和纯包名。先 resolve 再校验，
+    # 拒绝把当前目录或祖先目录当作目标（否则会提示覆盖后 rmtree 自己的工作区）。
+    raw_path = Path(package).expanduser()
+    target_dir = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
+    target_dir = target_dir.resolve()
+    cwd = Path.cwd().resolve()
+    if target_dir == cwd or target_dir in cwd.parents:
+        console.print(
+            f"[red]✗[/red] 目标目录 {target_dir} 是当前工作目录或其父目录，"
+            "为防止误删工作区，已中止。请换用子目录名。",
+            style="red",
+        )
+        raise click.Abort()
 
     # 从路径末尾提取包名
     package_name = target_dir.name
@@ -343,19 +354,26 @@ def init_command(
         )
         raise click.Abort()
 
+    # 检查目录是否已存在；确认覆盖之前不创建任何父目录，避免失败现场更脏。
+    target_existed = target_dir.exists()
+    if target_existed:
+        if target_dir.is_symlink():
+            console.print(f"[red]✗[/red] 目标目录是符号链接，拒绝覆盖: {target_dir}", style="red")
+            raise click.Abort()
+        console.print(f"[yellow]⚠[/yellow]  目录 {target_dir} 已存在!")
+        if not sys.stdin.isatty():
+            console.print("[red]✗[/red] 非交互环境不能确认覆盖，已中止。请换目录或手动清理。", style="red")
+            raise click.Abort()
+        if not Confirm.ask("是否覆盖现有目录?", default=False):
+            console.print("[yellow]已取消操作[/yellow]")
+            raise click.Abort()
+        remove_existing_project(target_dir)
+
     # 自动创建父目录（不存在时）
     parent_dir = target_dir.parent
     if not parent_dir.exists():
         console.print(f"[green]→[/green] 自动创建父目录: [cyan]{parent_dir}[/cyan]")
         parent_dir.mkdir(parents=True, exist_ok=True)
-
-    # 检查目录是否已存在
-    if target_dir.exists():
-        console.print(f"[yellow]⚠[/yellow]  目录 {target_dir} 已存在!")
-        if not Confirm.ask("是否覆盖现有目录?", default=False):
-            console.print("[yellow]已取消操作[/yellow]")
-            raise click.Abort()
-        remove_existing_project(target_dir)
 
     # 交互式配置表单：CLI 传的参数预填，回车即确认；
     # stdin 非 tty（脚本/CI 管道）时自动跳过，直接沿用 CLI 参数
@@ -494,5 +512,8 @@ def init_command(
         )
 
     except Exception as e:
+        # 本次新建目录失败时清理半成品；覆盖旧目录的场景不假装能恢复旧数据。
+        if not target_existed and target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
         console.print(f"[red]✗[/red] 创建项目失败: {e}", style="red")
         raise click.Abort() from None

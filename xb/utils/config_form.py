@@ -249,7 +249,7 @@ class ConfigForm:
         port = None
         if port_row["checked"]:
             value = port_row["value"].strip()
-            if value.isdigit() and 1 <= int(value) <= 65535:
+            if value.isdigit() and 1 <= int(value) <= 65534:
                 port = int(value)
             else:
                 port_row["checked"] = False

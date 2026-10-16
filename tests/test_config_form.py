@@ -90,6 +90,18 @@ def test_collect_invalid_port_falls_back_to_none():
     assert form._row("port")["checked"] is False
 
 
+def test_collect_port_65535_falls_back_to_none():
+    """前端端口 = 后端 + 1，因此表单后端上限是 65534。"""
+    form = make_form()
+    _cursor_key(form, "port")
+    form.toggle()
+    for ch in "65535":
+        form.feed_char(ch)
+    result = form.collect()
+    assert result["port"] is None
+    assert form._row("port")["checked"] is False
+
+
 def test_backspace_only_on_checked_text_row():
     form = make_form({"display_name": "abc"})
     _cursor_key(form, "display_name")

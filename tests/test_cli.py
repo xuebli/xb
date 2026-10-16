@@ -102,6 +102,27 @@ def test_port_out_of_range_rejected(monkeypatch, tmp_path):
     assert result.exit_code != 0
 
 
+def test_port_65535_rejected(monkeypatch, tmp_path):
+    """后端 65535 会让前端端口变成 65536，必须提前拒绝。"""
+    monkeypatch.setattr(init_module, "get_latest_if_newer", lambda _v: None)
+
+    result = CliRunner().invoke(
+        cli.main, ["init", str(tmp_path / "demo"), "--port", "65535"], input="\n"
+    )
+
+    assert result.exit_code != 0
+
+
+def test_init_current_directory_rejected(monkeypatch):
+    """防止 `xb init .` 在覆盖确认后删除当前工作区。"""
+    monkeypatch.setattr(init_module, "get_latest_if_newer", lambda _v: None)
+
+    result = CliRunner().invoke(cli.main, ["init", "."], input="\n")
+
+    assert result.exit_code != 0
+    assert "当前工作目录" in result.output
+
+
 def test_pick_fastest_from_nrm_output():
     output = """  npm ---------- 807 ms
   yarn --------- 795 ms

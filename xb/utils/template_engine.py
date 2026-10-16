@@ -51,6 +51,9 @@ class TemplateEngine:
 
         # 端口：显式指定后端端口时，前端开发端口取 +1，避免多个生成项目
         # 同时 dev 时都抢默认 5173（Vite strictPort 会直接启动失败）。
+        # 后端最大 65534：前端取 +1 后仍不能超过 65535。
+        if backend_port is not None and not 1 <= backend_port <= 65534:
+            raise ValueError("后端端口必须在 1-65534 之间（前端端口会自动 +1）")
         context = {
             "package_name": package_name,
             "package_name_upper": package_name.upper(),
