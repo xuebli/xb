@@ -42,6 +42,9 @@
     },
     "deb": {
       "maintainer": "[[ package_name]]@example.com",
+      "depends": [
+        "python3"
+      ],
       "afterInstall": "resources/postinst.py",
       "afterRemove": "resources/postrm.py"
     },
@@ -59,7 +62,8 @@
         "from": "../configs",
         "to": "configs",
         "filter": [
-          "!secrets.yaml"
+          "!secrets.yaml",
+          "!*.bak"
         ]
       },
       {
