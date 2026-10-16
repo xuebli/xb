@@ -3,6 +3,18 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 
 function pidsForPort(port) {
+    if (process.platform === 'win32') {
+        try {
+            const output = execFileSync('netstat', ['-ano'], { encoding: 'utf-8' });
+            return output
+                .split(/\r?\n/)
+                .filter((line) => line.includes(`:${port}`) && line.includes('LISTENING'))
+                .map((line) => line.trim().split(/\s+/).pop())
+                .filter(Boolean);
+        } catch (_) {
+            return [];
+        }
+    }
     try {
         const output = execFileSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf-8' });
         return output.split(/\s+/).filter(Boolean);
