@@ -351,6 +351,15 @@ def process_alive(name: str) -> bool:
         return False
     try:
         pid = int(path.read_text())
+        if os.name == "nt":
+            # Windows 的 os.kill(pid, 0) 会走 TerminateProcess，不是存活探测。
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return str(pid) in result.stdout
         os.kill(pid, 0)
         return True
     except (OSError, ValueError):
