@@ -56,6 +56,22 @@ def test_icon_generates_png_and_ico(tmp_path):
     assert pkg["build"]["win"]["icon"] == "resources/icon.ico"
 
 
+def test_frontend_and_launcher_regressions(tmp_path):
+    target = _render(tmp_path, False, True)
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "currentPage.value = 'settingsView'" in app_vue
+
+    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(encoding="utf-8")
+    assert "updatePanelRef.value?.handleCheckUpdate" in badge
+
+    vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
+    assert "git log -10 --format=" in vite
+
+    launcher = (target / "electron" / "launcher.js").read_text(encoding="utf-8")
+    assert "function writeBackendPort" in launcher
+    assert "yaml.dump(config" not in launcher
+
+
 @pytest.mark.parametrize(
     ("enable_terminal", "enable_update", "enable_logs"), COMBOS
 )

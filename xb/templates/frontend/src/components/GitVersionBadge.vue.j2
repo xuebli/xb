@@ -14,7 +14,7 @@ const updatePanelRef = ref(null)
 // 弹窗内检查更新：发现新版本时先关掉版本弹窗再显示更新弹窗，
 // 避免更新弹窗被版本弹窗挡住；无更新则留在提交记录页
 async function checkUpdateFromModal() {
-  const opened = await updatePanelRef?.handleCheckUpdate()
+  const opened = await updatePanelRef.value?.handleCheckUpdate()
   if (opened) showModal.value = false
 }
 [% endif %]

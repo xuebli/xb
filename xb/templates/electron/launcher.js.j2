@@ -44,10 +44,50 @@ function readConfig() {
     return yaml.load(fs.readFileSync(file, 'utf-8')) || {};
 }
 
-function writeConfig(config) {
+function writeBackendPort(value) {
+    // 行级写回：js-yaml 整文件 dump 会丢掉行尾中文显示名注释。
     const file = configPath();
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, yaml.dump(config, { lineWidth: 120, noRefs: true }), 'utf-8');
+    if (!fs.existsSync(file)) {
+        fs.writeFileSync(
+            file,
+            `ports:\n  backend: ${value}   # 后端端口\n  frontend: 8001   # 前端端口\n`,
+            'utf-8'
+        );
+        return;
+    }
+
+    const lines = fs.readFileSync(file, 'utf-8').split('\n');
+    let inPorts = false;
+    let written = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^ports\s*:\s*(?:#.*)?$/.test(line)) {
+            inPorts = true;
+            continue;
+        }
+        if (inPorts && /^\S/.test(line)) {
+            inPorts = false;
+        }
+        if (inPorts && /^\s*backend\s*:/.test(line)) {
+            lines[i] = line.replace(
+                /^(\s*backend\s*:\s*)[^#\n]*?(\s*(?:#.*)?)$/,
+                `$1${value}$2`
+            );
+            written = true;
+        }
+    }
+
+    if (!written) {
+        const portsIndex = lines.findIndex((line) => /^ports\s*:/.test(line));
+        const portLine = `  backend: ${value}   # 后端端口`;
+        if (portsIndex >= 0) {
+            lines.splice(portsIndex + 1, 0, portLine);
+        } else {
+            lines.push('', 'ports:', portLine);
+        }
+    }
+    fs.writeFileSync(file, lines.join('\n'), 'utf-8');
 }
 
 function readPort(key, defaultPort) {
@@ -146,10 +186,7 @@ function saveBackendPort(port) {
     if (!Number.isInteger(value) || value < 1 || value > 65535) {
         return { ok: false, message: '端口号必须是 1-65535 的整数' };
     }
-    const cfg = readConfig();
-    cfg.ports = cfg.ports && typeof cfg.ports === 'object' ? cfg.ports : {};
-    cfg.ports.backend = value;
-    writeConfig(cfg);
+    writeBackendPort(value);
     return { ok: true, message: `已保存后端端口 ${value}，正在重新检查...` };
 }
 
