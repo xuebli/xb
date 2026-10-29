@@ -9,7 +9,7 @@ const props = defineProps({
   autoCheck: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['start', 'confirm', 'reject'])
+const emit = defineEmits(['start', 'confirm', 'reject', 'stop'])
 
 const isExecuting = ref(false)
 
@@ -66,6 +66,7 @@ function handleStart() {
         <button v-if="!autoCheck" class="btn btn-fail" @click="emit('reject')" :disabled="isExecuting">
           ❌ 不通过
         </button>
+        <button class="btn btn-stop" @click="emit('stop')">⏹ 停止测试</button>
       </div>
     </div>
   </div>
@@ -257,6 +258,18 @@ function handleStart() {
 
 :root[data-theme='dark'] .btn-fail:hover {
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.btn-stop {
+  flex: 0 0 auto;
+  background: #475569;
+  color: #fff;
+}
+
+.btn-stop:hover {
+  background: #334155;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(71, 85, 105, 0.4);
 }
 
 .btn:active {
