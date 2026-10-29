@@ -67,14 +67,8 @@ const moveRow = (index, direction) => {
 }
 
 const onStandaloneChange = (index, checked) => {
-  // 单选模式：勾选一项时取消其他所有
-  rows.value.forEach((row, i) => {
-    if (i === index) {
-      row['是否单独测试'] = checked ? '是' : '否'
-    } else {
-      row['是否单独测试'] = '否'
-    }
-  })
+  // 多选模式：勾选几项测几项，互不影响
+  rows.value[index]['是否单独测试'] = checked ? '是' : '否'
 }
 
 const save = async () => {

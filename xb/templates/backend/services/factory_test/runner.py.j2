@@ -102,11 +102,12 @@ class TestRunner:
         all_items = [TestItem(**item.model_dump()) for item in plan.items]
         logs: list[str] = []
 
-        # 有"是否单独测试"勾选项时只执行该行（单选模式）
-        standalone_item = next((item for item in all_items if item.standalone), None)
-        if standalone_item:
-            items = [standalone_item]
-            self._log(logs, f"单独测试模式，仅执行: {standalone_item.name}")
+        # 有"是否单独测试"勾选项时只执行勾选项（可多选，勾选几项执行几项）
+        standalone_items = [item for item in all_items if item.standalone]
+        if standalone_items:
+            items = standalone_items
+            names = "、".join(item.name for item in standalone_items)
+            self._log(logs, f"单独测试模式，仅执行勾选的 {len(standalone_items)} 项: {names}")
         else:
             items = all_items
 

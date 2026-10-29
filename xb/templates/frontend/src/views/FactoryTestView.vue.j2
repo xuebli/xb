@@ -38,33 +38,16 @@ const groups = computed(() => {
 })
 
 async function toggleStandalone(item) {
-  // 单选模式：勾选当前项时取消其他项
-  const newValue = !item.standalone
-  const allItems = session.value.items
-  const updates = []
-
-  for (const i of allItems) {
-    if (i.id === item.id) {
-      updates.push({ item: i, oldValue: i.standalone, newValue: newValue })
-      i.standalone = newValue
-    } else if (i.standalone && newValue) {
-      updates.push({ item: i, oldValue: true, newValue: false })
-      i.standalone = false
-    }
-  }
+  // 多选模式：勾选几项测几项，互不影响
+  const oldValue = item.standalone
+  const newValue = !oldValue
+  item.standalone = newValue
 
   try {
     await factoryTestApi.updateItemStandalone(item.id, newValue)
-    for (const update of updates) {
-      if (update.item.id !== item.id) {
-        await factoryTestApi.updateItemStandalone(update.item.id, false)
-      }
-    }
   } catch (e) {
     console.error('保存单独测试状态失败:', e)
-    for (const update of updates) {
-      update.item.standalone = update.oldValue
-    }
+    item.standalone = oldValue
   }
 }
 
