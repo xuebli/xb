@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import importlib.util
 import json
@@ -134,6 +133,11 @@ def _load_update_api(monkeypatch, path: Path, update_service):
 
 def test_update_migration_failure_blocks_install(monkeypatch, render_project):
     target = render_project("updatable_app", enable_update=True)
+    api_source = (target / "backend" / "api" / "update" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    # 路由内全部是同步 I/O，交给 FastAPI 线程池执行，不能占住事件循环。
+    assert "async def" not in api_source
     service = Mock()
     service.get_download_state.return_value = {"status": "done", "path": "/tmp/app.deb"}
     service.get_current_version.return_value = "1.0.0"
@@ -149,7 +153,7 @@ def test_update_migration_failure_blocks_install(monkeypatch, render_project):
     request = types.SimpleNamespace(apply_config=True)
 
     with pytest.raises(http_exception) as caught:
-        asyncio.run(api.install_update(request))
+        api.install_update(request)
     assert caught.value.status_code == 500
     assert "已中止安装" in caught.value.detail
     assert "global_config.yaml" in caught.value.detail
@@ -159,7 +163,7 @@ def test_update_migration_failure_blocks_install(monkeypatch, render_project):
         {"filename": "global_config.yaml", "success": True, "error": ""}
     ]
     service.install.return_value = {"success": True}
-    result = asyncio.run(api.install_update(request))
+    result = api.install_update(request)
     assert result["success"] is True
     service.install.assert_called_once_with("/tmp/app.deb")
 

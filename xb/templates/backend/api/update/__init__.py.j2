@@ -38,7 +38,7 @@ class UpdateInstallRequest(BaseModel):
 
 
 @router.get("/update/check")
-async def check_update(force: bool = False):
+def check_update(force: bool = False):
     """检查是否有新版本。force=true 时跳过远程缓存。
 
     开发模式（源码运行）直接短路返回，不查飞书——deb 更新对开发进程无意义，
@@ -105,7 +105,7 @@ async def check_update(force: bool = False):
 
 
 @router.get("/update/info")
-async def get_update_info():
+def get_update_info():
     """获取完整的版本信息文件内容。"""
     if not path_manager.is_packaged:
         return {
@@ -130,7 +130,7 @@ async def get_update_info():
 
 
 @router.post("/update/download")
-async def start_download():
+def start_download():
     """开始下载安装包（后台线程，立即返回）。"""
     if not path_manager.is_packaged:
         raise HTTPException(status_code=400, detail="开发模式不支持应用内更新")
@@ -149,13 +149,13 @@ async def start_download():
 
 
 @router.get("/update/download/progress")
-async def download_progress():
+def download_progress():
     """查询下载进度。"""
     return update_service.get_download_state()
 
 
 @router.post("/update/install")
-async def install_update(request: UpdateInstallRequest):
+def install_update(request: UpdateInstallRequest):
     """备份配置 → 应用配置变更 → 启动安装程序。
 
     安装程序会替换正在运行的文件，接口返回后前端需要主动关闭应用。
