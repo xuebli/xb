@@ -137,13 +137,13 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
 | `xb version [patch\|minor\|major]` | 读取或更新版本号 |
 | `xb doctor [--fix]` | 检查开发环境；`--fix` 自动安装 nrm/uv、交互式配置 git 身份 |
-| `xb --upgrade` | 升级 xb 到 PyPI 最新版本 |
+| `xb --upgrade` / `xb upgrade` | 升级 xb 到 PyPI 最新版本 |
 
 ## 应用图标
 

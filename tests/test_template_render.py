@@ -371,6 +371,8 @@ def test_settings_assets(tmp_path):
 
     settings_py = (target / "backend" / "api" / "settings.py").read_text(encoding="utf-8")
     compile(settings_py, "settings.py", "exec")
+    pyproject = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert "pytest>=7.0" in pyproject
     # 路径用 /app-settings（/settings 留给 config.py 的密钥接口）
     assert '"/app-settings"' in settings_py
     assert '"/settings"' not in settings_py

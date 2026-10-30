@@ -144,7 +144,7 @@
 - **开发服务进程隔离**：`dev.py` 将后端和 Vite 的 stdout/stderr 写入 `datas/logs/`；Windows 使用隐藏控制台与 `stdin=DEVNULL`，不能继承或占用用户当前 PowerShell 输入。首次同步 `uv`/`npm` 依赖必须有超时和明确提示。
 - **进程托管走 Python 子进程 + PID 文件**：`dev.py` 把 PID 写到 `datas/pids/backend.pid` 与 `datas/pids/frontend.pid`，日志写入 `datas/logs/`；Linux 使用进程组结束服务，Windows 使用 `taskkill /PID ... /T /F`。不要用模糊的 `pkill -f` 作为正常流程。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
-- **YAML 字符串语法校验走 `path_manager.validate_yaml(content) -> (ok, err)`**：业务代码**不要**自己 `try yaml.safe_load(content) except yaml.YAMLError`，统一走这一个入口；写入失败直接 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份。
+- **YAML 字符串语法校验**：使用 `yaml.safe_load(content)` 并捕获 `yaml.YAMLError`，语法错误直接返回 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份；写回仍统一走 `managers/yaml_comments.py` 保留行尾注释。
 - **写完配置必须精确 reload**：`path_manager.reload_config(<filename>)` 传具体文件名，**不要** `reload_config()` 全清——配置缓存是按文件名独立的，全清会无端废掉其他文件的缓存（详见 `path_manager.reload_config` docstring）。
 - **Vue 用 `<script setup>` + 组合式 API**，API 调用直接 `fetch`（无 axios），失败统一 `alert + console.error`。组件名 PascalCase，文件名同步。
 - **前端样式必须同时适配亮色和暗色主题**：项目通过 `<html data-theme="dark|light">` 切换主题，`ThemeToggle.vue` 组件负责切换并持久化到 `localStorage`。**任何新增或修改的样式，如果使用了硬编码颜色（`#xxx`、`rgb()`、`rgba()` 中不透明的值），都必须同时提供 `[data-theme='dark']` 或 `:root[data-theme='dark']`（scoped 组件内）的暗色覆盖**。优先使用 CSS 变量（`var(--text)`、`var(--bg)` 等），只有 CSS 变量覆盖不到的才加具体暗色选择器。暗色模式下文字必须是浅色（`#e2e8f0` / `#f1f5f9` / `#f8fafc`），背景必须是深色（`#0f1219` / `#1a1f2e` / `#151923`），不允许出现暗色背景+深色文字导致看不清的情况。
@@ -152,7 +152,7 @@
 - **前端单组件单职责**：一个 `.vue` 组件只负责一个明确视图/控件。组件同时出现多块业务区域、多个弹窗、多个 API 流程或超过约 300 行时，优先拆成子组件和 `useXxx` composable。共享样式优先抽成语义 class 或局部组件，不要复制大段 CSS。
 - **保留中文 UI 文案**：所有 button/title/alert 都用中文，与后端日志一致。
 - **密钥展示安全**：除非用户明确要求显示原文，任何其他密钥、密码、token、access key 等敏感值在前端、日志、接口响应和文档中都必须脱敏或加密显示，禁止明文展示。
-- **特权操作走 polkit 白名单执行器**：需要 root 的操作统一通过 `privileged_manager.run("<action>", ...)` 调用（pkexec → root 拥有的 `/usr/local/share/[[ package_name ]]/privileged-helper`；pkexec 判定固定走 `org.freedesktop.policykit.exec`，免密放行由 rules 按 program 白名单实现，由 DEB postinst 部署）。**新增特权操作 = 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 case 中加一个分支**（参数逐一校验、绝对路径、exec 执行），业务代码**禁止**直接 `subprocess.run(["sudo"/"pkexec", ...])` 弹密码，**禁止**把密码写入任何文件。
+- **特权操作走 polkit 白名单执行器**：需要 root 的操作统一通过 `privileged_manager.run("<action>", ...)` 调用（pkexec → root 拥有的 `/usr/local/share/[[ package_name ]]/privileged-helper`；pkexec 判定固定走 `org.freedesktop.policykit.exec`，免密放行由 rules 按 program 白名单实现，由 DEB postinst 部署）。**新增特权操作 = 在 `electron/resources/polkit/privileged-helper.sh` 的 case 中加一个分支**（参数逐一校验、绝对路径、exec 执行），业务代码**禁止**直接 `subprocess.run(["sudo"/"pkexec", ...])` 弹密码，**禁止**把密码写入任何文件。
 - **如何判断一个命令需要特权**：实现功能时如果命令涉及以下任意一条，按"新增特权操作 SOP"处理，**不要先写成普通 subprocess 再等 PermissionError**：
   - 写入系统目录或系统配置：`/etc`、`/usr`、`/opt`、`/boot`、`/var/lib`、其他用户的家目录；
   - 包管理与系统服务：`apt`/`apt-get`/`dpkg`/`snap`/`systemctl start|stop|restart|enable`；
@@ -160,9 +160,9 @@
   - 监听 1024 以下特权端口、调整网络接口、修改内核参数（`sysctl`）。
   不确定时也走 helper（白名单分支里校验失败会安全拒绝），**永远不要**退回裸 sudo。
 - **新增特权操作 SOP**（严格按顺序）：
-  1. 在 `electron/resources/polkit/privileged-helper.sh.j2` 的 `case` 中加分支：每个参数独立校验（路径用 `realpath` + 目录白名单、取值用正则/枚举限定）、命令用**绝对路径**、以 `exec` 执行、绝不拼接未校验的输入；
+  1. 在 `electron/resources/polkit/privileged-helper.sh` 的 `case` 中加分支：每个参数独立校验（路径用 `realpath` + 目录白名单、取值用正则/枚举限定）、命令用**绝对路径**、以 `exec` 执行、绝不拼接未校验的输入；
   2. 业务代码调用 `privileged_manager.run("<action>", *args)`，**必须处理 `ok=False` 分支**（`stderr` 里可能带 tar.gz 手动安装场景的部署指引，原样展示给用户）；
-  3. 更新 `electron/resources/polkit/privileged-helper.sh.j2` 头部的"可用 action"注释。
+  3. 更新 `electron/resources/polkit/privileged-helper.sh` 头部的"可用 action"注释。
   helper 的更新无需手动部署：开发模式 `dev.py start` 检测到 helper 改动会自动重新部署，发版随 DEB 重装由 postinst 自动更新，**不需要**额外的配置迁移条目。
 - **禁止的替代方案**（即使功能更"简单"也不允许）：裸 `sudo`/`pkexec 任意命令`（等于把免密 root 开放给任意进程）、把用户加进 sudoers、密码写文件、守护进程化绕过校验。
 ## 配置文件分级（关键约定）
@@ -283,7 +283,7 @@ path_manager.reload_config()                     # 全清
 
 ### 配置实时生效约定（重要）
 
-前端改完 yaml 保存（`PUT /api/app-settings`、`POST /api/files/write` 等接口）都会调用 `path_manager.reload_config()` 清缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
+前端改完 yaml 保存（`PUT /api/app-settings`、`POST /api/files/write` 等接口）都会按实际写入文件调用 `path_manager.reload_config("<filename>")` 精确清理缓存——下次 `get_config_value()` 一定拿到最新值。**业务侧的设计目标是任何配置改动都立即生效，不需要重启服务**。
 
 要让这个目标真的成立，**必须遵守一条规则**：
 

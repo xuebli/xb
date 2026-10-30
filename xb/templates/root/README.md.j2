@@ -14,6 +14,9 @@
 [% if enable_terminal %]
 - 内置 Web 终端（Linux/macOS 使用 bash，Windows 使用 PowerShell）
 [% endif %]
+[% if enable_logs %]
+- 日志中心（后端日志实时推送、级别/关键词过滤与导出）
+[% endif %]
 [% if enable_update %]
 - 应用内自动更新（飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 [% endif %]
@@ -140,6 +143,11 @@ hooks 由 `dev.py start` 自动安装，无需手动操作。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/health` | 健康检查 |
+| GET/PUT | `/api/app-settings` | 读取/保存应用与密钥设置 |
+[% if enable_logs %]
+| GET | `/api/logs/recent` | 最近日志 |
+| GET | `/api/logs/stream` | SSE 实时日志流 |
+[% endif %]
 [% if enable_terminal %]
 | WS | `/api/terminal/ws` | 本地交互式终端 |
 [% endif %]
