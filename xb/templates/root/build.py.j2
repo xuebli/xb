@@ -71,6 +71,47 @@ def require(path: Path, label: str) -> None:
         raise SystemExit(f"{label}构建失败，未找到产物: {path}")
 
 
+def _run_electron_build(electron: Path, environment: dict[str, str]) -> None:
+    """运行 electron-builder 生成安装包。
+
+    Windows 上杀软实时扫描会锁定刚解压完的 Electron 骨架目录，导致
+    electron-builder 把 win-unpacked.tmp 重命名为 win-unpacked 时报 EPERM。
+    检测到该半成品目录时，把它挪到固定的 electron-skeleton 目录，再用
+    -c.electronDist 走"复制已解压骨架"分支重试，绕开"解压 + 目录重命名"。
+    """
+    try:
+        run([NPM, "run", "build"], electron, environment)
+        return
+    except subprocess.CalledProcessError:
+        skeleton_tmp = electron / "dist" / "win-unpacked.tmp"
+        is_unpack_eperm = (
+            sys.platform == "win32"
+            and skeleton_tmp.is_dir()
+            and (skeleton_tmp / "electron.exe").exists()  # 确认骨架已解压完整
+            and (skeleton_tmp / "version").exists()
+        )
+        if not is_unpack_eperm:
+            raise
+    print("⚠ Electron 骨架目录重命名被占用（杀软实时扫描所致），改用骨架复制模式重试…")
+    skeleton = electron / "dist" / "electron-skeleton"
+    if skeleton.exists():
+        shutil.rmtree(skeleton)
+    # 杀软句柄释放有延迟，重命名失败时稍等重试
+    for attempt in range(5):
+        try:
+            skeleton_tmp.rename(skeleton)
+            break
+        except OSError:
+            if attempt == 4:
+                raise
+            time.sleep(2)
+    run(
+        [NPM, "run", "build", "--", "-c.electronDist=dist/electron-skeleton"],
+        electron,
+        environment,
+    )
+
+
 UV_MIRRORS = (
     ("aliyun", "https://mirrors.aliyun.com/pypi/simple"),
     ("huawei", "https://mirrors.huaweicloud.com/repository/pypi/simple"),
@@ -518,7 +559,7 @@ if "-e" in TARGETS or "-a" in TARGETS:
         ),
     }
     run([NPM, "install", "--no-audit", "--no-fund"], electron, electron_environment)
-    run([NPM, "run", "build"], electron, electron_environment)
+    _run_electron_build(electron, electron_environment)
     packages = list((electron / "dist").glob("*.exe")) + list((electron / "dist").glob("*.deb"))
     if not packages:
         raise SystemExit("Electron 构建失败，未找到安装包")

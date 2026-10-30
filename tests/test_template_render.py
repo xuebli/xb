@@ -109,6 +109,16 @@ def test_legacy_config_api_preserves_yaml_comments(tmp_path):
     assert "obfuscate_file_plain_secrets" in config_api
 
 
+def test_build_py_electron_eperm_fallback(tmp_path):
+    """Windows 杀软锁定 Electron 骨架目录 EPERM 时，build.py 必须有复制模式兜底。"""
+    target = _render(tmp_path, False, False)
+    build_py = (target / "build.py").read_text(encoding="utf-8")
+    assert "_run_electron_build(electron, electron_environment)" in build_py
+    assert 'run([NPM, "run", "build"], electron, electron_environment)' not in build_py
+    assert "win-unpacked.tmp" in build_py
+    assert "-c.electronDist=dist/electron-skeleton" in build_py
+
+
 def test_server_deployment_template(tmp_path):
     """服务器部署：systemd 单元模板/postinst/postrm/extraResources/说明文档齐全且变量渲染。"""
     target = _render(tmp_path, False, False, backend_port=9000)
