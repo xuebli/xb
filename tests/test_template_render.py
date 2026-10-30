@@ -294,6 +294,20 @@ def test_logs_assets(tmp_path):
     assert not (plain / "frontend" / "src" / "components" / "LogViewer.vue").exists()
 
 
+def test_log_viewer_aborts_initial_load_and_cleans_sse(tmp_path):
+    target = _render(tmp_path, False, False, True)
+    viewer = (target / "frontend" / "src" / "components" / "LogViewer.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "const API_BASE = import.meta.env.VITE_API_BASE || ''" in viewer
+    assert "fetch(`${API_BASE}/api/logs/recent" in viewer
+    assert "new EventSource(`${API_BASE}/api/logs/stream" in viewer
+    assert "if (!res.ok) throw" in viewer
+    assert "Array.isArray(data.logs)" in viewer
+    assert "recentController?.abort()" in viewer
+    assert "if (!unmounted) connect()" in viewer
+
+
 def test_settings_assets(tmp_path):
     """设置页是标配：yaml 驱动 + schema 增强 + 密钥管理，无独立配置页。"""
     target = _render(tmp_path, False, False)

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const LEVEL_RANK = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 }
 const BUFFER_MAX = 2000
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 const connected = ref(false)
 const minLevel = ref('DEBUG')
@@ -12,7 +13,9 @@ const logs = ref([])
 const logListEl = ref(null)
 
 let source = null
+let recentController = null
 let lastSeq = 0
+let unmounted = false
 
 const filtered = computed(() => {
   const min = LEVEL_RANK[minLevel.value] ?? 0
@@ -56,7 +59,9 @@ const append = (item) => {
 }
 
 const connect = () => {
-  source = new EventSource(`/api/logs/stream?after=${lastSeq}`)
+  if (unmounted) return
+  source?.close()
+  source = new EventSource(`${API_BASE}/api/logs/stream?after=${lastSeq}`)
   source.onopen = () => {
     connected.value = true
   }
@@ -93,18 +98,35 @@ const exportLogs = () => {
 }
 
 onMounted(async () => {
+  const controller = new AbortController()
+  recentController = controller
   try {
-    const res = await fetch('/api/logs/recent?limit=500')
+    const res = await fetch(`${API_BASE}/api/logs/recent?limit=500`, {
+      signal: controller.signal,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
+    if (!Array.isArray(data.logs)) throw new Error('最近日志响应格式错误')
+    if (unmounted) return
     logs.value = data.logs
-    lastSeq = data.last_seq
-  } catch {
-    // 后端未就绪：SSE 自动重连会兜底
+    lastSeq = Number.isFinite(data.last_seq) ? data.last_seq : 0
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      // 后端未就绪：保留空数组，SSE 自动重连会兜底。
+      logs.value = []
+      lastSeq = 0
+      console.error('加载最近日志失败:', e)
+    }
+  } finally {
+    if (recentController === controller) recentController = null
   }
-  connect()
+  if (!unmounted) connect()
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
+  recentController?.abort()
+  recentController = null
   source?.close()
   source = null
 })
