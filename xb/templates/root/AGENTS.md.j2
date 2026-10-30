@@ -326,7 +326,7 @@ class FeishuBitableManager:
 
 - **Electron 启动序**：先 `spawn(server)`，监听 stdout 直到出现 `应用启动完成` 才创建 BrowserWindow。**这是 `electron/main.js` 与 `backend/main.py` lifespan 日志的字面字符串耦合，不能动**。
 - **Vite 注入 git 日志**：`frontend/vite.config.js` 在构建期 `execSync('git log -10 ...')` 把 commit 历史塞进 `__GIT_COMMITS__` 全局常量供 `GitVersionBadge.vue` 渲染；非 git 仓库降级为 `[]`。
-- **pre-commit 三模态**：远程 IDE/SSH → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。SSH 页面会输出可从本地浏览器访问的地址；页面超时或启动失败会中断 commit。退出码契约：`0` = 完成或主动跳过（继续 commit），`1` = 用户取消或交互失败（中断 commit），其他 = 异常（继续 commit + warning）。
+- **pre-commit 三模态**：远程 IDE/SSH → web，本地 X11 → tkinter GUI，纯终端 → 静默跳过。Web 地址携带本次会话高熵令牌，GET/POST 均校验；非 SSH 仅监听 loopback，SSH 可远程访问但也不能绕过令牌。页面超时或启动失败会中断 commit。退出码契约：`0` = 完成或主动跳过（继续 commit），`1` = 用户取消或交互失败（中断 commit），其他 = 异常（继续 commit + warning）。
 - **`electron/package.json` 是版本号 single source of truth**：`pyproject.toml` 的 version 跟着它走，**不是反过来**。
 - **DEB 用户感知安装**：`postinst` 通过 `$SUDO_USER` / `$PKEXEC_UID` 反查真实用户，把配置初始化到 *该用户* 的 `~/.config/`，而非 root。
 - **`LoggerManager` 是类级单次初始化**：`_initialized` 类变量；多次 `get_logger(name)` 只换 `bind(module=name)`，不会重复 `logger.add`。

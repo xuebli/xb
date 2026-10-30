@@ -12,6 +12,9 @@ import itertools
 import json
 import re
 import runpy
+import threading
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -314,6 +317,52 @@ def test_display_name_with_quotes_and_chinese(tmp_path):
 
     # README 标题使用显示名
     assert f"# {display_name}" in (target / "README.md").read_text(encoding="utf-8")
+
+
+def test_web_version_manager_requires_session_token(tmp_path):
+    target = _render(tmp_path, False, False)
+    script_path = target / "version" / "scripts" / "web_version_manager.py"
+    namespace = runpy.run_path(str(script_path))
+    token = namespace["ACCESS_TOKEN"]
+    assert namespace["is_valid_token"](token)
+    assert not namespace["is_valid_token"]("wrong")
+    assert not namespace["is_valid_token"](None)
+
+    server = namespace["HTTPServer"](("127.0.0.1", 0), namespace["Handler"])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as missing:
+            urllib.request.urlopen(base_url, timeout=5)
+        assert missing.value.code == 403
+
+        with urllib.request.urlopen(f"{base_url}/?token={token}", timeout=5) as response:
+            html = response.read().decode("utf-8")
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert "token:ACCESS_TOKEN" in html
+
+        def post(payload):
+            return urllib.request.Request(
+                f"{base_url}/action",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+        with pytest.raises(urllib.error.HTTPError) as wrong:
+            urllib.request.urlopen(post({"action": "skip", "token": "wrong"}), timeout=5)
+        assert wrong.value.code == 403
+        with urllib.request.urlopen(post({"action": "noop", "token": token}), timeout=5) as response:
+            assert json.loads(response.read()) == {"ok": True}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    source = script_path.read_text(encoding="utf-8")
+    assert 'bind_host = "0.0.0.0" if is_ssh_session() else "127.0.0.1"' in source
 
 
 def test_postinst_never_chowns_symlink_targets(tmp_path):

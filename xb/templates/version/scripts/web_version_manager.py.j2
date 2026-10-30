@@ -8,6 +8,9 @@ import shlex
 import subprocess
 import socket
 import threading
+import hmac
+import secrets
+import urllib.parse
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -26,6 +29,12 @@ result_event = threading.Event()
 user_result: dict = {"action": None, "data": None}
 
 TIMEOUT_SECONDS = 120
+ACCESS_TOKEN = secrets.token_urlsafe(32)
+
+
+def is_valid_token(token) -> bool:
+    """比较本次提交会话的高熵令牌，空值和非字符串一律拒绝。"""
+    return isinstance(token, str) and bool(token) and hmac.compare_digest(token, ACCESS_TOKEN)
 
 
 def get_current_version():
@@ -101,6 +110,7 @@ def build_html():
         "</div>\n"
         "<script>\n"
         "const TIMEOUT = " + str(TIMEOUT_SECONDS) + ";\n"
+        "const ACCESS_TOKEN = new URLSearchParams(location.search).get('token') || '';\n"
         "(function init(){\n"
         "  let left=TIMEOUT;\n"
         '  const cd=document.getElementById("countdown");\n'
@@ -109,7 +119,7 @@ def build_html():
         'function getType(){const r=document.querySelector("input[name=vtype]:checked");return r?r.value:"patch"}\n'
         'function showResult(ok,msg,sub){document.getElementById("main").innerHTML=\'<div class="result \'+(ok?"ok":"fail")+\'"><div class="result-mark"></div><div class="msg">\'+msg+"</div>"+(sub?\'<div class="sub">\'+sub+"</div>":"")+"</div>"}\n'
         'function setLoading(on){const b=document.getElementById("btn-update");if(on){b.classList.add("loading");b.innerHTML=\'<span class="spinner"></span> 更新中...\'}else{b.classList.remove("loading");b.innerHTML="更新版本"}}\n'
-        'async function post(action,body){const res=await fetch("/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});return res.json()}\n'
+        'async function post(action,body){const res=await fetch("/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,token:ACCESS_TOKEN,...body})});return res.json()}\n'
         'async function doUpdate(){setLoading(true);try{const r=await post("update",{vtype:getType()});if(r.ok)showResult(true,"版本更新成功","新版本：v"+r.version);else showResult(false,"更新失败",r.error)}catch(e){showResult(false,"请求异常",e.message)}}\n'
         'async function doSkip(){await post("skip",{});showResult(true,"已跳过版本更新","提交将继续执行")}\n'
         'async function doCancel(){await post("cancel",{});showResult(false,"已取消本次提交","Git commit 已中断")}\n'
@@ -121,17 +131,45 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _reject(self, status: int, message: str):
+        payload = json.dumps({"ok": False, "error": message}).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if not is_valid_token(query.get("token", [""])[0]):
+            self._reject(403, "无效或缺失的访问令牌")
+            return
         html = build_html().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(html)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length else {}
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 16 * 1024:
+            self._reject(400, "请求体大小非法")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._reject(400, "请求体不是合法 JSON")
+            return
+        if not isinstance(body, dict) or not is_valid_token(body.get("token")):
+            self._reject(403, "无效或缺失的访问令牌")
+            return
         action = body.get("action")
         resp: dict = {"ok": True}
 
@@ -191,13 +229,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(payload)
 
 
-def find_free_port():
+def find_free_port(host: str):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
+        s.bind((host, 0))
         return s.getsockname()[1]
 
 
@@ -251,10 +291,13 @@ def get_access_url(port: int) -> str:
 
 
 def main():
-    port = find_free_port()
-    url = get_access_url(port)
+    # 本机提交仅监听 loopback；SSH 需要远程浏览器时保留 LAN 地址，但必须持会话令牌。
+    bind_host = "0.0.0.0" if is_ssh_session() else "127.0.0.1"
+    port = find_free_port(bind_host)
+    base_url = get_access_url(port)
+    url = f"{base_url}?{urllib.parse.urlencode({'token': ACCESS_TOKEN})}"
 
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    server = HTTPServer((bind_host, port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     opened = open_browser(url)
