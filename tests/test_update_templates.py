@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import importlib.util
 import json
@@ -86,6 +87,82 @@ def test_update_hash_is_strict_sha256(monkeypatch, render_project, tmp_path):
     for invalid in (None, "", "md5:" + digest, "sha1:" + digest, "sha256:abc", "invalid"):
         assert not service._verify_hash(package, invalid)
     assert not service._verify_hash(package, "sha256:" + "0" * 64)
+
+
+def _load_update_api(monkeypatch, path: Path, update_service):
+    """加载更新路由并隔离 Web 框架，直接验证安装编排顺序。"""
+    class StubHTTPExceptionError(Exception):
+        def __init__(self, status_code, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class Router:
+        def _route(self, *_args, **_kwargs):
+            return lambda function: function
+
+        get = post = _route
+
+    fastapi = types.ModuleType("fastapi")
+    fastapi.APIRouter = Router
+    fastapi.HTTPException = StubHTTPExceptionError
+    pydantic = types.ModuleType("pydantic")
+    pydantic.BaseModel = object
+    managers = types.ModuleType("managers")
+    managers.get_logger = lambda _name: Mock()
+    managers.path_manager = types.SimpleNamespace(is_packaged=True)
+    services = types.ModuleType("services")
+    services.__path__ = []
+    updater = types.ModuleType("services.updater")
+    updater.compare_version = Mock()
+    updater.release_notes_text = Mock()
+    updater.update_service = update_service
+    for name, module in {
+        "fastapi": fastapi,
+        "pydantic": pydantic,
+        "managers": managers,
+        "services": services,
+        "services.updater": updater,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    spec = importlib.util.spec_from_file_location("rendered_update_api", path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module, StubHTTPExceptionError
+
+
+def test_update_migration_failure_blocks_install(monkeypatch, render_project):
+    target = render_project("updatable_app", enable_update=True)
+    service = Mock()
+    service.get_download_state.return_value = {"status": "done", "path": "/tmp/app.deb"}
+    service.get_current_version.return_value = "1.0.0"
+    service.create_backup.return_value = Path("/tmp/config-backup")
+    service.fetch_update_info.return_value = ({"version": "2.0.0"}, "remote")
+    service.filter_config_changes.return_value = [{"filename": "global_config.yaml"}]
+    service.apply_config_changes.return_value = [
+        {"filename": "global_config.yaml", "success": False, "error": "invalid yaml"}
+    ]
+    api, http_exception = _load_update_api(
+        monkeypatch, target / "backend" / "api" / "update" / "__init__.py", service
+    )
+    request = types.SimpleNamespace(apply_config=True)
+
+    with pytest.raises(http_exception) as caught:
+        asyncio.run(api.install_update(request))
+    assert caught.value.status_code == 500
+    assert "已中止安装" in caught.value.detail
+    assert "global_config.yaml" in caught.value.detail
+    service.install.assert_not_called()
+
+    service.apply_config_changes.return_value = [
+        {"filename": "global_config.yaml", "success": True, "error": ""}
+    ]
+    service.install.return_value = {"success": True}
+    result = asyncio.run(api.install_update(request))
+    assert result["success"] is True
+    service.install.assert_called_once_with("/tmp/app.deb")
 
 
 def test_init_without_update_skips_update_files(render_project):
