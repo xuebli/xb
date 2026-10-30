@@ -49,6 +49,9 @@ export function useUpdate() {
 
   let checkTimer = null
   let progressTimer = null
+  let progressController = null
+  let progressGeneration = 0
+  let disposed = false
 
   /**
    * 比较版本号
@@ -125,11 +128,18 @@ export function useUpdate() {
   /**
    * 刷新一次下载进度
    */
-  async function refreshProgress() {
+  async function refreshProgress(generation = progressGeneration) {
+    if (disposed || generation !== progressGeneration) return
+    const controller = new AbortController()
+    progressController = controller
     try {
-      const response = await fetch(`${API_BASE}/api/update/download/progress`)
-      if (!response.ok) return
+      const response = await fetch(`${API_BASE}/api/update/download/progress`, {
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const state = await response.json()
+      // 新下载或停止轮询后，旧响应不能覆盖新的下载状态。
+      if (disposed || generation !== progressGeneration) return
       downloadState.value = state
 
       if (state.status === 'downloading' && state.total > 0) {
@@ -151,28 +161,42 @@ export function useUpdate() {
 
       if (['done', 'error', 'idle'].includes(state.status)) {
         stopProgressPolling()
+        return
       }
     } catch (e) {
+      if (e.name === 'AbortError') return
       console.error('查询下载进度失败:', e)
+    } finally {
+      if (progressController === controller) progressController = null
+    }
+    // 串行轮询；可恢复的网络/HTTP 错误在下一轮重试。
+    if (!disposed && generation === progressGeneration) {
+      progressTimer = setTimeout(() => refreshProgress(generation), PROGRESS_INTERVAL)
     }
   }
 
   function startProgressPolling() {
     stopProgressPolling()
-    progressTimer = setInterval(refreshProgress, PROGRESS_INTERVAL)
+    void refreshProgress(progressGeneration)
   }
 
   function stopProgressPolling() {
+    progressGeneration += 1
     if (progressTimer) {
-      clearInterval(progressTimer)
+      clearTimeout(progressTimer)
       progressTimer = null
     }
+    progressController?.abort()
+    progressController = null
   }
 
   /**
    * 开始下载安装包
    */
   async function startDownload() {
+    // 先作废旧下载的轮询，避免其迟到响应覆盖新会话。
+    stopProgressPolling()
+    progressMark = null
     error.value = ''
     try {
       const response = await fetch(`${API_BASE}/api/update/download`, { method: 'POST' })
@@ -181,7 +205,7 @@ export function useUpdate() {
         throw new Error(data.detail || `HTTP ${response.status}`)
       }
       downloadState.value = data
-      if (data.status !== 'done') {
+      if (!disposed && ['downloading', 'verifying'].includes(data.status)) {
         startProgressPolling()
       }
       return data
@@ -223,6 +247,7 @@ export function useUpdate() {
    */
   function startAutoCheck() {
     stopAutoCheck()
+    if (disposed) return
     checkTimer = setInterval(() => {
       checkUpdate()
     }, CHECK_INTERVAL)
@@ -253,6 +278,7 @@ export function useUpdate() {
 
   // 组件卸载时清理
   onUnmounted(() => {
+    disposed = true
     stopAutoCheck()
     stopProgressPolling()
   })

@@ -164,6 +164,19 @@ def test_update_migration_failure_blocks_install(monkeypatch, render_project):
     service.install.assert_called_once_with("/tmp/app.deb")
 
 
+def test_update_progress_polling_is_serial_and_generation_safe(render_project):
+    target = render_project("updatable_app", enable_update=True)
+    source = (target / "frontend" / "src" / "composables" / "useUpdate.js").read_text(
+        encoding="utf-8"
+    )
+    assert "progressTimer = setInterval" not in source
+    assert "progressTimer = setTimeout(() => refreshProgress(generation)" in source
+    assert "new AbortController()" in source
+    assert "generation !== progressGeneration" in source
+    assert "stopProgressPolling()\n    progressMark = null" in source
+    assert "disposed = true" in source
+
+
 def test_init_without_update_skips_update_files(render_project):
     target = render_project("plain_app")
 
