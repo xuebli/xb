@@ -100,14 +100,15 @@ def test_doctor_fix_git_identity(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0)
 
     # 首次检查失败，修复成功后复查通过。
-    monkeypatch.setattr(
-        doctor_module,
-        "_collect_checks",
-        lambda iter_values=iter([
-            [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
-            [CheckResult("git 身份", True, "张三 <zhangsan@test.com>", fixable=True)],
-        ]): next(iter_values),
-    )
+    iter_values = iter([
+        [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
+        [CheckResult("git 身份", True, "张三 <zhangsan@test.com>", fixable=True)],
+    ])
+
+    def fake_checks():
+        return next(iter_values)
+
+    monkeypatch.setattr(doctor_module, "_collect_checks", fake_checks)
     monkeypatch.setattr(doctor_module.shutil, "which", lambda name: "/usr/bin/git")
     monkeypatch.setattr(doctor_module.subprocess, "run", fake_run)
 
