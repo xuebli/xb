@@ -82,7 +82,8 @@ helper 白名单内（未登记的操作一律拒绝）。
 | `electron/resources/polkit/privileged.policy` | `/usr/share/polkit-1/actions/com.<package_name>.privileged.policy` | 0644 | postinst / dev.py | postrm |
 | `electron/resources/polkit/privileged.rules` | `/etc/polkit-1/rules.d/60-<package_name>-privileged.rules` | 0644 | postinst / dev.py | postrm |
 
-- **DEB 安装**：postinst（root 身份）从包内 `resources/polkit/` 自动部署三件套，
+- **DEB 安装**：postinst（root 身份）从包内 `resources/polkit/` 自动部署三件套；
+  初始化用户配置和归还文件属主时跳过符号链接，避免 root 跟随链接修改其他文件。
   卸载（remove/purge）时 postrm 全部清理——**卸载即撤销提权授权**，
   helper 残留等于留下免密提权入口，绝不能剩；
 - **规则文件名带 `60-` 前缀**：polkit 按字典序执行 rules.d，数字前缀保证

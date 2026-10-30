@@ -31,7 +31,13 @@ def chown_tree(path, user):
     dpkg 以 root 运行，脚本预创建的目录/复制的文件默认属主是 root，
     必须归还真实用户，否则应用运行时（以普通用户身份）无写权限。
     """
-    if pwd is None or user is None or path is None or not path.exists():
+    if (
+        pwd is None
+        or user is None
+        or path is None
+        or path.is_symlink()
+        or not path.exists()
+    ):
         return
     try:
         record = pwd.getpwnam(user)
@@ -40,7 +46,11 @@ def chown_tree(path, user):
     uid, gid = record.pw_uid, record.pw_gid
     for item in (path, *path.rglob("*")):
         try:
-            os.chown(item, uid, gid)
+            # 用户可写树中可能预置指向系统文件的链接；链接本身不 chown，
+            # lchown 也保证检查后被替换为链接时仍不会跟随到目标文件。
+            if item.is_symlink():
+                continue
+            os.lchown(item, uid, gid)
         except OSError:
             pass
 
@@ -120,7 +130,7 @@ if scripts.is_dir():
     for source in scripts.rglob("*"):
         if source.is_file():
             target = user_scripts / source.relative_to(scripts)
-            if not target.exists():
+            if not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
 resources = resource_root / "configs"
@@ -133,11 +143,11 @@ if resources.is_dir():
             if name.endswith(".example"):
                 relative = Path(name[:-8])
             target = config / relative
-            if not target.exists():
+            if not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
 secret = config / "secrets.yaml"
-if secret.exists():
+if secret.exists() and not secret.is_symlink():
     secret.chmod(0o600)
 
 # dpkg 通常以 root 运行；优先把配置初始化到实际调用 sudo/pkexec 的用户目录。
@@ -167,7 +177,7 @@ if real_home:
         for source in scripts.rglob("*"):
             if source.is_file():
                 target = user_scripts / source.relative_to(scripts)
-                if not target.exists():
+                if not target.exists() and not target.is_symlink():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
     for source in resources.rglob("*") if resources.is_dir() else ():
@@ -176,7 +186,7 @@ if real_home:
             if str(relative).endswith(".example"):
                 relative = Path(str(relative)[:-8])
             target = user_config / relative
-            if not target.exists():
+            if not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
     secret = user_config / "secrets.yaml"

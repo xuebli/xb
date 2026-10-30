@@ -7,11 +7,14 @@
 - CSV 测试引擎随 --csv-test 生成（产测专用参数）
 """
 
+import ast
 import itertools
 import json
 import re
 import runpy
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -311,6 +314,43 @@ def test_display_name_with_quotes_and_chinese(tmp_path):
 
     # README 标题使用显示名
     assert f"# {display_name}" in (target / "README.md").read_text(encoding="utf-8")
+
+
+def test_postinst_never_chowns_symlink_targets(tmp_path):
+    target = _render(tmp_path, False, True)
+    postinst_path = target / "electron" / "resources" / "postinst.py"
+    source = postinst_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "chown_tree"
+    )
+    lchown = Mock()
+    namespace = {
+        "os": SimpleNamespace(lchown=lchown),
+        "pwd": SimpleNamespace(
+            getpwnam=lambda _user: SimpleNamespace(pw_uid=123, pw_gid=456)
+        ),
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(postinst_path), "exec"), namespace)
+
+    config = tmp_path / "config"
+    config.mkdir()
+    regular = config / "regular.yaml"
+    regular.write_text("value: 1", encoding="utf-8")
+    external = tmp_path / "external.yaml"
+    external.write_text("do-not-touch", encoding="utf-8")
+    link = config / "linked.yaml"
+    try:
+        link.symlink_to(external)
+    except OSError as exc:
+        pytest.skip(f"当前平台无法创建文件符号链接: {exc}")
+
+    namespace["chown_tree"](config, "demo")
+    changed = [call.args[0] for call in lchown.call_args_list]
+    assert config in changed and regular in changed
+    assert link not in changed and external not in changed
+    assert "secret.exists() and not secret.is_symlink()" in source
+    assert "not target.exists() and not target.is_symlink()" in source
 
 
 def test_polkit_assets_with_update(tmp_path):
