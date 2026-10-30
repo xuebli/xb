@@ -52,7 +52,11 @@ sudo dpkg -i [[ package_name]]_<新版本>.deb   # 装新包
 sudo systemctl restart [[ package_name]]-server  # 重启生效
 ```
 
+[% if enable_update %]
 升级时配置自动迁移（config_changes.json 机制），报告/配置不会丢。
+[% else %]
+升级后配置/报告保留在原用户目录，不会丢。
+[% endif %]
 
 ## 五、卸载
 
