@@ -133,7 +133,7 @@ function openDownloadPage() {
   }
 }
 
-// 备份配置 → 应用配置变更 → 拉起安装程序 → 关闭应用
+// 备份配置 → 应用配置变更 → 拉起安装程序 → 关闭应用/等待服务重启
 async function handleInstall() {
   const result = await installUpdate(true)
   if (!result) {
@@ -144,9 +144,28 @@ async function handleInstall() {
   if (failed.length > 0) {
     console.warn('部分配置变更未应用:', failed)
   }
-  installMessage.value = '安装程序已启动，应用即将关闭，请稍候...'
-  // 安装器要替换正在运行的文件，必须先退出应用；close 会走主进程的退出确认流程
-  setTimeout(() => window.close(), 1500)
+  // 网页模式（systemd 无头服务）：helper 装完会自动重启服务，页面等服务恢复后自动刷新
+  // 桌面模式（Electron）：安装器要替换正在运行的文件，必须先退出应用
+  const isElectron = !!window.desktopBridge
+  if (isElectron) {
+    installMessage.value = '安装程序已启动，应用即将关闭，请稍候...'
+    // close 会走主进程的退出确认流程
+    setTimeout(() => window.close(), 1500)
+  } else {
+    installMessage.value = '安装中，完成后服务将自动重启（约 10~30 秒），页面会自动刷新...'
+    // 轮询等服务重启完成（重启期间请求失败），恢复后刷新页面加载新版本
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/update/info`, { cache: 'no-store' })
+        // 401 也算恢复：服务重启会清内存会话（需重新登录），但说明服务已活
+        if (r.ok || r.status === 401) {
+          clearInterval(poll)
+          installMessage.value = '✅ 更新完成，正在刷新...'
+          setTimeout(() => window.location.reload(), 800)
+        }
+      } catch { /* 服务重启中，继续等 */ }
+    }, 3000)
+  }
 }
 
 defineExpose({ hasUpdate, loading, latestVersion, handleCheckUpdate })
