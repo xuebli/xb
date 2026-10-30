@@ -19,7 +19,6 @@ UPDATE_FILES = [
     "scripts/feishu_upload.py",
     "configs/config_changes.json",
     "frontend/src/components/version/UpdatePanel.vue",
-    "frontend/src/components/version/CommitHistoryPanel.vue",
     "frontend/src/composables/useUpdate.js",
 ]
 
@@ -171,6 +170,11 @@ def test_init_without_update_skips_update_files(render_project):
     for rel in UPDATE_FILES:
         assert not (target / rel).exists(), f"不应生成 {rel}"
     assert "update_router" not in (target / "backend" / "main.py").read_text(encoding="utf-8")
+    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "import CommitHistoryPanel from './version/CommitHistoryPanel.vue'" in badge
+    assert (target / "frontend" / "src" / "components" / "version" / "CommitHistoryPanel.vue").exists()
 
 
 def test_init_with_update_renders_update_files(render_project):

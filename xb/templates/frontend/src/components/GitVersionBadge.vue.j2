@@ -1,8 +1,8 @@
 <script setup>
 import { ref } from 'vue'
+import CommitHistoryPanel from './version/CommitHistoryPanel.vue'
 [% if enable_update %]
 import UpdatePanel from './version/UpdatePanel.vue'
-import CommitHistoryPanel from './version/CommitHistoryPanel.vue'
 [% endif %]
 
 const version = ref('v' + (__APP_VERSION__ || '0.0.0'))

@@ -305,18 +305,18 @@ class TemplateEngine:
                 components_dir / "LogViewer.vue",
                 context,
             )
+        # 提交记录弹窗是标配；自动更新面板才随 enable_update 条件生成。
+        version_dir = components_dir / "version"
+        version_dir.mkdir(exist_ok=True)
+        self._render_template(
+            "frontend/src/components/version/CommitHistoryPanel.vue.j2",
+            version_dir / "CommitHistoryPanel.vue",
+            context,
+        )
         if context["enable_update"]:
-            # 更新 UI 挂在 GitVersionBadge 的弹窗里（见 components/version/）
-            version_dir = components_dir / "version"
-            version_dir.mkdir(exist_ok=True)
             self._render_template(
                 "frontend/src/components/version/UpdatePanel.vue.j2",
                 version_dir / "UpdatePanel.vue",
-                context,
-            )
-            self._render_template(
-                "frontend/src/components/version/CommitHistoryPanel.vue.j2",
-                version_dir / "CommitHistoryPanel.vue",
                 context,
             )
             self._render_template(
