@@ -19,7 +19,7 @@ from schemas.factory_test import TestItem, TestSession, TestSummary
 from .command_executor import CommandRegistry
 from .definition import TestDefinition
 from .report import report_service
-from .result_compare import ResultComparator
+from .result_compare import ResultComparator, get_overall_status
 
 logger = get_logger(__name__)
 
@@ -155,10 +155,17 @@ class TestRunner:
                 skipped += self._mark_remaining_skipped(items[index:], logs)
                 break
 
-        if aborted:
-            status = "stopped"
-        else:
-            status = "stopped" if stopped else ("passed" if failed == 0 else "failed")
+        status = get_overall_status(
+            total=len(items),
+            passed=passed,
+            failed=failed,
+            skipped=skipped,
+            stopped=stopped,
+            aborted=aborted,
+        )
+        if status == "failed" and failed == 0:
+            reason = "测试计划为空" if not items else f"仍有 {skipped} 个测试项未执行或被跳过"
+            self._log(logs, f"{reason}，整体不能判定 PASS")
         total_duration = round(monotonic() - self._started_at, 2)
         summary = TestSummary(total=len(items), passed=passed, failed=failed, pending=0, skipped=skipped)
         self._log(logs, f"测试{'已停止' if stopped else '完成'}: "

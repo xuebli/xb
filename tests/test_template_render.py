@@ -10,6 +10,7 @@
 import itertools
 import json
 import re
+import runpy
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -540,6 +541,40 @@ def test_csv_test_assets(tmp_path):
             assert timer_target in declared, f"{vue.name} 未声明的 timer: {timer_target}"
         for timer_target in re.findall(r"(\w+) = setInterval", script):
             assert timer_target in declared, f"{vue.name} 未声明的 interval: {timer_target}"
+
+
+def test_csv_overall_status_fails_closed(tmp_path):
+    target = _render(tmp_path, False, False, enable_csv_test=True)
+    namespace = runpy.run_path(
+        str(target / "backend" / "services" / "factory_test" / "result_compare.py")
+    )
+    overall_status = namespace["get_overall_status"]
+
+    def status(**overrides):
+        values = {
+            "total": 2,
+            "passed": 2,
+            "failed": 0,
+            "skipped": 0,
+            "stopped": False,
+            "aborted": False,
+        }
+        values.update(overrides)
+        return overall_status(**values)
+
+    assert status() == "passed"
+    assert status(total=0, passed=0) == "failed"
+    assert status(total=2, passed=0, skipped=2) == "failed"
+    assert status(total=2, passed=1, skipped=1) == "failed"
+    assert status(total=2, passed=1, failed=1) == "failed"
+    assert status(stopped=True) == "stopped"
+    assert status(aborted=True) == "stopped"
+
+    definition = (target / "backend" / "services" / "factory_test" / "definition.py").read_text(
+        encoding="utf-8"
+    )
+    assert "测试项 CSV 缺少必需列" in definition
+    assert "测试项 CSV 存在重复列" in definition
 
 
 def test_csv_test_assets_absent_by_default(tmp_path):

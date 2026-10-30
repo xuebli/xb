@@ -17,6 +17,17 @@ class CompareResult:
     message: str
 
 
+def get_overall_status(
+    *, total: int, passed: int, failed: int, skipped: int, stopped: bool, aborted: bool
+) -> str:
+    """只有非空计划全部通过才是 PASS；停止、失败和任何跳过均不能判合格。"""
+    if stopped or aborted:
+        return "stopped"
+    if total > 0 and passed == total and failed == 0 and skipped == 0:
+        return "passed"
+    return "failed"
+
+
 class ResultComparator:
     STANDARD_SEPARATOR = "|"
 

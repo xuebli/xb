@@ -90,7 +90,15 @@ class TestDefinition:
         if not csv_path.exists():
             raise FileNotFoundError(f"找不到测试项CSV: {csv_path}")
         with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-            return [self._normalize_row(row) for row in csv.DictReader(f)]
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            missing = [header for header in CSV_HEADERS if header not in fieldnames]
+            if missing:
+                raise ValueError(f"测试项 CSV 缺少必需列: {', '.join(missing)}")
+            duplicates = sorted({header for header in fieldnames if fieldnames.count(header) > 1})
+            if duplicates:
+                raise ValueError(f"测试项 CSV 存在重复列: {', '.join(duplicates)}")
+            return [self._normalize_row(row) for row in reader]
 
     @staticmethod
     def _normalize_row(row: dict[str, str]) -> dict[str, str]:
