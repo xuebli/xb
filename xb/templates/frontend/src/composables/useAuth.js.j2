@@ -1,0 +1,52 @@
+// 登录状态（飞书 OAuth）：当前用户 / 强制登录标记 / 登录跳转 / 登出
+import { ref } from 'vue'
+
+const BASE = import.meta.env.VITE_API_BASE || ''
+
+const user = ref(null)          // null=未登录 {open_id, name, en_name, has_avatar}
+const loaded = ref(false)
+const required = ref(false)     // 服务端 auth.required（强制登录模式）
+const feishuEnabled = ref(false)
+const kicked = ref(false)       // 被挤下线（账号在别处登录导致本会话被吊销）
+
+async function load() {
+  try {
+    const r = await fetch(`${BASE}/api/auth/me`)
+    const d = r.ok ? await r.json() : {}
+    required.value = !!d.required
+    feishuEnabled.value = !!d.feishu_enabled
+    const nowUser = d.logged_in ? d.user : null
+    // 被挤下线检测：之前有会话、现在失效 → 标记 kicked（登录墙显示"已在别处登录"）
+    if (user.value && !nowUser) kicked.value = true
+    user.value = nowUser
+  } catch {
+    // 网络异常不改登录态（避免抖动误踢）
+  } finally {
+    loaded.value = true
+  }
+}
+
+/* 5s 轮询：单会话制下被新设备挤下线后，登录墙立刻出现 */
+let pollTimer = null
+function startPoll() {
+  if (pollTimer) return
+  pollTimer = setInterval(() => { if (user.value) load() }, 5000)
+}
+
+function login() {
+  // 跳后端登录入口 → 302 到飞书授权页
+  window.location.href = `${BASE}/api/auth/feishu/login`
+}
+
+async function logout() {
+  try {
+    await fetch(`${BASE}/api/auth/logout`, { method: 'POST' })
+  } finally {
+    user.value = null
+    window.location.reload()
+  }
+}
+
+export function useAuth() {
+  return { user, loaded, required, feishuEnabled, kicked, load, login, logout, startPoll }
+}

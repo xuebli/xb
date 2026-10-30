@@ -67,6 +67,11 @@ class ConfigForm:
                 "hint": "产测专用：CSV 测试项 + HTML 报告",
             },
             {
+                "key": "feishu_auth", "label": "飞书登录", "type": "toggle",
+                "checked": bool(cli.get("feishu_auth")),
+                "hint": "OAuth 扫码登录 + 单会话制，多人协作/服务器部署用",
+            },
+            {
                 "key": "icon", "label": "应用图标", "type": "text",
                 "checked": False,
                 "value": str(cli.get("icon") or ""),
@@ -259,6 +264,7 @@ class ConfigForm:
         update = self._row("update")["checked"]
         logs = self._row("logs")["checked"]
         csv_test = self._row("csv_test")["checked"]
+        feishu_auth = self._row("feishu_auth")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
@@ -267,6 +273,7 @@ class ConfigForm:
                 f"   更新: {enabled if update else disabled}" \
                 f"   日志: {enabled if logs else disabled}" \
                 f"   产测: {enabled if csv_test else disabled}" \
+                f"   飞书登录: {enabled if feishu_auth else disabled}" \
                 f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
         port_text = f"{port}/{port + 1}" if port else "8000/5173"
         sys.stdout.write(
@@ -282,6 +289,7 @@ class ConfigForm:
             "update": update,
             "logs": logs,
             "csv_test": csv_test,
+            "feishu_auth": feishu_auth,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
             "skip_install": self._row("skip_install")["checked"],
         }
@@ -297,6 +305,7 @@ def run_config_form(package: str, cli: dict) -> dict:
             "update": bool(cli.get("update")),
             "logs": bool(cli.get("logs")),
             "csv_test": bool(cli.get("csv_test")),
+            "feishu_auth": bool(cli.get("feishu_auth")),
             "icon": cli.get("icon"),
             "skip_install": bool(cli.get("skip_install")),
         }

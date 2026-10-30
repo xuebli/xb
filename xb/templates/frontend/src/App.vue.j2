@@ -1,5 +1,8 @@
 <script setup>
-import { ref } from 'vue'
+import { ref[% if enable_feishu_auth %], onMounted[% endif %] } from 'vue'
+[% if enable_feishu_auth %]
+import { useAuth } from './composables/useAuth'
+[% endif %]
 import DashboardHome from './components/DashboardHome.vue'
 [% if enable_terminal %]
 import TerminalPanel from './components/TerminalPanel.vue'
@@ -18,6 +21,12 @@ import FactoryTestView from './views/FactoryTestView.vue'
 const currentPage = ref('home')
 [% if icon_path %]
 const showIconFallback = ref(false)
+[% endif %]
+[% if enable_feishu_auth %]
+
+const { user: authUser, loaded: authLoaded, required: authRequired, kicked, load: loadAuth, login, logout, startPoll } = useAuth()
+const apiBase = import.meta.env.VITE_API_BASE || ''
+onMounted(() => { loadAuth().then(startPoll) })
 [% endif %]
 
 const navItems = [
@@ -44,7 +53,21 @@ const openSettings = () => {
 </script>
 
 <template>
+[% if enable_feishu_auth %]
+  <!-- 强制登录墙：auth.required 且未登录时只渲染登录卡片（应用完全不挂载，避免 401 噪音） -->
+  <div v-if="authRequired && authLoaded && !authUser" class="login-wall">
+    <div class="login-card">
+      <div class="brand-mark"><img src="/app-icon.png" alt="" onerror="this.style.display='none'" /></div>
+      <h2>{{ kicked ? '⚠ 账号已在别处登录' : '[[ display_name ]]' }}</h2>
+      <p>{{ kicked ? '本机会话已被新设备挤下线，如非本人操作请及时反馈；可重新登录（对方将被挤下线）' : '多人协作模式：请使用飞书扫码登录后继续' }}</p>
+      <button class="login-btn big" @click="login">{{ kicked ? '重新登录' : '飞书登录' }}</button>
+      <p class="tip">同一账号同时只能一台电脑在线，新设备登录会使旧设备自动登出</p>
+    </div>
+  </div>
+  <div v-else class="app-shell">
+[% else %]
   <div class="app-shell">
+[% endif %]
     <div class="ambient-bg" aria-hidden="true">
       <span class="node node-a"></span>
       <span class="node node-b"></span>
@@ -80,6 +103,14 @@ const openSettings = () => {
       <div class="toolbar">
         <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
+[% if enable_feishu_auth %]
+        <!-- 飞书登录状态（未登录显示登录按钮，已登录显示头像/姓名，点击登出） -->
+        <button v-if="authLoaded && !authUser" class="login-btn" @click="login">飞书登录</button>
+        <div v-else-if="authUser" class="user-chip" :title="`${authUser.name}（点击登出）`" @click="logout">
+          <img v-if="authUser.has_avatar" :src="`${apiBase}/api/auth/avatar`" class="avatar" alt="" />
+          <span class="uname">{{ authUser.name || authUser.en_name }}</span>
+        </div>
+[% endif %]
       </div>
     </header>
 

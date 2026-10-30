@@ -22,6 +22,9 @@ from api.logs import attach_log_sink, router as logs_router
 [% if enable_csv_test %]
 from api.factory_test import router as factory_test_router
 [% endif %]
+[% if enable_feishu_auth %]
+from api.auth.routes import router as auth_router
+[% endif %]
 from api.settings import router as settings_router
 
 logger = get_logger(__name__)
@@ -89,6 +92,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=[[ display_name | tojson ]], lifespan=lifespan)
 
+[% if enable_feishu_auth %]
+@app.middleware("http")
+async def auth_required_middleware(request, call_next):
+    """全员强制登录（auth.required=true 时）：/api/* 除 /api/auth/* 外一律要会话 cookie。
+
+    豁免：CORS 预检 OPTIONS、/api/auth/*（登录流程自身）、非 /api 路径（SPA/静态资源）。
+    未登录返回 401，前端据此弹登录墙。
+    """
+    path = request.url.path
+    if not path.startswith("/api/") or path.startswith("/api/auth/") or request.method == "OPTIONS":
+        return await call_next(request)
+    from services.auth import feishu_auth, COOKIE_NAME
+    if not feishu_auth.required:
+        return await call_next(request)
+    from fastapi.responses import JSONResponse
+    user = feishu_auth.get_user(request.cookies.get(COOKIE_NAME, ""))
+    if not user:
+        return JSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
+    return await call_next(request)
+
+
+[% endif %]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_local_origins(),
@@ -121,6 +146,9 @@ app.include_router(terminal_router, prefix="/api")
 [% endif %]
 [% if enable_update %]
 app.include_router(update_router, prefix="/api")
+[% endif %]
+[% if enable_feishu_auth %]
+app.include_router(auth_router, prefix="/api/auth")
 [% endif %]
 [% if enable_logs %]
 app.include_router(logs_router, prefix="/api")

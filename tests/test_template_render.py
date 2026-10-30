@@ -32,7 +32,8 @@ COMBOS = list(itertools.product([False, True], repeat=3))
 
 
 def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
-            display_name=None, backend_port=None, enable_csv_test=False):
+            display_name=None, backend_port=None, enable_csv_test=False,
+            enable_feishu_auth=False):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -43,6 +44,7 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
         enable_update=enable_update,
         enable_logs=enable_logs,
         enable_csv_test=enable_csv_test,
+        enable_feishu_auth=enable_feishu_auth,
     )
     return target
 
@@ -117,6 +119,64 @@ def test_build_py_electron_eperm_fallback(tmp_path):
     assert 'run([NPM, "run", "build"], electron, electron_environment)' not in build_py
     assert "win-unpacked.tmp" in build_py
     assert "-c.electronDist=dist/electron-skeleton" in build_py
+
+
+def test_feishu_auth_template(tmp_path):
+    """--feishu-auth：后端 auth 服务/路由/中间件、配置、前端登录墙按开关出现/缺席。"""
+    target = _render(tmp_path, False, False, enable_feishu_auth=True)
+
+    # 后端文件齐全（未开 update 时 services/ 包也应因 feishu_auth 存在）
+    auth_svc = target / "backend" / "services" / "auth" / "__init__.py"
+    assert auth_svc.exists()
+    svc = auth_svc.read_text(encoding="utf-8")
+    assert 'COOKIE_NAME = "demo_session"' in svc  # cookie 名随包名
+    routes = (target / "backend" / "api" / "auth" / "routes.py").read_text(encoding="utf-8")
+    assert "/feishu/callback" in routes
+
+    main = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "auth_required_middleware" in main
+    assert 'app.include_router(auth_router, prefix="/api/auth")' in main
+
+    # 配置：global_config 有 auth.required + 可配置的飞书域名（企业定制部署用）；
+    # 无 update 时 secrets 仍含 feishu 凭证但不含更新专属的 update_folder_url
+    global_cfg = (target / "configs" / "global_config.yaml").read_text(encoding="utf-8")
+    assert "auth:" in global_cfg and "required: true" in global_cfg
+    assert "feishu_base_url" in global_cfg
+    assert "auth.feishu_base_url" in svc  # 服务端从配置读域名前缀
+    secrets = (target / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert "app_id" in secrets and "app_secret" in secrets
+    assert "update_folder_url" not in secrets
+
+    # 前端：useAuth + 登录墙 + 顶栏用户区 + 样式
+    assert (target / "frontend" / "src" / "composables" / "useAuth.js").exists()
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "login-wall" in app_vue and "useAuth" in app_vue
+    style = (target / "frontend" / "src" / "style.css").read_text(encoding="utf-8")
+    assert ".login-wall" in style
+
+    # 部署文档恢复飞书白名单条目；前提条件文档随开关分发且端口已渲染
+    doc = (target / "docs" / "服务器部署说明.md").read_text(encoding="utf-8")
+    assert "/api/auth/feishu/callback" in doc
+    feishu_doc = (target / "docs" / "飞书登录说明.md").read_text(encoding="utf-8")
+    assert ":8000/api/auth/feishu/callback" in feishu_doc
+    assert "[[" not in feishu_doc
+
+    # 未启用时全部缺席
+    plain = _render(tmp_path / "plain", False, False)
+    assert not (plain / "backend" / "services" / "auth").exists()
+    assert not (plain / "backend" / "api" / "auth").exists()
+    assert not (plain / "frontend" / "src" / "composables" / "useAuth.js").exists()
+    plain_main = (plain / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "auth_required_middleware" not in plain_main
+    plain_cfg = (plain / "configs" / "global_config.yaml").read_text(encoding="utf-8")
+    assert "auth:" not in plain_cfg
+    plain_vue = (plain / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "login-wall" not in plain_vue
+    plain_style = (plain / "frontend" / "src" / "style.css").read_text(encoding="utf-8")
+    assert ".login-wall" not in plain_style
+    plain_doc = (plain / "docs" / "服务器部署说明.md").read_text(encoding="utf-8")
+    assert "feishu" not in plain_doc
+    assert not (plain / "docs" / "飞书登录说明.md").exists()
 
 
 def test_version_manager_syncs_uv_lock(tmp_path):

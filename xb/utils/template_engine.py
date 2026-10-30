@@ -41,6 +41,7 @@ class TemplateEngine:
         enable_update: bool = False,
         enable_logs: bool = False,
         enable_csv_test: bool = False,
+        enable_feishu_auth: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +66,7 @@ class TemplateEngine:
             "enable_update": enable_update,
             "enable_logs": enable_logs,
             "enable_csv_test": enable_csv_test,
+            "enable_feishu_auth": enable_feishu_auth,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -158,8 +160,12 @@ class TemplateEngine:
             context,
         )
 
-        # services/ 包：自动更新与 CSV 测试引擎任一启用都需要
-        if context["enable_update"] or context["enable_csv_test"]:
+        # services/ 包：自动更新、CSV 测试引擎、飞书登录任一启用都需要
+        if (
+            context["enable_update"]
+            or context["enable_csv_test"]
+            or context["enable_feishu_auth"]
+        ):
             services_dir = backend_dir / "services"
             services_dir.mkdir(exist_ok=True)
             self._render_template(
@@ -185,6 +191,28 @@ class TemplateEngine:
             self._render_template(
                 "backend/services/feishu_client.py.j2",
                 services_dir / "feishu_client.py",
+                context,
+            )
+
+        if context["enable_feishu_auth"]:
+            # 飞书 OAuth 登录：services/auth 会话与令牌 + api/auth 路由
+            auth_api_dir = backend_dir / "api" / "auth"
+            auth_api_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/api/auth/__init__.py.j2",
+                auth_api_dir / "__init__.py",
+                context,
+            )
+            self._render_template(
+                "backend/api/auth/routes.py.j2",
+                auth_api_dir / "routes.py",
+                context,
+            )
+            auth_svc_dir = services_dir / "auth"
+            auth_svc_dir.mkdir(exist_ok=True)
+            self._render_template(
+                "backend/services/auth/__init__.py.j2",
+                auth_svc_dir / "__init__.py",
                 context,
             )
 
@@ -322,6 +350,12 @@ class TemplateEngine:
             self._render_template(
                 "frontend/src/composables/useUpdate.js.j2",
                 composables_dir / "useUpdate.js",
+                context,
+            )
+        if context["enable_feishu_auth"]:
+            self._render_template(
+                "frontend/src/composables/useAuth.js.j2",
+                composables_dir / "useAuth.js",
                 context,
             )
         if context["enable_csv_test"]:
@@ -567,6 +601,7 @@ class TemplateEngine:
                 "自动更新说明.md": "enable_update",
                 "images": "enable_update",
                 "csv测试引擎说明.md": "enable_csv_test",
+                "飞书登录说明.md": "enable_feishu_auth",
             }
             docs_dst = target_dir / "docs"
             docs_dst.mkdir(exist_ok=True)

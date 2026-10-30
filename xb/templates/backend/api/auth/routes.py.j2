@@ -1,0 +1,190 @@
+"""认证 API：飞书 OAuth 登录 / 回调 / 当前用户 / 登出。
+
+会话通过 HttpOnly cookie（[[ package_name ]]_session）携带；当前只做登录与身份识别，
+接口强制鉴权待多人并发改造时统一接入。
+"""
+import urllib.parse
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse
+
+from managers import get_logger, path_manager
+from services.auth import feishu_auth, COOKIE_NAME
+
+logger = get_logger(__name__)
+router = APIRouter()
+
+
+def _browser_host(request: Request) -> str:
+    """用户浏览器实际访问的 host：优先 Referer/Origin（dev 走 vite 代理时后端看到的
+    Host 是 127.0.0.1，不能直接信），兜底 base_url。cookie 按域名（不含端口）共享，
+    所以回调地址的 host 必须 = 用户浏览器地址栏的 host。"""
+    for header in ("referer", "origin"):
+        v = request.headers.get(header)
+        if v:
+            host = urllib.parse.urlparse(v).hostname
+            if host:
+                return host
+    return request.url.hostname or "localhost"
+
+
+def _callback_uri(request: Request) -> str:
+    """回调地址 = 浏览器访问 host + 后端端口（自动推导，无需配置）。
+    （飞书白名单需配对应条目，如 http://<服务器IP>:8866/api/auth/feishu/callback）"""
+    port = path_manager.get_config_value("ports.backend", default=8000)
+    return f"http://{_browser_host(request)}:{port}/api/auth/feishu/callback"
+
+
+def _front_origin(request: Request) -> str:
+    """登录完成后跳回的前端地址（dev=vite 源，打包=同源根）。"""
+    for header in ("referer", "origin"):
+        v = request.headers.get(header)
+        if v:
+            p = urllib.parse.urlparse(v)
+            if p.scheme and p.netloc:
+                return f"{p.scheme}://{p.netloc}/"
+    return "/"
+
+
+def _current_user(request: Request) -> dict | None:
+    return feishu_auth.get_user(request.cookies.get(COOKIE_NAME, ""))
+
+
+@router.get("/feishu/login", summary="跳转飞书授权登录页")
+async def feishu_login(request: Request):
+    try:
+        url, _state = feishu_auth.authorize_url(_callback_uri(request), _front_origin(request))
+        return RedirectResponse(url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"发起飞书登录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/feishu/callback", summary="飞书授权回调（code 换 token，签发会话）")
+async def feishu_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        raise HTTPException(status_code=400, detail=f"飞书授权被拒绝: {error}")
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少 code 参数")
+    front = feishu_auth.pop_front_origin(state)
+    if front is None:
+        raise HTTPException(status_code=400, detail="登录链接已过期或 state 无效，请重新登录")
+    try:
+        user = feishu_auth.exchange_code(code)
+        # 单会话制：账号已在别处在线 → 先弹确认页（强制登录踢旧设备 / 取消）
+        if feishu_auth.has_live_session(user.get("open_id", "")):
+            pending = feishu_auth.stage_pending(user, front)
+            return _confirm_page(user.get("name") or user.get("en_name") or "该账号", pending, front)
+        token = feishu_auth.create_session(user)
+        resp = RedirectResponse(front)
+        resp.set_cookie(COOKIE_NAME, token, max_age=7 * 86400,
+                        httponly=True, samesite="lax")
+        return resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"飞书登录回调失败: {e}")
+        raise HTTPException(status_code=500, detail=f"登录失败: {e}")
+
+
+@router.post("/feishu/force", summary="确认强制登录（踢掉旧设备会话）")
+async def feishu_force(req: dict):
+    pending = feishu_auth.pop_pending(str(req.get("pending") or ""))
+    if not pending:
+        raise HTTPException(status_code=400, detail="确认链接已过期，请重新登录")
+    user = pending["user"]
+    token = feishu_auth.create_session(user)   # 单会话制：自动吊销该账号旧会话
+    # 返回 JSON 由前端 JS 跳转（fetch 跟跳 302 跨源时拿不到目标 URL，会卡住）
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True, "front": pending["front"]})
+    resp.set_cookie(COOKIE_NAME, token, max_age=7 * 86400, httponly=True, samesite="lax")
+    return resp
+
+
+def _confirm_page(name: str, pending: str, front: str):
+    """已在别处登录的确认页（内联 HTML，无前端依赖）。"""
+    import html as _html
+    from fastapi.responses import Response
+    safe_name = _html.escape(name)
+    page = f"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>登录确认</title>
+<style>
+body {{ display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0;
+  font-family: -apple-system, "PingFang SC", sans-serif; background:#0a0f1e; color:#e2e8f0; }}
+.card {{ text-align:center; background:#131a2e; border:1px solid rgba(148,163,184,.14);
+  border-radius:16px; padding:36px 44px; max-width:380px; }}
+h2 {{ margin:0 0 10px; font-size:18px; }}
+p {{ color:#94a3b8; font-size:13px; line-height:1.7; }}
+.btns {{ display:flex; gap:12px; justify-content:center; margin-top:22px; }}
+button {{ border:none; border-radius:8px; padding:10px 26px; font-size:14px; font-weight:600; cursor:pointer; }}
+.force {{ background:#22d3ee; color:#06222a; }}
+.cancel {{ background:transparent; color:#94a3b8; border:1px solid rgba(148,163,184,.3); }}
+</style></head><body><div class="card">
+<h2>⚠ 账号已在别处登录</h2>
+<p><b>{safe_name}</b>，该账号当前正在另一台设备上使用。<br>强制登录将使对方立即退出（对方会收到提示）。</p>
+<div class="btns">
+<button class="force" onclick="forceLogin()">强制登录</button>
+<button class="cancel" onclick="location.href='{front}'">取消</button>
+</div></div>
+<script>
+async function forceLogin() {{
+  const btn = document.querySelector('.force');
+  btn.disabled = true; btn.textContent = '登录中…';
+  try {{
+    const r = await fetch('/api/auth/feishu/force', {{method:'POST',
+      headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{pending: '{pending}'}})}});
+    const d = await r.json();
+    if (r.ok && d.ok) {{ location.href = d.front || '{front}'; return }}
+    alert('登录失败：' + (d.detail || '未知错误'));
+  }} catch (e) {{
+    alert('网络异常：' + e.message);
+  }}
+  btn.disabled = false; btn.textContent = '强制登录';
+}}
+</script></body></html>"""
+    return Response(content=page, media_type="text/html")
+
+
+@router.get("/me", summary="当前登录用户 + 是否强制登录（未登录 200 返回 logged_in=false）")
+async def me(request: Request):
+    user = _current_user(request)
+    base = {"required": feishu_auth.required, "feishu_enabled": feishu_auth.enabled}
+    if not user:
+        return {"logged_in": False, "user": None, **base}
+    # 头像不直接给 URL（https 页面引 http 图会被混合内容拦截），前端走 /avatar 代理
+    return {"logged_in": True, **base,
+            "user": {"open_id": user["open_id"], "name": user["name"], "en_name": user["en_name"],
+                     "has_avatar": bool(user.get("avatar_url"))}}
+
+
+@router.get("/avatar", summary="当前用户头像（后端代理拉取，规避混合内容/ referer 限制）")
+async def avatar(request: Request):
+    import urllib.request as _u
+    from fastapi.responses import Response
+    user = _current_user(request)
+    url = (user or {}).get("avatar_url")
+    if not url:
+        raise HTTPException(status_code=404, detail="无头像")
+    try:
+        req = _u.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _u.urlopen(req, timeout=10) as resp:
+            return Response(content=resp.read(),
+                            media_type=resp.headers.get("Content-Type", "image/jpeg"),
+                            headers={"Cache-Control": "private, max-age=3600"})
+    except Exception as e:
+        logger.warning(f"头像拉取失败: {e}")
+        raise HTTPException(status_code=502, detail="头像拉取失败")
+
+
+@router.post("/logout", summary="登出（吊销会话 + 关 WS + 清 cookie）")
+async def logout(request: Request):
+    token = request.cookies.get(COOKIE_NAME, "")
+    if token:
+        feishu_auth._close_ws_of(token)   # 登出即刻断开该会话的 WS（不然还收得到事件）
+        feishu_auth.revoke(token)
+        logger.info("用户已登出")
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(COOKIE_NAME)
+    return resp

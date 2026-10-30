@@ -1,0 +1,220 @@
+"""飞书 OAuth 网页登录 + 本地会话（内存态，服务重启后重新登录）。
+
+流程：/api/auth/feishu/login 跳转飞书授权页 → 用户确认 → 回调带 code
+→ 换 user_access_token → 取用户信息 → 签发本地会话 token（HttpOnly cookie）。
+
+凭证复用 secrets.yaml 的 feishu.app_id / app_secret（与多维表格同一自建应用）。
+前提：飞书开放平台后台给该应用开通「网页应用」并把回调地址加入重定向白名单。
+"""
+import asyncio
+import json
+import secrets
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from managers import get_logger, path_manager
+
+logger = get_logger(__name__)
+
+# 端点路径风格与实测可用的实现一致：
+# /open-apis/authen/v1/authorize + app_id 参数（accounts.feishu.cn + client_id
+# 的新风格对 localhost 重定向白名单校验更严，实测 20029 拒绝）。
+# 域名前缀走配置（auth.feishu_base_url）：企业定制部署域名
+# 不是 open.feishu.cn，在 global_config.yaml 改，不用动代码。
+AUTHORIZE_PATH = "/open-apis/authen/v1/authorize"
+APP_TOKEN_PATH = "/open-apis/auth/v3/app_access_token/internal"
+OIDC_TOKEN_PATH = "/open-apis/authen/v1/oidc/access_token"
+USERINFO_PATH = "/open-apis/authen/v1/user_info"
+DEFAULT_BASE_URL = "https://open.feishu.cn"
+
+SESSION_TTL_S = 7 * 86400   # 会话有效期 7 天
+COOKIE_NAME = "[[ package_name ]]_session"
+
+
+class FeishuAuth:
+    def __init__(self):
+        self._sessions: dict[str, dict] = {}   # token → user info
+        self._states: dict[str, dict] = {}     # OAuth state → {ts, front}（防 CSRF + 记住前端来源）
+        self._pending: dict[str, dict] = {}    # 强制登录确认中：pending_token → {user, front, ts}
+        self._ws_by_token: dict[str, set] = {} # token → 活 WS 连接（吊销时主动断开实现秒踢）
+
+    # ---- WS 连接登记（吊销会话时主动断开，旧设备立刻弹被踢提示） ----
+    def register_ws(self, token: str, ws) -> None:
+        if token:
+            self._ws_by_token.setdefault(token, set()).add(ws)
+
+    def unregister_ws(self, token: str, ws) -> None:
+        conns = self._ws_by_token.get(token)
+        if conns:
+            conns.discard(ws)
+            if not conns:
+                del self._ws_by_token[token]
+
+    def _close_ws_of(self, token: str) -> None:
+        """断开该会话的全部 WS（close code 4401 = 会话吊销）。"""
+        for ws in self._ws_by_token.pop(token, set()):
+            try:
+                asyncio.get_running_loop().create_task(ws.close(code=4401))
+            except RuntimeError:
+                pass  # 非事件循环上下文（理论不到这里，调用点都在 async 路由）
+
+    def has_live_session(self, open_id: str) -> bool:
+        """该账号当前是否有在线会话（新设备登录时的"已在别处登录"确认用）。"""
+        now = time.time()
+        return any(s.get("open_id") == open_id and s.get("expires", 0) > now
+                   for s in self._sessions.values())
+
+    def stage_pending(self, user: dict, front: str) -> str:
+        """暂存待确认登录（用户已授权但账号在别处在线），返回 pending_token（10 分钟有效）。"""
+        self._pending = {k: v for k, v in self._pending.items() if time.time() - v["ts"] < 600}
+        token = secrets.token_urlsafe(16)
+        self._pending[token] = {"user": user, "front": front, "ts": time.time()}
+        return token
+
+    def pop_pending(self, pending_token: str) -> dict | None:
+        """确认强制登录：取出暂存信息（一次性）。"""
+        v = self._pending.pop(pending_token or "", None)
+        if not v or time.time() - v["ts"] > 600:
+            return None
+        return v
+
+    # ---- 配置 ----
+    @property
+    def base_url(self) -> str:
+        """飞书开放平台域名（企业定制部署在 global_config.yaml 改）。"""
+        configured = path_manager.get_config_value("auth.feishu_base_url", default="")
+        return str(configured).strip().rstrip("/") or DEFAULT_BASE_URL
+
+    @property
+    def app_id(self) -> str:
+        return path_manager.get_config_value("feishu.app_id", default="", config_file="secrets.yaml")
+
+    @property
+    def app_secret(self) -> str:
+        return path_manager.get_config_value("feishu.app_secret", default="", config_file="secrets.yaml")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.app_id and self.app_secret)
+
+    @property
+    def required(self) -> bool:
+        """全员强制登录（global_config.yaml auth.required，设置页可关）"""
+        return bool(path_manager.get_config_value("auth.required", default=True))
+
+    # ---- OAuth 流程 ----
+    def authorize_url(self, redirect_uri: str, front_origin: str = "/") -> tuple[str, str]:
+        """生成飞书授权页 URL，返回 (url, state)。front_origin 用于登录完成后跳回前端。"""
+        if not self.enabled:
+            raise RuntimeError("飞书凭证未配置（secrets.yaml 的 feishu.app_id / app_secret）")
+        state = secrets.token_urlsafe(16)
+        self._states[state] = {"ts": time.time(), "front": front_origin}
+        # 清理 10 分钟前的 state
+        self._states = {s: v for s, v in self._states.items() if time.time() - v["ts"] < 600}
+        q = urllib.parse.urlencode({
+            "app_id": self.app_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "state": state,
+        })
+        return f"{self.base_url}{AUTHORIZE_PATH}?{q}", state
+
+    def pop_front_origin(self, state: str) -> str | None:
+        """校验并弹出 state（防 CSRF），返回登录发起时的前端地址；无效返回 None。"""
+        v = self._states.pop(state or "", None)
+        return v["front"] if v else None
+
+    def _post(self, url: str, payload: dict) -> dict:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"飞书请求失败 HTTP {exc.code}: {detail[:300]}") from exc
+        if result.get("code") != 0:
+            raise RuntimeError(f"飞书请求失败 code={result.get('code')}: {result.get('msg', '')[:200]}")
+        return result
+
+    def _get_app_token(self) -> str:
+        """app_access_token（oidc/access_token 换用户 token 时的 Bearer）。"""
+        result = self._post(f"{self.base_url}{APP_TOKEN_PATH}", {"app_id": self.app_id, "app_secret": self.app_secret})
+        token = result.get("app_access_token")
+        if not token:
+            raise RuntimeError(f"获取 app_access_token 失败: {str(result)[:200]}")
+        return token
+
+    def _post_with_bearer(self, url: str, token: str, payload: dict) -> dict:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"飞书请求失败 HTTP {exc.code}: {detail[:300]}") from exc
+        if result.get("code") != 0:
+            raise RuntimeError(f"飞书请求失败 code={result.get('code')}: {result.get('msg', '')[:200]}")
+        return result
+
+    def exchange_code(self, code: str) -> dict:
+        """code → user_access_token → 用户信息。返回 {open_id, name, en_name, avatar_url}。
+        （state 由路由层先 pop_front_origin 校验并取出前端地址）"""
+        token_resp = self._post_with_bearer(f"{self.base_url}{OIDC_TOKEN_PATH}", self._get_app_token(), {
+            "grant_type": "authorization_code",
+            "code": code,
+        })
+        user_token = (token_resp.get("data") or {}).get("access_token")
+        if not user_token:
+            raise RuntimeError(f"飞书未返回 access_token: {str(token_resp)[:200]}")
+        req = urllib.request.Request(f"{self.base_url}{USERINFO_PATH}", headers={"Authorization": f"Bearer {user_token}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            info = json.loads(resp.read())
+        if info.get("code") != 0:
+            raise RuntimeError(f"获取用户信息失败: {info.get('msg', '')[:200]}")
+        data = info.get("data") or {}
+        logger.info(f"飞书登录成功: {data.get('name')} ({data.get('open_id')})")
+        return {
+            "open_id": data.get("open_id", ""),
+            "name": data.get("name", ""),
+            "en_name": data.get("en_name", ""),
+            "avatar_url": data.get("avatar_url", ""),
+        }
+
+    # ---- 本地会话 ----
+    def create_session(self, user: dict) -> str:
+        # 单会话制：一个账号同时只能一台电脑在线——新登录吊销该账号所有旧会话
+        # （旧电脑下次请求 401 被登出；其租约 90s 无心跳自动回收）
+        oid = user.get("open_id", "")
+        if oid:
+            stale = [t for t, s in self._sessions.items() if s.get("open_id") == oid]
+            for t in stale:
+                del self._sessions[t]
+                self._close_ws_of(t)   # 秒踢：主动断开旧设备的 WS 长连接
+            if stale:
+                logger.info(f"账号 {user.get('name')} 在新设备登录，已吊销 {len(stale)} 个旧会话")
+        token = secrets.token_urlsafe(32)
+        self._sessions[token] = {**user, "expires": time.time() + SESSION_TTL_S}
+        return token
+
+    def get_user(self, token: str) -> dict | None:
+        s = self._sessions.get(token or "")
+        if not s:
+            return None
+        if time.time() > s["expires"]:
+            del self._sessions[token]
+            return None
+        return s
+
+    def revoke(self, token: str) -> None:
+        self._sessions.pop(token or "", None)
+
+
+feishu_auth = FeishuAuth()

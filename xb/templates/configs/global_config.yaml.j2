@@ -1,3 +1,9 @@
 ports:
   backend: [[ backend_port ]]    # 后端端口
   frontend: [[ frontend_port ]]  # 前端端口
+[% if enable_feishu_auth %]
+
+auth:
+  required: true    # 全员强制登录（false = 不拦截接口，仅顶栏显示登录入口）
+  feishu_base_url: "https://open.feishu.cn"  # 飞书开放平台域名（企业定制部署，改为对应域名）
+[% endif %]

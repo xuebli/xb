@@ -132,3 +132,7 @@ netsh advfirewall firewall delete rule name="[[ package_name_capitalized ]]"
 3. **改端口**：设置页改「后端端口」或编辑 `global_config.yaml`，然后重启服务；Windows 侧防火墙规则要同步改 `localport`
 4. **防火墙**：Ubuntu 若开 ufw 需 `sudo ufw allow [[ backend_port ]]/tcp`；Windows 见上文 netsh 命令
 5. **换运行用户**：Ubuntu 编辑服务单元 `User=` 并初始化新用户配置目录（或先以该用户跑一次桌面版）；Windows 删任务后用新用户身份重新创建
+[% if enable_feishu_auth %]
+6. **飞书登录白名单**：回调地址按访问 host 推导，服务器场景需在飞书开发者后台加
+   `http://<服务器IP>:[[ backend_port ]]/api/auth/feishu/callback`
+[% endif %]

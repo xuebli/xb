@@ -309,6 +309,16 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
+    "--feishu-auth",
+    "feishu_auth",
+    is_flag=True,
+    default=False,
+    help=(
+        "启用飞书登录：OAuth 扫码登录 + 单会话制（新设备登录挤下旧设备）+ "
+        "可开关的全员强制登录墙，多人协作/服务器部署场景用"
+    ),
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
@@ -331,6 +341,7 @@ def init_command(
     update: bool,
     logs: bool,
     csv_test: bool,
+    feishu_auth: bool,
     skip_install: bool,
 ):
     """
@@ -413,6 +424,7 @@ def init_command(
         "update": update,
         "logs": logs,
         "csv_test": csv_test,
+        "feishu_auth": feishu_auth,
         "icon": icon,
         "skip_install": skip_install,
     })
@@ -422,6 +434,7 @@ def init_command(
     update = form_result["update"]
     logs = form_result["logs"]
     csv_test = form_result["csv_test"]
+    feishu_auth = form_result["feishu_auth"]
     icon = form_result["icon"]
     skip_install = form_result["skip_install"]
 
@@ -439,6 +452,12 @@ def init_command(
             "[cyan]ℹ[/cyan] 已启用 --csv-test：CSV 测试引擎 + HTML 报告，"
             "测试项在 configs/test_plan.csv 维护，指令键在 "
             "backend/services/factory_test/commands.py 注册"
+        )
+    if feishu_auth:
+        console.print(
+            "[cyan]ℹ[/cyan] 已启用 --feishu-auth：飞书 OAuth 登录 + 单会话制，"
+            "凭证在设置页填 feishu.app_id/app_secret，"
+            "飞书后台需开通「网页应用」并配置回调白名单"
         )
 
     # 创建项目
@@ -461,6 +480,7 @@ def init_command(
             enable_update=update,
             enable_logs=logs,
             enable_csv_test=csv_test,
+            enable_feishu_auth=feishu_auth,
             icon_path=icon_path,
         )
 

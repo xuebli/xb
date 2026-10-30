@@ -594,3 +594,49 @@ code {
   20% { opacity: 1; }
   to { transform: translateX(340px); opacity: 0; }
 }
+
+[% if enable_feishu_auth %]
+/* === 飞书登录 === */
+.login-btn {
+  padding: 8px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--blue);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-btn:hover { opacity: .9; }
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-h);
+}
+.user-chip:hover { border-color: var(--border-strong); }
+.user-chip .avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.user-chip .uname { font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* === 强制登录墙（整页布局，应用不挂载） === */
+.login-wall {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+.login-card {
+  text-align: center; padding: 40px 48px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow); max-width: 380px;
+}
+.login-card h2 { margin: 12px 0 6px; color: var(--text-h); font-size: 20px; }
+.login-card p { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.login-card .tip { font-size: 11px; margin-top: 14px; }
+.login-btn.big { font-size: 15px; padding: 12px 36px; margin-top: 12px; }
+[% endif %]
