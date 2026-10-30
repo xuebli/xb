@@ -67,6 +67,15 @@ def test_icon_generates_png_and_ico(tmp_path):
     assert "resources/icon.ico" in pkg["build"]["files"]
     assert pkg["build"]["win"]["icon"] == "resources/icon.ico"
 
+    # Linux DEB 需 hicolor 标准尺寸图标集，单张 PNG 安装后图标不显示
+    assert pkg["build"]["linux"]["icon"] == "resources/icons"
+    for size in (16, 32, 48, 64, 128, 256, 512):
+        assert (target / "electron" / "resources" / "icons" / f"{size}x{size}.png").exists()
+
+    # 运行窗口/任务栏图标（Linux 桌面环境需要）
+    main_js = (target / "electron" / "main.js").read_text(encoding="utf-8")
+    assert "icon: path.join(__dirname, 'resources', 'icon.png')" in main_js
+
 
 def test_frontend_and_launcher_regressions(tmp_path):
     target = _render(tmp_path, False, True)

@@ -209,6 +209,10 @@ app.whenReady().then(() => {
             win = new BrowserWindow({
                 width: 1200,
                 height: 800,
+[% if icon_path %]
+                // 运行窗口/任务栏图标（Linux 桌面环境尤其需要；Windows 用 exe 内嵌图标，这里兜底）
+                icon: path.join(__dirname, 'resources', 'icon.png'),
+[% endif %]
                 webPreferences: {
                     preload: path.join(__dirname, 'preload.js')
                 }

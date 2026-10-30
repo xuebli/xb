@@ -233,7 +233,7 @@ demo/
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── main.js
-│   └── resources/          # icon + Linux DEB hooks
+│   └── resources/          # icon.png/icon.ico/icons/ 图标集 + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
 ├── datas/                  # 运行时数据（gitignore）

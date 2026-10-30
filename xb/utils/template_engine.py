@@ -384,6 +384,7 @@ class TemplateEngine:
         )
 
         self._copy_app_icon(resources_dir / "icon.png", context)
+        self._copy_app_icons_set(resources_dir / "icons", context)
 
         # polkit 特权执行器三件套是标配：随安装包进 resources/polkit，
         # 由 postinst（root 身份）部署到系统路径，postrm 卸载时清理；
@@ -420,6 +421,20 @@ class TemplateEngine:
             return
 
         # 未指定图标时不复制任何默认图标，使用 Electron 原始默认图标
+
+    def _copy_app_icons_set(self, output_dir: Path, context: Dict[str, Any]):
+        """生成 hicolor 标准尺寸图标集（Linux DEB 用）。
+
+        package.json 的 linux.icon 指向目录时 electron-builder 按标准尺寸名匹配；
+        单张 PNG 不是 hicolor 标准目录尺寸，DEB 安装后桌面图标不显示。
+        """
+        icon_path = context.get("icon_path")
+        if not icon_path:
+            return
+        icon_path = Path(icon_path).expanduser().resolve()
+        output_dir.mkdir(exist_ok=True)
+        for size in (16, 32, 48, 64, 128, 256, 512):
+            self._resize_icon(icon_path, output_dir / f"{size}x{size}.png", size=size)
 
     @staticmethod
     def _resize_icon(src: Path, dst: Path, size: int = 256, fmt: str = "PNG"):
