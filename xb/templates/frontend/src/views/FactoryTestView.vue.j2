@@ -14,6 +14,9 @@ const loading = ref(false)
 const csvEditorRef = ref(null)
 const testDataViewerRef = ref(null)
 let pollTimer = null
+let pollController = null
+let pollGeneration = 0
+let unmounted = false
 
 const isActive = computed(() => ['running', 'paused', 'stopping'].includes(session.value?.status))
 const isPaused = computed(() => session.value?.status === 'paused')
@@ -70,7 +73,9 @@ const resultBanner = computed(() => {
 async function startTest() {
   loading.value = true
   try {
-    session.value = await factoryTestApi.run(sn.value.trim())
+    const current = await factoryTestApi.run(sn.value.trim())
+    if (unmounted) return
+    session.value = current
     startPolling()
   } catch (e) {
     alert(`启动测试失败: ${e.message}`)
@@ -116,27 +121,47 @@ async function rejectManual() {
   }
 }
 
-async function poll() {
+async function poll(generation) {
+  if (unmounted || generation !== pollGeneration) return
+  const controller = new AbortController()
+  pollController = controller
   try {
-    session.value = await factoryTestApi.getCurrentSession()
-    if (isFinished.value) stopPolling()
+    const current = await factoryTestApi.getCurrentSession({ signal: controller.signal })
+    // 新测试会话或停止轮询后，旧响应不能再覆盖当前状态。
+    if (unmounted || generation !== pollGeneration) return
+    session.value = current
+    if (isFinished.value) {
+      stopPolling()
+      return
+    }
   } catch (e) {
+    if (e.name === 'AbortError') return
     console.error(e)
+  } finally {
+    if (pollController === controller) pollController = null
+  }
+  // 串行轮询：上一次请求完成后才安排下一次，慢请求不会叠加。
+  if (!unmounted && generation === pollGeneration) {
+    pollTimer = setTimeout(() => poll(generation), 500)
   }
 }
 
 function startPolling() {
   stopPolling()
-  pollTimer = setInterval(poll, 500)
+  void poll(pollGeneration)
 }
 
 function stopPolling() {
-  if (pollTimer) clearInterval(pollTimer)
+  pollGeneration += 1
+  if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
+  pollController?.abort()
+  pollController = null
 }
 
 async function loadPlanPreview() {
   const plan = await factoryTestApi.getPlan()
+  if (unmounted) return
   session.value = {
     status: 'ready',
     summary: { total: plan.total_items, passed: 0, failed: 0, pending: plan.total_items, skipped: 0 },
@@ -156,6 +181,7 @@ async function onCsvSaved() {
 onMounted(async () => {
   try {
     const current = await factoryTestApi.getCurrentSession()
+    if (unmounted) return
     if (current && current.status !== 'ready') {
       session.value = current
       if (['running', 'paused', 'stopping'].includes(current.status)) startPolling()
@@ -168,7 +194,10 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  unmounted = true
+  stopPolling()
+})
 </script>
 
 <template>

@@ -694,6 +694,23 @@ def test_csv_test_assets(tmp_path):
             assert timer_target in declared, f"{vue.name} 未声明的 interval: {timer_target}"
 
 
+def test_factory_polling_is_serial_and_cancelable(tmp_path):
+    target = _render(tmp_path, False, False, enable_csv_test=True)
+    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "setInterval" not in view
+    assert "new AbortController()" in view
+    assert "generation !== pollGeneration" in view
+    assert "setTimeout(() => poll(generation), 500)" in view
+    assert "unmounted = true" in view
+
+    api = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(
+        encoding="utf-8"
+    )
+    assert "getCurrentSession: (options = {})" in api
+
+
 def test_history_report_preview_is_sandboxed(tmp_path):
     target = _render(tmp_path, False, False, enable_csv_test=True)
     viewer = (
