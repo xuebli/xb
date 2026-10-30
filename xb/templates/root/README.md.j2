@@ -42,7 +42,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ├── configs/            # 配置文件
 ├── datas/              # 运行时数据（gitignore）
 ├── scripts/            # 辅助脚本
-├── docs/               # 说明文档（路径 / 版本 / polkit / 自动更新）
+├── docs/               # 说明文档（路径 / 版本 / polkit / 服务器部署 / 自动更新）
 ├── dev.py              # 开发脚本
 └── build.py            # 打包脚本
 ```
@@ -126,6 +126,14 @@ hooks 由 `dev.py start` 自动安装，无需手动操作。
 
 > 授权机制、部署调试、新增特权操作纪律详见
 > **[docs/polkit免密提权说明.md](docs/polkit免密提权说明.md)**。
+
+## 服务器部署（无头后端）
+
+把上位机部署到内网服务器供多人浏览器访问：Ubuntu 走 systemd
+（DEB 安装自动写好单元文件），Windows 走计划任务，桌面 Electron 用法不受影响。
+
+> 部署/日常管理/升级/卸载全流程详见
+> **[docs/服务器部署说明.md](docs/服务器部署说明.md)**。
 [% if enable_csv_test %]
 ## CSV 测试引擎
 

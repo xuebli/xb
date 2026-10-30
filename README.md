@@ -207,6 +207,7 @@ postinst 预部署，管理员组无感、无密码落盘），Windows 等退出
 | [自动更新说明.md](xb/templates/root/docs/自动更新说明.md) | 应用内自动更新：发版流程、配置迁移清单、AI 开发者纪律 |
 | [polkit免密提权说明.md](xb/templates/root/docs/polkit免密提权说明.md) | Linux polkit 免密提权：安全模型、三件套部署、新增特权操作、排障 |
 | [打包与运行路径说明.md](xb/templates/root/docs/打包与运行路径说明.md) | 构建产物、DEB/NSIS 安装布局、运行时数据目录、三种运行形态判定 |
+| [服务器部署说明.md](xb/templates/root/docs/服务器部署说明.md.j2) | 无头后端服务器部署：Ubuntu systemd / Windows 计划任务、日常管理、升级卸载（`.j2` 按项目渲染包名/端口） |
 | [csv测试引擎说明.md](xb/templates/root/docs/csv测试引擎说明.md) | 产测 CSV 引擎：测试项格式、指令键注册、HTML 报告、纪律（`--csv-test` 项目） |
 | [版本管理说明.md](xb/templates/root/docs/版本管理说明.md) | 版本号 single source of truth、三模态 bump 弹窗、手动 bump、hook 纪律 |
 
@@ -233,7 +234,7 @@ demo/
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── main.js
-│   └── resources/          # icon.png/icon.ico/icons/ 图标集 + Linux DEB hooks
+│   └── resources/          # icon.png/icon.ico/icons/ 图标集 + systemd 单元模板 + Linux DEB hooks
 ├── version/                # 版本管理（pre-commit hook）
 ├── configs/                # 配置文件
 ├── datas/                  # 运行时数据（gitignore）

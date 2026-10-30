@@ -195,3 +195,17 @@ if real_home:
     # root 建立的目录与文件归还真实用户，避免应用启动即 PermissionError
     chown_tree(user_config, real_user)
     chown_tree(user_data_root, real_user)
+
+# 无头后端 systemd 单元：安装时把模板渲染成具体用户版直接放到位（不自动启用），
+# 服务器部署只需一行：sudo systemctl enable --now [[ package_name]]-server
+if real_user:
+    unit_src = resource_root / "systemd" / f"{app}-server@.service"
+    if unit_src.exists():
+        try:
+            content = unit_src.read_text(encoding="utf-8").replace("User=%i", f"User={real_user}")
+            Path("/etc/systemd/system") \
+                .joinpath(f"{app}-server.service") \
+                .write_text(content, encoding="utf-8")
+            run(["systemctl", "daemon-reload"])
+        except OSError:
+            pass

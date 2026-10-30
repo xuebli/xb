@@ -1,0 +1,130 @@
+# 服务器部署说明（无头后端，浏览器访问）
+
+> 适用场景：把上位机部署到内网服务器，多人浏览器访问。
+> 桌面双击 Electron 的用法不受影响，两者**不要同时跑**（端口冲突）。
+
+- **Ubuntu**：systemd 服务（DEB 安装自动写好单元文件）
+- **Windows**：计划任务（开机登录自启，两条命令搞定）
+
+浏览器访问（两平台一致）：
+
+```
+http://<服务器IP>:[[ backend_port ]]
+```
+
+---
+
+# Ubuntu（systemd）
+
+## 一、部署（两步）
+
+```bash
+# 1. 安装 DEB（和桌面一样）
+sudo dpkg -i [[ package_name]]_*.deb
+
+# 2. 启用后端服务
+sudo systemctl enable --now [[ package_name]]-server
+```
+
+## 二、原理（一句话）
+
+DEB 安装时 postinst 已自动把服务单元写好：`/etc/systemd/system/[[ package_name]]-server.service`，
+`User=` 写死为**安装时执行 sudo 的那个用户**（配置/报告都在该用户的 XDG 目录）。
+`enable --now` 只是启用它——不用手动拷任何文件。
+
+## 三、日常管理
+
+| 操作 | 命令 |
+|---|---|
+| 看状态 | `systemctl status [[ package_name]]-server` |
+| 看日志（实时） | `journalctl -u [[ package_name]]-server -f` |
+| 启动 / 停止 | `sudo systemctl start / stop [[ package_name]]-server` |
+| 重启 | `sudo systemctl restart [[ package_name]]-server` |
+| 开机自启关/开 | `sudo systemctl disable / enable [[ package_name]]-server` |
+
+应用自身日志（业务日志，非 systemd 日志）在：
+`~/.local/share/[[ package_name]]/datas/logs/`（安装用户家目录下）
+
+## 四、升级
+
+```bash
+sudo dpkg -i [[ package_name]]_<新版本>.deb   # 装新包
+sudo systemctl restart [[ package_name]]-server  # 重启生效
+```
+
+升级时配置自动迁移（config_changes.json 机制），报告/配置不会丢。
+
+## 五、卸载
+
+```bash
+sudo dpkg -r [[ package_name]]
+```
+
+postrm 会自动 `disable --now` 停掉服务并删除服务单元文件。**用户数据（配置/报告）默认保留**。
+
+---
+
+# Windows（计划任务）
+
+## 一、部署（两条命令）
+
+前提：已用 NSIS 安装包装过应用（桌面版安装即可，server.exe 随包自带）。
+
+```powershell
+# 1. 注册计划任务：当前用户登录时自动启动无头后端
+schtasks /Create /TN "[[ package_name_capitalized ]]Server" /SC ONLOGON /F `
+  /TR '"C:\Users\<用户名>\AppData\Local\Programs\[[ package_name_capitalized ]]\resources\server-bin\server.exe"'
+
+# 2. 放行防火墙（需要管理员 PowerShell；端口以实际配置为准）
+netsh advfirewall firewall add rule name="[[ package_name_capitalized ]]" dir=in action=allow protocol=TCP localport=[[ backend_port ]]
+```
+
+## 二、原理（一句话）
+
+`server.exe` 的配置/报告路径按**运行用户**的 `%APPDATA%` / `%LOCALAPPDATA%` 解析
+（与 Ubuntu 侧 systemd `User=` 同理），所以计划任务必须以**实际使用人**身份运行，
+不要用 SYSTEM。ONLOGON 模式：登录即启、锁屏不断、注销才停。
+
+## 三、日常管理
+
+| 操作 | 命令 |
+|---|---|
+| 立即启动 | `schtasks /Run /TN "[[ package_name_capitalized ]]Server"` |
+| 停止 | `schtasks /End /TN "[[ package_name_capitalized ]]Server"` |
+| 看状态 | `schtasks /Query /TN "[[ package_name_capitalized ]]Server" /V /FO LIST`（"上次运行结果"=0 为正常） |
+| 删除任务 | `schtasks /Delete /TN "[[ package_name_capitalized ]]Server" /F` |
+| 删防火墙规则 | `netsh advfirewall firewall delete rule name="[[ package_name_capitalized ]]"` |
+
+验证是否已起来：
+
+```powershell
+netstat -ano | findstr :[[ backend_port ]]    # 看端口监听
+curl http://localhost:[[ backend_port ]]      # 或直接访问
+```
+
+应用自身日志在：`%LOCALAPPDATA%\[[ package_name]]\datas\logs\`
+
+## 四、升级
+
+直接双击装新版 NSIS 安装包（覆盖安装，server.exe 路径不变，计划任务无需重建），
+然后 `schtasks /End` + `schtasks /Run` 重启生效。
+
+## 五、卸载
+
+正常卸载应用后补两条清理：
+
+```powershell
+schtasks /Delete /TN "[[ package_name_capitalized ]]Server" /F
+netsh advfirewall firewall delete rule name="[[ package_name_capitalized ]]"
+```
+
+---
+
+# 通用注意事项
+
+1. **单进程**：会话/租约等状态在内存单例，不要手动再起第二个 server 实例（端口冲突+状态错乱）；
+   开发态 `dev.py start` 与服务部署同样互斥，回开发前先停服务
+2. **崩溃自愈**：Ubuntu systemd 配了 `Restart=on-failure`（3s 自动拉起）；Windows 计划任务**没有**崩溃自动重启，出现稳定性问题再考虑 WinSW 服务化
+3. **改端口**：设置页改「后端端口」或编辑 `global_config.yaml`，然后重启服务；Windows 侧防火墙规则要同步改 `localport`
+4. **防火墙**：Ubuntu 若开 ufw 需 `sudo ufw allow [[ backend_port ]]/tcp`；Windows 见上文 netsh 命令
+5. **换运行用户**：Ubuntu 编辑服务单元 `User=` 并初始化新用户配置目录（或先以该用户跑一次桌面版）；Windows 删任务后用新用户身份重新创建

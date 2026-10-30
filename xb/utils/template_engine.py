@@ -408,6 +408,16 @@ class TemplateEngine:
             executable=True,
         )
 
+        # 无头后端 systemd 单元模板：postinst 安装时渲染成具体用户版放到位，
+        # 服务器部署只需 sudo systemctl enable --now <包名>-server
+        systemd_dir = resources_dir / "systemd"
+        systemd_dir.mkdir(exist_ok=True)
+        self._render_template(
+            "electron/resources/systemd/server.service.j2",
+            systemd_dir / f"{context['package_name']}-server@.service",
+            context,
+        )
+
 
     def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
         icon_path = context.get("icon_path")
@@ -548,8 +558,9 @@ class TemplateEngine:
         # AGENTS.md：AI 编码助手项目级约定（opencode / Claude Code / Cursor 等会自动读取）
         self._render_template("root/AGENTS.md.j2", target_dir / "AGENTS.md", context)
 
-        # docs/：随模板分发的说明文档（原样拷贝，不渲染变量）。
-        # 打包路径/版本管理/polkit 说明面向全部项目；功能文档按开关分发。
+        # docs/：随模板分发的说明文档。.md 原样拷贝；.md.j2 渲染变量后去掉后缀输出
+        # （含包名/端口等服务名命令的文档必须按项目渲染，如 服务器部署说明.md）。
+        # 打包路径/版本管理/polkit/服务器部署说明面向全部项目；功能文档按开关分发。
         docs_src = Path(__file__).resolve().parent.parent / "templates" / "root" / "docs"
         if docs_src.exists():
             gated_docs = {
@@ -560,12 +571,15 @@ class TemplateEngine:
             docs_dst = target_dir / "docs"
             docs_dst.mkdir(exist_ok=True)
             for item in docs_src.iterdir():
-                gate = gated_docs.get(item.name)
+                base_name = item.name[:-3] if item.name.endswith(".j2") else item.name
+                gate = gated_docs.get(base_name)
                 if gate and not context[gate]:
                     continue
-                dest = docs_dst / item.name
+                dest = docs_dst / base_name
                 if item.is_dir():
                     shutil.copytree(item, dest, dirs_exist_ok=True)
+                elif item.name.endswith(".j2"):
+                    self._render_template(f"root/docs/{item.name}", dest, context)
                 else:
                     shutil.copy2(item, dest)
 

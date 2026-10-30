@@ -109,6 +109,34 @@ def test_legacy_config_api_preserves_yaml_comments(tmp_path):
     assert "obfuscate_file_plain_secrets" in config_api
 
 
+def test_server_deployment_template(tmp_path):
+    """服务器部署：systemd 单元模板/postinst/postrm/extraResources/说明文档齐全且变量渲染。"""
+    target = _render(tmp_path, False, False, backend_port=9000)
+
+    unit = target / "electron" / "resources" / "systemd" / "demo-server@.service"
+    assert unit.exists()
+    content = unit.read_text(encoding="utf-8")
+    assert "User=%i" in content  # 占位符由 postinst 替换，不应被提前渲染
+    assert "ExecStart=/opt/Demo/resources/server-bin/server" in content
+
+    postinst = (target / "electron" / "resources" / "postinst.py").read_text(encoding="utf-8")
+    assert '"systemd" / f"{app}-server@.service"' in postinst
+    assert 'systemctl", "daemon-reload"' in postinst
+
+    postrm = (target / "electron" / "resources" / "postrm.py").read_text(encoding="utf-8")
+    assert '"disable", "--now", f"{app}-server.service"' in postrm
+
+    pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
+    assert any(e.get("from") == "resources/systemd" for e in pkg["build"]["extraResources"])
+
+    # 说明文档按项目渲染：包名/端口已替换，不得残留模板占位符
+    doc = (target / "docs" / "服务器部署说明.md").read_text(encoding="utf-8")
+    assert "demo-server" in doc
+    assert "DemoServer" in doc
+    assert ":9000" in doc
+    assert "[[" not in doc
+
+
 @pytest.mark.parametrize(
     ("enable_terminal", "enable_update", "enable_logs"), COMBOS
 )
@@ -130,6 +158,8 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_
         "electron/resources/polkit/privileged.policy",
         "electron/resources/polkit/privileged.rules",
         "electron/resources/polkit/privileged-helper.sh",
+        "electron/resources/systemd/demo-server@.service",
+        "docs/服务器部署说明.md",
         "frontend/src/App.vue",
         "electron/main.js",
         "configs/global_config.yaml",

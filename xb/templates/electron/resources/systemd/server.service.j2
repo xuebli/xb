@@ -1,0 +1,34 @@
+# [[ display_name ]] · 无头后端服务（内网服务器部署用，浏览器访问）
+#
+# DEB 安装时 postinst 已把本模板渲染为具体用户版放到 /etc/systemd/system/
+# [[ package_name]]-server.service（User= 写死为安装时的 $SUDO_USER——
+# 配置/报告在该用户 XDG 目录，换用户会读不到配置）。启用只需一行：
+#
+#   sudo systemctl enable --now [[ package_name]]-server
+#
+# 之后浏览器访问 http://<服务器IP>:<端口>（端口 = 该用户
+# ~/.config/[[ package_name]]/global_config.yaml 的 ports.backend）。
+# 桌面 Electron 用法不受影响，两者不要同时跑（端口冲突）。
+#
+# 卸载 DEB 时 postrm 会自动停止并删除该服务。
+# 本模板仅作参考/手工复部署用（User=%i 由 postinst 替换）。
+#
+# 日志：journalctl -u [[ package_name]]-server -f
+#       应用自身日志仍在 ~/.local/share/[[ package_name]]/datas/logs/
+
+[Unit]
+Description=[[ display_name ]]后端服务（无头，浏览器访问）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/opt/[[ package_name_capitalized ]]/resources/server-bin/server
+Restart=on-failure
+RestartSec=3
+# 单进程约束：全局会话状态是内存单例，禁止多实例/多 worker
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -48,6 +48,15 @@ if os.name != "nt":
                 polkit_path.unlink(missing_ok=True)
             except OSError:
                 pass
+    # 卸载时停止并撤销无头后端服务单元（postinst 安装的；服务可能在跑）
+    unit = Path("/etc/systemd/system") / f"{app}-server.service"
+    if unit.exists():
+        subprocess.run(["systemctl", "disable", "--now", f"{app}-server.service"], check=False)
+        try:
+            unit.unlink()
+        except OSError:
+            pass
+        subprocess.run(["systemctl", "daemon-reload"], check=False)
 
 homes = [Path.home()]
 if action == "purge" and os.name != "nt":
