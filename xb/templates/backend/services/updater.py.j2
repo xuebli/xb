@@ -338,26 +338,27 @@ class UpdateService:
                 self._download_state["error"] = str(e)
 
     def _verify_hash(self, path: Path, expected: str) -> bool:
-        """校验文件哈希。期望值格式为 "sha256:<hex>"；未提供时跳过校验。"""
-        if not expected:
-            logger.warning(f"版本信息未提供哈希，跳过校验: {path.name}")
-            return True
-
-        algo, _, digest = expected.partition(":")
-        if not digest:
-            algo, digest = "sha256", algo
-
-        try:
-            hasher = hashlib.new(algo)
-        except ValueError:
-            logger.error(f"不支持的哈希算法: {algo}")
+        """严格校验 SHA256；缺失哈希、弱算法或非法摘要全部失败关闭。"""
+        if not isinstance(expected, str) or not expected.strip():
+            logger.error(f"版本信息未提供 SHA256 哈希，拒绝安装: {path.name}")
             return False
 
+        algo, separator, digest = expected.strip().partition(":")
+        if not separator:
+            # 兼容早期发布端生成的纯 64 位 SHA256 十六进制摘要。
+            algo, digest = "sha256", algo
+        algo = algo.lower()
+        digest = digest.strip()
+        if algo != "sha256" or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            logger.error(f"版本信息哈希格式非法（只支持 SHA256）: {expected}")
+            return False
+
+        hasher = hashlib.sha256()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 hasher.update(chunk)
         actual = hasher.hexdigest()
-        if actual.lower() != digest.strip().lower():
+        if actual.lower() != digest.lower():
             logger.error(f"哈希不匹配: 期望 {digest}，实际 {actual}")
             return False
         return True

@@ -1,5 +1,10 @@
+import hashlib
+import importlib.util
 import json
+import sys
+import types
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -30,6 +35,57 @@ def render_project(tmp_path):
         return target
 
     return _render
+
+
+def _load_updater(monkeypatch, path: Path):
+    """用轻量桩加载生成的更新服务，避免测试依赖完整生成项目环境。"""
+    app_version = types.ModuleType("app_version")
+    app_version.APP_VERSION = "1.0.0"
+    managers = types.ModuleType("managers")
+    managers.__path__ = []
+    managers.get_logger = lambda _name: Mock()
+    managers.path_manager = Mock()
+    managers.privileged_manager = Mock()
+    managers.secret_obfuscator = Mock()
+    yaml_comments = types.ModuleType("managers.yaml_comments")
+    yaml_comments.dump_yaml_with_labels = Mock()
+    yaml_comments.parse_yaml_labels = Mock()
+    services = types.ModuleType("services")
+    services.__path__ = []
+    feishu = types.ModuleType("services.feishu_client")
+    feishu.feishu_client = Mock()
+    for name, module in {
+        "app_version": app_version,
+        "managers": managers,
+        "managers.yaml_comments": yaml_comments,
+        "services": services,
+        "services.feishu_client": feishu,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    spec = importlib.util.spec_from_file_location("rendered_updater", path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_update_hash_is_strict_sha256(monkeypatch, render_project, tmp_path):
+    target = render_project("updatable_app", enable_update=True)
+    updater = _load_updater(
+        monkeypatch, target / "backend" / "services" / "updater.py"
+    )
+    service = updater.UpdateService()
+    package = tmp_path / "app.deb"
+    payload = b"signed-package-content"
+    package.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    assert service._verify_hash(package, f"sha256:{digest}")
+    assert service._verify_hash(package, digest)  # 兼容早期纯十六进制发布信息
+    for invalid in (None, "", "md5:" + digest, "sha1:" + digest, "sha256:abc", "invalid"):
+        assert not service._verify_hash(package, invalid)
+    assert not service._verify_hash(package, "sha256:" + "0" * 64)
 
 
 def test_init_without_update_skips_update_files(render_project):
@@ -74,11 +130,12 @@ def test_init_with_update_renders_update_files(render_project):
     assert "UpdatePanel" in badge
     assert "CommitHistoryPanel" in badge
 
-    # 更新安装链安全基线：远端文件名白名单、未知 hash 失败关闭、安装不走 bash -c、配置迁移逐文件 reload。
+    # 更新安装链安全基线：文件名白名单、严格 SHA256、安装不走 bash -c、配置迁移逐文件 reload。
     updater = (target / "backend" / "services" / "updater.py").read_text(encoding="utf-8")
     assert 'filename = Path(package.get("filename") or "").name' in updater
     assert 're.fullmatch(r"[A-Za-z0-9._-]+", filename)' in updater
-    assert 'logger.error(f"不支持的哈希算法: {algo}")' in updater
+    assert 'algo != "sha256"' in updater
+    assert "版本信息未提供 SHA256 哈希" in updater
     assert '"/bin/bash", "-c"' not in updater
     assert 'path_manager.reload_config(item["filename"])' in updater
     assert 'safe_name = Path(filename).name' in updater
