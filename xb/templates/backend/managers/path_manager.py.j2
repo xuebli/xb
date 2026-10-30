@@ -264,7 +264,12 @@ class PathManager:
         """
         import json
 
-        changes_path = self.get_config_path("config_changes.json")
+        src_root = self.bundled_configs_dir
+        if src_root is None or not src_root.exists():
+            return []
+        # 迁移声明是应用内部元数据，必须读新包资源；用户目录里的副本可能
+        # 是首次安装留下的旧版，读它会导致新增的 overwrite 声明永远漏掉。
+        changes_path = src_root / "config_changes.json"
         if not changes_path.exists():
             return []
         try:
@@ -278,10 +283,6 @@ class PathManager:
             for item in (block or {}).get("files") or []:
                 if item.get("action") == "overwrite" and item.get("filename"):
                     declared.add(item["filename"])
-
-        src_root = self.bundled_configs_dir
-        if src_root is None or not src_root.exists():
-            return []
 
         overwritten = []
         for name in sorted(declared):

@@ -136,6 +136,46 @@ def test_download_without_range_uses_single_stream(monkeypatch, render_project, 
     assert not save_path.with_suffix(".deb.part").exists()
 
 
+def test_startup_sync_reads_bundled_overwrite_declarations(monkeypatch, render_project, tmp_path):
+    managers = types.ModuleType("managers")
+    managers.__path__ = []
+    yaml_comments = types.ModuleType("managers.yaml_comments")
+    yaml_comments.dump_yaml_with_labels = Mock()
+    yaml_comments.parse_yaml_labels = Mock()
+    monkeypatch.setitem(sys.modules, "managers", managers)
+    monkeypatch.setitem(sys.modules, "managers.yaml_comments", yaml_comments)
+    target = render_project("updatable_app", enable_update=True)
+    spec = importlib.util.spec_from_file_location(
+        "managers.path_manager", target / "backend" / "managers" / "path_manager.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    bundled = tmp_path / "bundled"
+    user = tmp_path / "user"
+    bundled.mkdir()
+    user.mkdir()
+    (bundled / "config_changes.json").write_text(
+        json.dumps({
+            "1.0.0": {
+                "files": [{"action": "overwrite", "filename": "test_plan.csv"}]
+            }
+        }),
+        encoding="utf-8",
+    )
+    (bundled / "test_plan.csv").write_text("new-plan", encoding="utf-8")
+    (user / "config_changes.json").write_text("{}", encoding="utf-8")
+    (user / "test_plan.csv").write_text("old-plan", encoding="utf-8")
+    manager = module.PathManager()
+    manager.bundled_configs_dir = bundled
+    manager.config_dir = user
+
+    assert manager.sync_declared_overwrites() == ["test_plan.csv"]
+    assert (user / "test_plan.csv").read_text(encoding="utf-8") == "new-plan"
+    assert (user / "test_plan.csv.bak").read_text(encoding="utf-8") == "old-plan"
+
+
 def _load_update_api(monkeypatch, path: Path, update_service):
     """加载更新路由并隔离 Web 框架，直接验证安装编排顺序。"""
     class StubHTTPExceptionError(Exception):
