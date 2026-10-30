@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
+import io
 import json
+import runpy
 import sys
 import types
 from pathlib import Path
@@ -85,6 +87,53 @@ def test_update_hash_is_strict_sha256(monkeypatch, render_project, tmp_path):
     for invalid in (None, "", "md5:" + digest, "sha1:" + digest, "sha256:abc", "invalid"):
         assert not service._verify_hash(package, invalid)
     assert not service._verify_hash(package, "sha256:" + "0" * 64)
+
+
+def test_download_without_range_uses_single_stream(monkeypatch, render_project, tmp_path):
+    managers = types.ModuleType("managers")
+    managers.get_logger = lambda _name: Mock()
+    managers.path_manager = Mock()
+    monkeypatch.setitem(sys.modules, "managers", managers)
+    target = render_project("updatable_app", enable_update=True)
+    namespace = runpy.run_path(str(target / "backend" / "services" / "feishu_client.py"))
+
+    class FakeResponse:
+        def __init__(self, payload: bytes, status: int):
+            self.status = status
+            self.headers = {"Content-Length": str(len(payload))}
+            self._stream = io.BytesIO(payload)
+            self.closed = False
+
+        def read(self, size=-1):
+            return self._stream.read(size)
+
+        def close(self):
+            self.closed = True
+
+    payload = b"x" * (4 * 1024 * 1024 + 123)
+    initial = FakeResponse(b"", 200)
+    initial.headers["Content-Length"] = str(len(payload))
+    probe = FakeResponse(payload, 200)  # 不支持 Range：忽略请求头并返回全量内容
+    client = namespace["FeishuClient"]()
+    client._open_download = Mock(side_effect=[(initial, None), (probe, None)])
+    save_path = tmp_path / "app.deb"
+    progress = []
+
+    result = client.download_file(
+        "file-token",
+        save_path,
+        progress_cb=lambda downloaded, total: progress.append((downloaded, total)),
+        workers=4,
+        chunk_size=1024,
+    )
+
+    assert result == save_path
+    assert save_path.read_bytes() == payload
+    assert client._open_download.call_count == 2
+    assert client._open_download.call_args_list[1].args == ("file-token", "bytes=0-1023")
+    assert progress[-1] == (len(payload), len(payload))
+    assert initial.closed and probe.closed
+    assert not save_path.with_suffix(".deb.part").exists()
 
 
 def _load_update_api(monkeypatch, path: Path, update_service):

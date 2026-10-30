@@ -190,12 +190,42 @@ class FeishuClient:
 
         # 大文件：Range 探测确认并发可行性。零长度 Range（bytes=0-0）会被飞书
         # 以 9499 拒绝，探测块至少 1 字节。
-        probe, _ = self._open_download(file_token, "bytes=0-1023")
+        probe, probe_raw = self._open_download(file_token, "bytes=0-1023")
         supports_range = getattr(probe, "status", 200) == 206
-        probe.close()
 
         save_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = save_path.with_suffix(save_path.suffix + ".part")
+        if not supports_range:
+            # 服务器忽略 Range 并返回 200 时，这次响应已经是全量内容；
+            # 直接顺序流式写盘，不能再进入仍要求 206 的分块路径。
+            downloaded = 0
+            try:
+                with open(tmp_path, "wb") as f:
+                    if probe_raw is not None:
+                        f.write(probe_raw)
+                        downloaded = len(probe_raw)
+                        if progress_cb:
+                            progress_cb(downloaded, total)
+                    else:
+                        while True:
+                            chunk = probe.read(256 * 1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if progress_cb:
+                                progress_cb(downloaded, total)
+                if downloaded != total:
+                    raise RuntimeError(f"单流下载长度不符: {downloaded}/{total}")
+                probe.close()
+                tmp_path.replace(save_path)
+                return save_path
+            except Exception:
+                probe.close()
+                tmp_path.unlink(missing_ok=True)
+                raise
+        probe.close()
+
         # 预分配目标大小，各线程 seek 到自己的区间写入（多 fd 写同一文件不同区域是安全的）
         with open(tmp_path, "wb") as f:
             f.truncate(total)
@@ -250,8 +280,7 @@ class FeishuClient:
             (s, min(s + chunk_size, total) - 1)
             for s in range(0, total, chunk_size)
         ]
-        effective_workers = 1 if not supports_range else max(1, workers)
-        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             futures = [pool.submit(pull, s, e) for s, e in ranges]
             for fut in as_completed(futures):
                 fut.result()
