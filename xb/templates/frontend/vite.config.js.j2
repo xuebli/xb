@@ -3,6 +3,32 @@ import vue from '@vitejs/plugin-vue'
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { networkInterfaces } from 'node:os'
+
+// 启动后打开真实局域网 IP（其他设备可直接访问；127.0.0.1/localhost 换设备/手机
+// 就打不开，也不能用于飞书回调白名单）。虚拟网卡（VMware/Hyper-V/WSL/Docker 等）
+// 通常排在前面，直接返回会拿到 192.168.x.x 的虚拟地址，先跳过这类接口再找真实
+// 局域网 IP（如 10.x 的 WLAN）
+const VIRTUAL_IF_RE = /vmware|virtualbox|hyper-v|vethernet|wsl|docker|loopback|pseudo|tailscale|zerotier|vpn/i
+
+function getLocalIP() {
+  try {
+    const nets = networkInterfaces()
+    let fallback = null
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family !== 'IPv4' || net.internal) continue
+        if (VIRTUAL_IF_RE.test(name)) {
+          fallback ??= net.address
+          continue
+        }
+        return net.address
+      }
+    }
+    if (fallback) return fallback
+  } catch {}
+  return 'localhost'
+}
 
 // 端口由 dev.py 启动时从 configs/global_config.yaml 读出后通过环境变量注入
 // 直接 `vite` / `npm run dev` 启动时回退到默认 5173，保证脱离 dev.py 也能跑
@@ -13,11 +39,11 @@ const VITE_BACKEND_PORT = Number(process.env.VITE_BACKEND_PORT) || 8000
 export default defineConfig({
   plugins: [vue()],
   server: {
-    // 后端包含终端、设置和更新接口，不能在未鉴权时暴露到局域网。
-    host: '127.0.0.1',
+    // 监听局域网，启动后打开真实局域网 IP
+    host: '0.0.0.0',
     port: VITE_DEV_PORT,
     strictPort: true,
-    open: `http://127.0.0.1:${VITE_DEV_PORT}`,
+    open: `http://${getLocalIP()}:${VITE_DEV_PORT}`,
     // 开发态前端请求 /api 时转发到 FastAPI，避免被 Vite 的 SPA fallback 返回 index.html。
     proxy: {
       '/api': {

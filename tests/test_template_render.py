@@ -154,6 +154,14 @@ def test_feishu_auth_template(tmp_path):
     style = (target / "frontend" / "src" / "style.css").read_text(encoding="utf-8")
     assert ".login-wall" in style
 
+    # dev 启动打开真实局域网 IP（所有项目）；后端生产监听仅飞书登录项目放开局域网
+    vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
+    assert "host: '0.0.0.0'" in vite
+    assert "getLocalIP()" in vite
+    assert "open: `http://127.0.0.1" not in vite
+    main = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert 'host="0.0.0.0"' in main
+
     # 部署文档恢复飞书白名单条目；前提条件文档随开关分发且端口已渲染
     doc = (target / "docs" / "服务器部署说明.md").read_text(encoding="utf-8")
     assert "/api/auth/feishu/callback" in doc
@@ -177,6 +185,12 @@ def test_feishu_auth_template(tmp_path):
     plain_doc = (plain / "docs" / "服务器部署说明.md").read_text(encoding="utf-8")
     assert "feishu" not in plain_doc
     assert not (plain / "docs" / "飞书登录说明.md").exists()
+
+    # 未启用时：vite 与后端生产监听同样放开局域网（全项目一致）
+    plain_vite = (plain / "frontend" / "vite.config.js").read_text(encoding="utf-8")
+    assert "host: '0.0.0.0'" in plain_vite
+    assert "getLocalIP()" in plain_vite
+    assert 'host="0.0.0.0"' in plain_main
 
 
 def test_version_manager_syncs_uv_lock(tmp_path):
@@ -396,18 +410,20 @@ def test_render_project_main_py_switches(tmp_path):
     assert "sudoers_manager" not in main_full
 
 
-def test_network_defaults_are_local_only(tmp_path):
-    """终端/设置/更新接口未鉴权，默认不能暴露到局域网或陌生网页来源。"""
+def test_network_defaults_lan_ready(tmp_path):
+    """前后端默认监听局域网（无头服务/多人协作入口即 局域网IP:端口）；
+    安全防护靠 CORS 来源白名单与终端 WS origin 校验，而非绑定地址。"""
     target = _render(tmp_path, True, True)
 
     main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
-    assert 'host="127.0.0.1"' in main_py
+    assert 'host="0.0.0.0"' in main_py
     assert "allow_origins=get_local_origins()" in main_py
     assert 'allow_origins=["*"]' not in main_py
 
     vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
-    assert "host: '127.0.0.1'" in vite
-    assert "host: '0.0.0.0'" not in vite
+    assert "host: '0.0.0.0'" in vite
+    assert "getLocalIP()" in vite
+    assert "127.0.0.1:${VITE_DEV_PORT}" not in vite
 
     terminal = (target / "backend" / "api" / "terminal" / "routes.py").read_text(
         encoding="utf-8"

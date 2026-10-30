@@ -200,5 +200,7 @@ async def serve_frontend(full_path: str):
 
 if __name__ == "__main__":
     backend_port = path_manager.get_config_value("ports.backend", default=8000)
-    # 默认仅允许本机访问；终端、设置和更新接口不能无鉴权暴露到局域网。
-    uvicorn.run(app, host="127.0.0.1", port=int(backend_port), log_config=None)
+    # 监听局域网：dev/无头服务/多人协作的入口都是 局域网IP:端口。
+    # 飞书登录项目由 auth 中间件兜底鉴权；其余项目靠 CORS 来源白名单
+    # （get_local_origins）与终端 WS 的 origin 校验挡住陌生来源。
+    uvicorn.run(app, host="0.0.0.0", port=int(backend_port), log_config=None)
