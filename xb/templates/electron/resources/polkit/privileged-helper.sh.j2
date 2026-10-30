@@ -25,9 +25,9 @@ UPDATES_DIR_SUFFIX=".local/share/${APP}/datas/updates"
 usage() {
     echo "用法: privileged-helper <action> [args...]" >&2
 [% if enable_update %]
-    echo "可用 action: install-update" >&2
+    echo "可用 action: install-update, server-service <start|stop|restart>" >&2
 [% else %]
-    echo "可用 action: （暂无登记，按文件头注释新增）" >&2
+    echo "可用 action: server-service <start|stop|restart>" >&2
 [% endif %]
     exit 2
 }
@@ -49,10 +49,31 @@ case "$ACTION" in
                 exit 3
                 ;;
         esac
-        exec /usr/bin/dpkg -i -- "$REAL"
+        /usr/bin/dpkg -i -- "$REAL"
+        DPKG_RC=$?
+        # 无头服务部署（网页访问）：装完自动重启服务让新版本生效；
+        # try-restart 只在服务已运行时重启，桌面 Electron 用户无感
+        if [ $DPKG_RC -eq 0 ]; then
+            /usr/bin/systemctl try-restart "${APP}-server.service" 2>/dev/null || true
+        fi
+        exit $DPKG_RC
         ;;
 
 [% endif %]
+    # 无头后端服务控制：只允许对本应用固定的 unit 做 start/stop/restart
+    # （dev 调试切换、应用内更新后重启服务用）
+    server-service)
+        [ $# -eq 1 ] || usage
+        case "$1" in
+            start|stop|restart) ;;
+            *)
+                echo "拒绝操作: $1（仅允许 start/stop/restart）" >&2
+                exit 3
+                ;;
+        esac
+        exec /usr/bin/systemctl "$1" "${APP}-server.service"
+        ;;
+
     # 示例：新增操作时取消注释并按需修改
     # set-hostname)
     #     [ $# -eq 1 ] || usage

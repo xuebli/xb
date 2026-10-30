@@ -119,6 +119,26 @@ def test_build_py_electron_eperm_fallback(tmp_path):
     assert "-c.electronDist=dist/electron-skeleton" in build_py
 
 
+def test_polkit_headless_server_support(tmp_path):
+    """polkit 无头服务适配：rules 无 local/active 约束（systemd 服务不属 logind 会话）；
+    helper 装完 DEB try-restart 服务 + server-service action（update 与非 update 项目都有）。"""
+    target = _render(tmp_path, False, True)
+    rules = (target / "electron" / "resources" / "polkit" / "privileged.rules").read_text(encoding="utf-8")
+    assert "subject.local &&" not in rules
+    assert "subject.active &&" not in rules
+
+    helper = (target / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(encoding="utf-8")
+    assert 'try-restart "${APP}-server.service"' in helper
+    assert "server-service)" in helper
+
+    # 非 update 项目：无 install-update/try-restart，但 server-service 保留
+    target2 = _render(tmp_path / "plain", False, False)
+    helper2 = (target2 / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(encoding="utf-8")
+    assert "install-update" not in helper2
+    assert "try-restart" not in helper2
+    assert "server-service)" in helper2
+
+
 def test_build_py_safe_input_and_obfuscate_abort(tmp_path):
     """build.py 非交互环境 _safe_input 兜底 + 敏感键混淆失败必须中止（防明文进安装包）。"""
     target = _render(tmp_path, False, True)

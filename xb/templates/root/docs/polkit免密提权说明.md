@@ -15,7 +15,7 @@
 
 ```
 应用（普通用户） → pkexec 请求执行 root 拥有的白名单执行器 privileged-helper
-                → polkit 查规则：管理员组成员 + 本地活跃会话 → 直接放行（免密）
+                → polkit 查规则：sudo/wheel 管理员组成员（不限会话类型） → 直接放行（免密）
                 → helper 内部校验参数白名单 → 以 root 执行登记过的操作
 ```
 
@@ -64,7 +64,7 @@ helper 白名单内（未登记的操作一律拒绝）。
 
 | 层 | 载体 | 防什么 |
 |----|------|--------|
-| 身份放行 | `/etc/polkit-1/rules.d/60-<app>-privileged.rules` | 只有 sudo/wheel 组成员的**本地活跃会话**免密；其他人要么输管理员密码（auth_admin_keep 兜底），要么被拒 |
+| 身份放行 | `/etc/polkit-1/rules.d/60-<app>-privileged.rules` | 只有 sudo/wheel 组成员免密（不限会话类型，systemd 无头服务同样放行）；其他人要么输管理员密码（auth_admin_keep 兜底），要么被拒 |
 | 操作白名单 | `/usr/local/share/<app>/privileged-helper`（root:root 0755） | 只有 case 里登记过的操作可执行；参数逐一校验（realpath 防逃逸、路径白名单、格式校验） |
 | 不可篡改 | helper 由 DEB postinst / `install -m755` 以 root 部署 | 普通用户无法修改 helper 内容——白名单不会被篡改成提权后门 |
 
@@ -195,10 +195,11 @@ DEB 安装不应出现（postinst 装好）；开发模式执行
 `python dev.py polkit install`（或 `dev.py start` 自动同步）。
 
 **Q：管理员用户为什么还要输密码？**
-rules 放行要求 `subject.local && subject.active`（本地活跃会话）。
-SSH 转发、非登录 shell 等场景不算活跃会话，落到 policy 的
-`auth_admin` 兜底。另外确认用户确实在 `sudo`（Ubuntu/Debian）或
-`wheel`（通用）组里：`groups`。
+确认用户确实在 `sudo`（Ubuntu/Debian）或 `wheel`（通用）组里：`groups`。
+rules 只按组成员身份放行，**不限会话类型**——曾有的 `subject.local &&
+subject.active`（本地活跃会话）约束已移除：systemd 无头服务不属于任何
+logind 会话（local=false/active=false），加约束会让服务器模式的应用内
+更新退化成"textual authentication agent /dev/tty 不存在"失败。
 
 **Q：无桌面环境（无认证代理）会不会卡住？**
 不会。rules 返回 `polkit.Result.YES` 后 polkit 不再需要认证代理，
