@@ -2,21 +2,38 @@ const { BrowserWindow, ipcMain } = require('electron');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 
+function pidsFromNetstat(output, port) {
+    const expected = Number(port);
+    if (!Number.isInteger(expected)) return [];
+    const pids = output
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/))
+        .filter((parts) => parts.length >= 5
+            && parts[0].toUpperCase() === 'TCP'
+            && parts[parts.length - 2].toUpperCase() === 'LISTENING')
+        .filter((parts) => {
+            const localAddress = parts[1];
+            const separator = localAddress.lastIndexOf(':');
+            if (separator < 0) return false;
+            const localPort = Number(localAddress.slice(separator + 1));
+            return Number.isInteger(localPort) && localPort === expected;
+        })
+        .map((parts) => parts[parts.length - 1])
+        .filter((pid) => /^\d+$/.test(pid));
+    return [...new Set(pids)];
+}
+
 function pidsForPort(port) {
     if (process.platform === 'win32') {
         try {
             const output = execFileSync('netstat', ['-ano'], { encoding: 'utf-8' });
-            return output
-                .split(/\r?\n/)
-                .filter((line) => line.includes(`:${port}`) && line.includes('LISTENING'))
-                .map((line) => line.trim().split(/\s+/).pop())
-                .filter(Boolean);
+            return pidsFromNetstat(output, port);
         } catch (_) {
             return [];
         }
     }
     try {
-        const output = execFileSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf-8' });
+        const output = execFileSync('lsof', ['-nP', `-tiTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf-8' });
         return output.split(/\s+/).filter(Boolean);
     } catch (e) {
         try {
@@ -196,4 +213,4 @@ ipcRenderer.on('port-diagnostics:launching', () => {
     return win;
 }
 
-module.exports = { portOwners, setupPortDiagnosticsHandlers, showPortConflictWindow };
+module.exports = { pidsFromNetstat, portOwners, setupPortDiagnosticsHandlers, showPortConflictWindow };

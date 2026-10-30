@@ -12,6 +12,8 @@ import itertools
 import json
 import re
 import runpy
+import shutil
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -204,6 +206,66 @@ def test_network_defaults_are_local_only(tmp_path):
     )
     assert 'is_local_origin(websocket.headers.get("origin"))' in terminal
     assert "code=1008" in terminal
+
+
+NETSTAT_SAMPLE = """
+  TCP    127.0.0.1:80         0.0.0.0:0          LISTENING       111
+  TCP    127.0.0.1:8000       0.0.0.0:0          LISTENING       222
+  TCP    127.0.0.1:18080      0.0.0.0:0          LISTENING       333
+  TCP    127.0.0.1:80         127.0.0.1:50000    ESTABLISHED     444
+  TCP    [::]:80              [::]:0             LISTENING       555
+"""
+
+
+def test_dev_windows_port_parser_matches_exact_listener(tmp_path):
+    target = _render(tmp_path, False, False)
+    dev_path = target / "dev.py"
+    tree = ast.parse(dev_path.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "windows_pids_for_port"
+    )
+    namespace = {}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(dev_path), "exec"), namespace)
+    parse = namespace["windows_pids_for_port"]
+    assert parse(NETSTAT_SAMPLE, 80) == {"111", "555"}
+    assert parse(NETSTAT_SAMPLE, 8000) == {"222"}
+    assert parse(NETSTAT_SAMPLE, 8080) == set()
+
+
+def test_electron_windows_port_parser_matches_exact_listener(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("未安装 Node.js")
+    target = _render(tmp_path, False, False)
+    script = r"""
+const Module = require('module');
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === 'electron') return {};
+  return originalLoad.call(this, request, parent, isMain);
+};
+const { pidsFromNetstat } = require(process.argv[1]);
+const output = `
+  TCP    127.0.0.1:80         0.0.0.0:0          LISTENING       111
+  TCP    127.0.0.1:8000       0.0.0.0:0          LISTENING       222
+  TCP    127.0.0.1:18080      0.0.0.0:0          LISTENING       333
+  TCP    127.0.0.1:80         127.0.0.1:50000    ESTABLISHED     444
+  TCP    [::]:80              [::]:0             LISTENING       555
+`;
+const actual = pidsFromNetstat(output, 80);
+if (JSON.stringify(actual) !== JSON.stringify(['111', '555'])) {
+  throw new Error(`unexpected pids: ${JSON.stringify(actual)}`);
+}
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(target / "electron" / "port_diagnostics.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_logs_assets(tmp_path):

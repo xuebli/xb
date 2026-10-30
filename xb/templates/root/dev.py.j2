@@ -236,16 +236,33 @@ def service_status(name: str) -> str:
     return "运行中" if process_alive(name) else "未运行"
 
 
+def windows_pids_for_port(output: str, port: int) -> set[str]:
+    """按 netstat 列精确匹配本地监听端口，避免 80 误匹配 8000/18080。"""
+    pids = set()
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP" or parts[-2].upper() != "LISTENING":
+            continue
+        _host, separator, local_port = parts[1].rpartition(":")
+        if separator and local_port.isdigit() and int(local_port) == port and parts[-1].isdigit():
+            pids.add(parts[-1])
+    return pids
+
+
 def kill_port(port: int) -> None:
     """清理 PID 文件之外仍占用端口的进程，兼容 Windows/Linux。"""
     if os.name == "nt":
         result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
-        pids = {line.split()[-1] for line in result.stdout.splitlines()
-                if f":{port}" in line and "LISTENING" in line}
+        pids = windows_pids_for_port(result.stdout, port)
         for pid in pids:
             subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], check=False)
     elif shutil.which("lsof"):
-        result = subprocess.run(["lsof", "-ti", f"TCP:{port}"], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["lsof", "-nP", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         for pid in result.stdout.split():
             try:
                 os.kill(int(pid), signal.SIGTERM)
@@ -336,11 +353,17 @@ def print_port_owner(port: int) -> None:
     """显示占用端口的 PID，帮助定位启动失败原因。"""
     if os.name == "nt":
         result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
-        owners = {line.split()[-1] for line in result.stdout.splitlines()
-                  if f":{port}" in line and "LISTENING" in line}
-    else:
-        result = subprocess.run(["lsof", "-ti", f"TCP:{port}"], capture_output=True, text=True, check=False)
+        owners = windows_pids_for_port(result.stdout, port)
+    elif shutil.which("lsof"):
+        result = subprocess.run(
+            ["lsof", "-nP", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         owners = set(result.stdout.split())
+    else:
+        owners = set()
     if owners:
         print(f"端口 {port} 已被占用，PID: {', '.join(sorted(owners))}")
 
