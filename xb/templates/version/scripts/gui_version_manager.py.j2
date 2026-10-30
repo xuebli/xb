@@ -419,12 +419,13 @@ class GuiVersionManager:
             )
 
             if result.returncode == 0:
-                # version_manager.update_version 会同步四个文件的版本号，
+                # version_manager.update_version 会同步各版本文件的版本号，
                 # 这里全部 stage 进本次 commit（文件可能因安装失败不存在，过滤之）
                 version_files = [
                     "electron/package.json",
                     "pyproject.toml",
                     "electron/package-lock.json",
+                    "uv.lock",
 [% if enable_update %]
                     "backend/app_version.py",
 [% endif %]

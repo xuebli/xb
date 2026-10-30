@@ -119,6 +119,40 @@ def test_build_py_electron_eperm_fallback(tmp_path):
     assert "-c.electronDist=dist/electron-skeleton" in build_py
 
 
+def test_version_manager_syncs_uv_lock(tmp_path):
+    """版本 bump 同步根目录 uv.lock 的 editable 根包版本（不碰依赖/锁头），web/gui 提交清单含 uv.lock。"""
+    target = _render(tmp_path, False, True)
+    vm_path = target / "version" / "scripts" / "version_manager.py"
+    assert "def update_uv_lock_version" in vm_path.read_text(encoding="utf-8")
+
+    uv_lock = target / "uv.lock"
+    uv_lock.write_text(
+        'version = 1\n\n'
+        '[[package]]\nname = "fastapi"\nversion = "0.100.0"\n'
+        'source = { registry = "https://example.com" }\n\n'
+        '[[package]]\nname = "demo"\nversion = "1.0.0"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
+
+    # 直接加载渲染出的脚本，验证真实行为而非仅字符串
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("version_manager", vm_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    manager = module.VersionManager(str(target))
+    manager.update_uv_lock_version("2.0.0")
+
+    content = uv_lock.read_text(encoding="utf-8")
+    assert 'name = "demo"\nversion = "2.0.0"' in content
+    assert 'name = "fastapi"\nversion = "0.100.0"' in content  # 依赖包不动
+    assert content.startswith("version = 1")  # 锁文件格式头不动
+
+    for name in ("web_version_manager.py", "gui_version_manager.py"):
+        staged = (target / "version" / "scripts" / name).read_text(encoding="utf-8")
+        assert '"uv.lock",' in staged, f"{name} 提交清单缺少 uv.lock"
+
+
 def test_polkit_headless_server_support(tmp_path):
     """polkit 无头服务适配：rules 无 local/active 约束（systemd 服务不属 logind 会话）；
     helper 装完 DEB try-restart 服务 + server-service action（update 与非 update 项目都有）。"""
