@@ -1,3 +1,23 @@
 from fastapi import APIRouter
 
+from managers import path_manager
+
 router = APIRouter()
+
+
+def get_local_origins() -> list[str]:
+    """返回本机 Electron 与 Vite 页面允许的 HTTP/WebSocket 来源。"""
+    ports = {
+        path_manager.get_config_value("ports.backend", default=8000),
+        path_manager.get_config_value("ports.frontend", default=5173),
+    }
+    return [
+        f"http://{host}:{port}"
+        for host in ("127.0.0.1", "localhost")
+        for port in sorted(ports, key=int)
+    ]
+
+
+def is_local_origin(origin: str | None) -> bool:
+    """只接受明确的本机页面来源，拒绝跨站 WebSocket 和 ``Origin: null``。"""
+    return bool(origin) and origin in get_local_origins()

@@ -109,6 +109,8 @@ python .\dev.py stop
 
 使用 `--terminal` 时，Windows 终端使用 PowerShell + ConPTY，支持上下箭头
 命令历史、复制粘贴、Tab 补全和 Ctrl+C；Ubuntu/Debian 使用 bash + Unix PTY。
+后端、Vite 与终端 WebSocket 默认仅允许本机访问并校验页面 Origin；
+在补齐身份认证前不要改为 `0.0.0.0` 暴露到局域网。
 
 Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 若安装过程被网络中断，生成项目的

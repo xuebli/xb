@@ -131,7 +131,7 @@
 - **可写资源与安装资源分离**：安装包内资源是只读源；确需运行时修改的资源，Windows 放到 `C:\Users\<用户>\AppData\Local\[[ package_name]]\<resource>\`，Linux 放到 `~/.local/share/[[ package_name]]/<resource>/`，并由 `path_manager` 提供统一路径。首次初始化只复制不存在的文件，不得覆盖用户已有文件；若资源应始终保持安装包版本，则直接读取安装资源目录，不复制到用户目录。
 - **manager 单例**：模块底部导出 `xxx_manager = XxxManager(...)` 这种单例。业务代码直接用单例，不要自己 `XxxManager()` 实例化（测试场景例外）。
 - **日志中文 + 统一 `get_logger`**：`from managers import get_logger` → `logger = get_logger(__name__)`；不要 `print()` 也不要 `import logging`。
-- **CORS 全开**：`allow_origins=["*"]`，因为 Electron 壳直接 `loadURL('http://localhost:<backend_port>')`，开发态 vite (5173) 与 backend 端口不同源也得跨。
+- **服务默认仅本机访问**：FastAPI 与 Vite 均绑定 `127.0.0.1`，CORS 只允许本机 Electron/Vite 页面来源，终端 WebSocket 必须校验同一组 `Origin`。终端、设置和更新接口未实现完整身份认证，禁止直接改成 `0.0.0.0` 暴露到局域网；确需 LAN 时必须先补认证与授权。
 - **Electron 快捷键必须保留**：`electron/main.js` 隐藏菜单后要显式支持 `F12` / `Ctrl+Shift+I` 打开 DevTools、`F11` 全屏、`Ctrl/Cmd + +/-/0` 缩放/重置、`Ctrl/Cmd + 鼠标滚轮` 缩放。改窗口或菜单逻辑时不要破坏这些桌面基础能力。
 - **Electron 退出必须清理完整后端进程树**：Windows 在 `before-quit` 中同步执行 `taskkill /PID <serverPid> /T /F`，不能只调用 `backend.kill()`；Linux/macOS 启动后端时使用独立进程组，退出时先向整个进程组发送 `SIGTERM`，超时后发送 `SIGKILL`。[% if enable_terminal %]终端 PTY、PowerShell/bash 及其[% endif %]业务子进程都必须随应用退出。
 - **Windows 卸载默认保留用户数据**：`electron/resources/uninstaller.nsh` 通过 `customUnWelcomePage` 显示复选框并保存状态，再由 `customUnInstall` 删除 `C:\Users\<用户>\AppData\Roaming\[[ package_name]]\` 与 `C:\Users\<用户>\AppData\Local\[[ package_name]]\`。必须显式使用 `SetShellVarContext current`，复选框保持默认不勾选，并用 `${isUpdated}` 排除应用升级流程。

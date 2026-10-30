@@ -179,6 +179,26 @@ def test_render_project_main_py_switches(tmp_path):
     assert "sudoers_manager" not in main_full
 
 
+def test_network_defaults_are_local_only(tmp_path):
+    """终端/设置/更新接口未鉴权，默认不能暴露到局域网或陌生网页来源。"""
+    target = _render(tmp_path, True, True)
+
+    main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert 'host="127.0.0.1"' in main_py
+    assert "allow_origins=get_local_origins()" in main_py
+    assert 'allow_origins=["*"]' not in main_py
+
+    vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
+    assert "host: '127.0.0.1'" in vite
+    assert "host: '0.0.0.0'" not in vite
+
+    terminal = (target / "backend" / "api" / "terminal" / "routes.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'is_local_origin(websocket.headers.get("origin"))' in terminal
+    assert "code=1008" in terminal
+
+
 def test_logs_assets(tmp_path):
     """--logs 项目自带日志接口与面板，关闭时不生成。"""
     target = _render(tmp_path, False, False, True)

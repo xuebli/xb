@@ -65,8 +65,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 改 helper 后再次 start 自动重部署；仅本次输 sudo 密码，不落盘）、端口检查、
 拉起后端与前端（Vite 热更新）。
 
-访问地址：前端 `http://<本机IP>:<frontend端口>`、后端 `http://<本机IP>:<backend端口>`、
-文档 `/docs`；端口以 `configs/global_config.yaml` 的 `ports` 段为准并可在其中修改。
+访问地址：前端 `http://127.0.0.1:<frontend端口>`、后端
+`http://127.0.0.1:<backend端口>`、文档 `/docs`；端口以
+`configs/global_config.yaml` 的 `ports` 段为准并可在其中修改。
+后端、Vite 与终端 WebSocket 默认仅允许本机访问，并校验页面 Origin；
+在补齐身份认证前不要改成 `0.0.0.0` 暴露到局域网。
 
 dev.py 失败时可手动分步启动定位问题：`uv sync --extra dev` 后
 `.venv/bin/python backend/main.py`（Windows 用 `.venv\Scripts\python.exe`），

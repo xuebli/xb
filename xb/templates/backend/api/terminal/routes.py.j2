@@ -20,6 +20,7 @@ if os.name != "nt":
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from api import is_local_origin
 from managers import get_logger
 
 router = APIRouter()
@@ -28,7 +29,10 @@ logger = get_logger(__name__)
 
 @router.websocket("/terminal/ws")
 async def terminal_ws(websocket: WebSocket):
-    """本地交互式终端 WebSocket"""
+    """本地交互式终端 WebSocket；拒绝其他网站跨站连接本机 Shell。"""
+    if not is_local_origin(websocket.headers.get("origin")):
+        await websocket.close(code=1008, reason="仅允许本机应用页面连接终端")
+        return
     await websocket.accept()
     await _handle_local_terminal(websocket)
 
