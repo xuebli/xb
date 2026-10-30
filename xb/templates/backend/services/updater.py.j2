@@ -9,6 +9,7 @@
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -267,7 +268,8 @@ class UpdateService:
 
         if not file_token:
             raise ValueError("版本信息缺少 package.file_token，无法下载安装包")
-        if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+        # 允许空格（NSIS 默认产物名 "xxx Setup 1.2.3.exe" 含空格）；路径穿越已由上面的 Path.name 杜绝
+        if not filename or not re.fullmatch(r"[A-Za-z0-9._ ()-]+", filename):
             raise ValueError("版本信息 package.filename 非法，无法下载安装包")
 
         with self._lock:
@@ -680,8 +682,8 @@ class UpdateService:
 
         两个平台的时序约束相反，不能共用一套逻辑：
 
-        - Windows：exe 文件被运行中的进程锁定，必须等应用退出后再装
-          （detached 子进程先 timeout 再跑安装器）。
+        - Windows：exe 文件被运行中的进程锁定，必须等应用退出后再装。
+          实现为 bat + 一次性计划任务（见 _install_windows）。
         - Ubuntu：polkit 授权规则由 postinst 预先装好、常驻生效，pkexec
           必须在应用还活着的时候立刻执行——pkexec 校验授权后以 root
           启动 dpkg，之后应用退不退出都无所谓。dpkg 替换正在运行的
@@ -694,43 +696,90 @@ class UpdateService:
         log_path = path_manager.get_log_path("update_install.log")
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if self.get_platform() == "windows":
-            command = f'timeout /t 5 /nobreak >nul & "{package}" /S'
-            args = ["cmd", "/c", command]
-            kwargs = {
-                "creationflags": (
-                    subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                ),
-            }
-            delay_seconds = 5
-        else:
-            # 特权入口缺失（未走 DEB 安装）时提前失败并给出部署指引
-            if not privileged_manager.helper_available():
-                raise RuntimeError(privileged_manager.deploy_hint())
-            # 列表参数直连 pkexec/helper，不走 bash -c，避免安装包路径被 shell 二次解析。
-            args = [
-                "pkexec",
-                str(privileged_manager.HELPER),
-                "install-update",
-                str(package),
-            ]
-            kwargs = {"start_new_session": True}
-            delay_seconds = 0
-
         with open(log_path, "a", encoding="utf-8") as log_file:
             log_file.write(f"\n=== {datetime.now().isoformat()} 安装 {package.name} ===\n")
-            log_file.flush()
+
+        if self.get_platform() == "windows":
+            return self._install_windows(package, log_path)
+
+        # 特权入口缺失（未走 DEB 安装）时提前失败并给出部署指引
+        if not privileged_manager.helper_available():
+            raise RuntimeError(privileged_manager.deploy_hint())
+        # 列表参数直连 pkexec/helper，不走 bash -c，避免安装包路径被 shell 二次解析。
+        args = [
+            "pkexec",
+            str(privileged_manager.HELPER),
+            "install-update",
+            str(package),
+        ]
+        with open(log_path, "a", encoding="utf-8") as log_file:
             subprocess.Popen(
                 args,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 close_fds=True,
-                **kwargs,
+                start_new_session=True,
             )
 
         logger.info(f"已启动安装程序: {package.name}，日志: {log_path}")
-        return {"success": True, "log_path": str(log_path), "delay_seconds": delay_seconds}
+        return {"success": True, "log_path": str(log_path), "delay_seconds": 0}
+
+    # Windows 安装用的计划任务名（ONCE+过去时刻=常驻不自动跑，每次更新覆盖重建）
+    UPDATE_TASK_NAME = "[[ package_name_capitalized ]]UpdateInstall"
+    # bat 末尾尝试重启的无头服务任务名（与 docs/服务器部署说明.md 一致）
+    HEADLESS_TASK_NAME = "[[ package_name_capitalized ]]Server"
+
+    def _install_windows(self, package: Path, log_path: Path) -> dict:
+        """Windows 安装：写 bat → 一次性计划任务脱进程树执行。
+
+        三个必须同时满足的约束：
+
+        1. 文件锁：exe 运行中被锁定，bat 先杀本进程（os.getpid()）再装；
+           桌面端 Electron 退出时也会杀本进程，重复杀无害。
+        2. 进程树：Electron 退出时 taskkill /T /F 会连带杀我们的子进程，
+           所以 bat 必须由任务计划程序（svchost）拉起，彻底脱离后端进程树。
+        3. 引号转义：`Popen(["cmd","/c", 命令串])` 会把串里的 `"` 转义成
+           `\\"`，而 cmd /c 不认这种转义（曾导致安装器路径变成 \\"...\\"
+           字面量报"不是内部或外部命令"）——所以命令落 bat 文件，不经
+           cmd /c 内联传参。
+        """
+        bat = self.get_download_dir() / "install_update.bat"
+        # cmd 按 ANSI(GBK) 解析 bat；内容全 ASCII，用户名含中文时路径也能正确解析
+        bat.write_text(
+            "@echo off\r\n"
+            "rem wait for the backend to release file locks, then kill it if still alive\r\n"
+            "timeout /t 5 /nobreak >nul\r\n"
+            f"taskkill /F /PID {os.getpid()} >nul 2>&1\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
+            f'"{package}" /S >> "{log_path}" 2>&1\r\n'
+            "rem headless server deploy: restart service if the task exists\r\n"
+            f'schtasks /Run /TN "{self.HEADLESS_TASK_NAME}" >nul 2>&1\r\n',
+            encoding="gbk",
+        )
+        # 运行中的任务不能自删，故任务常驻（ONCE+过去的时刻，永不自动触发），
+        # 下次更新前清掉残留再重建
+        subprocess.run(
+            ["schtasks", "/Delete", "/TN", self.UPDATE_TASK_NAME, "/F"],
+            capture_output=True,  # 不存在时报错属正常，忽略
+        )
+        # ONCE + 过去的开始时刻 = 不会自动触发，只靠 /Run 手动拉起
+        subprocess.run(
+            [
+                "schtasks", "/Create", "/TN", self.UPDATE_TASK_NAME,
+                "/SC", "ONCE", "/ST", "00:00", "/F", "/TR", f'"{bat}"',
+            ],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["schtasks", "/Run", "/TN", self.UPDATE_TASK_NAME],
+            check=True,
+            capture_output=True,
+        )
+
+        logger.info(f"已通过一次性计划任务启动安装: {package.name}，日志: {log_path}")
+        return {"success": True, "log_path": str(log_path), "delay_seconds": 5}
 
 
 # 全局服务实例

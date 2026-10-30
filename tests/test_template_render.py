@@ -119,6 +119,30 @@ def test_build_py_electron_eperm_fallback(tmp_path):
     assert "-c.electronDist=dist/electron-skeleton" in build_py
 
 
+def test_update_windows_install_chain(tmp_path):
+    """Windows 应用内更新：bat+一次性计划任务链路、任务名变量化、空格文件名放行。"""
+    target = _render(tmp_path, False, True)  # updater 随 --update 生成
+
+    updater = (target / "backend" / "services" / "updater.py").read_text(encoding="utf-8")
+    # cmd /c 内联命令 + DETACHED_PROCESS 旧方案必须不存在
+    assert "DETACHED_PROCESS" not in updater
+    assert '"cmd", "/c"' not in updater
+    assert "import os" in updater
+    # bat + 计划任务链路
+    assert "install_update.bat" in updater
+    assert 'UPDATE_TASK_NAME = "DemoUpdateInstall"' in updater
+    assert 'HEADLESS_TASK_NAME = "DemoServer"' in updater
+    assert "schtasks" in updater
+    # 含空格/括号的 NSIS 产物名放行
+    assert 're.fullmatch(r"[A-Za-z0-9._ ()-]+", filename)' in updater
+
+    pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
+    assert pkg["build"]["nsis"]["artifactName"] == "${productName}_Setup_${version}.${ext}"
+
+    doc = (target / "docs" / "自动更新说明.md").read_text(encoding="utf-8")
+    assert "UpdateInstall" in doc
+
+
 def test_server_deployment_template(tmp_path):
     """服务器部署：systemd 单元模板/postinst/postrm/extraResources/说明文档齐全且变量渲染。"""
     target = _render(tmp_path, False, False, backend_port=9000)

@@ -320,7 +320,7 @@ def test_init_with_update_renders_update_files(render_project):
     # 更新安装链安全基线：文件名白名单、严格 SHA256、安装不走 bash -c、配置迁移逐文件 reload。
     updater = (target / "backend" / "services" / "updater.py").read_text(encoding="utf-8")
     assert 'filename = Path(package.get("filename") or "").name' in updater
-    assert 're.fullmatch(r"[A-Za-z0-9._-]+", filename)' in updater
+    assert 're.fullmatch(r"[A-Za-z0-9._ ()-]+", filename)' in updater
     assert 'algo != "sha256"' in updater
     assert "版本信息未提供 SHA256 哈希" in updater
     assert '"/bin/bash", "-c"' not in updater
