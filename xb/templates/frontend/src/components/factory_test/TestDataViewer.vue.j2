@@ -146,7 +146,13 @@ defineExpose({ open })
               </div>
 
               <div class="preview">
-                <iframe v-if="activeTab === 'report' && selected.report_html" :srcdoc="selected.report_html" title="测试报告预览"></iframe>
+                <iframe
+                  v-if="activeTab === 'report' && selected.report_html"
+                  :srcdoc="selected.report_html"
+                  sandbox="allow-scripts"
+                  referrerpolicy="no-referrer"
+                  title="测试报告预览"
+                ></iframe>
                 <div v-else-if="activeTab === 'log' && selected.log_text" class="history-log">
                   <div
                     v-for="(entry, i) in historyLogEntries"

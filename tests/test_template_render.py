@@ -632,6 +632,22 @@ def test_csv_test_assets(tmp_path):
             assert timer_target in declared, f"{vue.name} 未声明的 interval: {timer_target}"
 
 
+def test_history_report_preview_is_sandboxed(tmp_path):
+    target = _render(tmp_path, False, False, enable_csv_test=True)
+    viewer = (
+        target / "frontend" / "src" / "components" / "factory_test" / "TestDataViewer.vue"
+    ).read_text(encoding="utf-8")
+    assert 'sandbox="allow-scripts"' in viewer
+    assert "allow-same-origin" not in viewer
+    assert 'referrerpolicy="no-referrer"' in viewer
+
+    report = (target / "backend" / "services" / "factory_test" / "report.py").read_text(
+        encoding="utf-8"
+    )
+    assert "Content-Security-Policy" in report
+    assert "default-src 'none'" in report
+
+
 def test_csv_overall_status_fails_closed(tmp_path):
     target = _render(tmp_path, False, False, enable_csv_test=True)
     namespace = runpy.run_path(

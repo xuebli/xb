@@ -93,6 +93,8 @@ command_registry.register("read_voltage", _read_voltage)
   - `<会话ID>.html` — HTML 报告（PASS/FAIL 印章、统计、失败项详情、逐项结果）
   - `<会话ID>.log` — 完整执行日志
 - 「历史报告」弹窗按时间倒序列出所有会话，内嵌预览 HTML 报告与日志；
+  报告预览使用无同源权限的 sandbox，并通过 CSP 禁止外部资源请求，
+  保留失败项筛选脚本，但不能访问应用页面、同源 API 或终端；
 - 串口等长耗时指令执行中，前端轮询会实时显示 running 状态。
 
 ---
