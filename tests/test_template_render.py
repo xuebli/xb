@@ -8,17 +8,20 @@
 """
 
 import ast
+import asyncio
 import itertools
 import json
 import re
 import runpy
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -306,6 +309,60 @@ def test_log_viewer_aborts_initial_load_and_cleans_sse(tmp_path):
     assert "Array.isArray(data.logs)" in viewer
     assert "recentController?.abort()" in viewer
     assert "if (!unmounted) connect()" in viewer
+
+
+def test_log_buffer_concurrent_writes_and_snapshots(monkeypatch, tmp_path):
+    class Router:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get(self, *_args, **_kwargs):
+            return lambda function: function
+
+    fastapi = ModuleType("fastapi")
+    fastapi.__path__ = []
+    fastapi.APIRouter = Router
+    fastapi.Request = object
+    responses = ModuleType("fastapi.responses")
+    responses.StreamingResponse = object
+    loguru = ModuleType("loguru")
+    loguru.logger = Mock()
+    for name, module in {
+        "fastapi": fastapi,
+        "fastapi.responses": responses,
+        "loguru": loguru,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    target = _render(tmp_path, False, False, True)
+    namespace = runpy.run_path(str(target / "backend" / "api" / "logs.py"))
+
+    def write_log(index):
+        namespace["_log_sink"](
+            SimpleNamespace(
+                record={
+                    "message": f"log-{index}",
+                    "exception": None,
+                    "time": SimpleNamespace(timestamp=lambda: 0.0),
+                    "level": SimpleNamespace(name="INFO"),
+                    "name": "test",
+                    "function": "write",
+                    "line": index,
+                }
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(write_log, index) for index in range(200)]
+        for _ in range(20):
+            snapshot = asyncio.run(namespace["logs_recent"]())
+            assert snapshot["last_seq"] >= len(snapshot["logs"])
+        for future in futures:
+            future.result()
+
+    final = asyncio.run(namespace["logs_recent"]())
+    assert final["last_seq"] == 200
+    assert [item["seq"] for item in final["logs"]] == list(range(1, 201))
 
 
 def test_settings_assets(tmp_path):

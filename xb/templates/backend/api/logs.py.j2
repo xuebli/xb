@@ -9,6 +9,7 @@ import asyncio
 import json
 import traceback
 from collections import deque
+from threading import Lock
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -18,27 +19,28 @@ router = APIRouter(tags=["logs"])
 
 _BUFFER_MAX = 2000
 _buffer = deque(maxlen=_BUFFER_MAX)
+_lock = Lock()
 _seq = 0
 
 
 def _log_sink(message) -> None:
-    """loguru sink：把每条日志追加进环形缓冲（同步调用，线程安全靠 GIL）。"""
+    """loguru sink：序号分配与缓冲追加在同一临界区完成。"""
     global _seq
     record = message.record
-    _seq += 1
     text = record["message"]
     if record["exception"]:
         exc_type, exc_value, exc_tb = record["exception"]
         text += "\n" + "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    _buffer.append(
-        {
-            "seq": _seq,
-            "ts": record["time"].timestamp(),
-            "level": record["level"].name,
-            "source": f"{record['name']}:{record['function']}:{record['line']}",
-            "message": text,
-        }
-    )
+    item = {
+        "ts": record["time"].timestamp(),
+        "level": record["level"].name,
+        "source": f"{record['name']}:{record['function']}:{record['line']}",
+        "message": text,
+    }
+    with _lock:
+        _seq += 1
+        item["seq"] = _seq
+        _buffer.append(item)
 
 
 def attach_log_sink(level: str = "DEBUG") -> None:
@@ -52,7 +54,10 @@ def attach_log_sink(level: str = "DEBUG") -> None:
 async def logs_recent(limit: int = 500):
     """启动以来的最近日志（前端首次进入时拉历史）。"""
     limit = max(1, min(limit, _BUFFER_MAX))
-    return {"logs": list(_buffer)[-limit:], "last_seq": _seq}
+    with _lock:
+        logs = list(_buffer)[-limit:]
+        last_seq = _seq
+    return {"logs": logs, "last_seq": last_seq}
 
 
 @router.get("/logs/stream")
@@ -65,7 +70,8 @@ async def logs_stream(request: Request, after: int = 0):
             while True:
                 if await request.is_disconnected():
                     break
-                fresh = [item for item in _buffer if item["seq"] > cursor]
+                with _lock:
+                    fresh = [item for item in _buffer if item["seq"] > cursor]
                 if fresh:
                     for item in fresh:
                         cursor = item["seq"]
