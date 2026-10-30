@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import click
@@ -147,6 +148,30 @@ def remove_existing_project(path: Path) -> None:
         func(filename)
 
     shutil.rmtree(path, onexc=clear_readonly)
+
+
+def replace_existing_project(staging_dir: Path, target_dir: Path) -> None:
+    """用生成完成的新项目替换旧目录；替换失败时恢复旧目录。"""
+    if target_dir.is_symlink():
+        raise RuntimeError(f"目标目录在生成期间变成符号链接，已拒绝覆盖: {target_dir}")
+
+    backup_parent = Path(
+        tempfile.mkdtemp(prefix=f".{target_dir.name}.xb-backup-", dir=target_dir.parent)
+    )
+    backup_dir = backup_parent / "old"
+    target_dir.replace(backup_dir)
+    try:
+        staging_dir.replace(target_dir)
+    except Exception:
+        backup_dir.replace(target_dir)
+        raise
+
+    try:
+        remove_existing_project(backup_dir)
+        backup_parent.rmdir()
+    except OSError as e:
+        # 新项目已经安全就位；旧版清理失败不应把创建流程判为失败。
+        console.print(f"[yellow]⚠[/yellow]  旧项目备份清理失败，可手动删除 {backup_parent}: {e}")
 
 
 def _pick_fastest_from_nrm_output(output: str) -> tuple[str, int | None]:
@@ -328,13 +353,17 @@ def init_command(
     # 检测到 PyPI 有新版 xb 时，先询问是否升级再创建项目，避免用旧模板生成项目
     _prompt_upgrade_before_init()
 
-    # 解析路径：支持绝对路径、相对路径和纯包名。先 resolve 再校验，
-    # 拒绝把当前目录或祖先目录当作目标（否则会提示覆盖后 rmtree 自己的工作区）。
+    # 先检查原始路径的最终组件，再 resolve 用于当前/祖先目录安全判断。
+    # resolve() 会跟随符号链接，之后再 is_symlink() 永远无法识别链接本身。
     raw_path = Path(package).expanduser()
     target_dir = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
-    target_dir = target_dir.resolve()
+    target_dir = Path(os.path.abspath(target_dir))
+    if target_dir.is_symlink():
+        console.print(f"[red]✗[/red] 目标目录是符号链接，拒绝覆盖: {target_dir}", style="red")
+        raise click.Abort()
+    resolved_target_dir = target_dir.resolve()
     cwd = Path.cwd().resolve()
-    if target_dir == cwd or target_dir in cwd.parents:
+    if resolved_target_dir == cwd or resolved_target_dir in cwd.parents:
         console.print(
             f"[red]✗[/red] 目标目录 {target_dir} 是当前工作目录或其父目录，"
             "为防止误删工作区，已中止。请换用子目录名。",
@@ -367,7 +396,7 @@ def init_command(
         if not Confirm.ask("是否覆盖现有目录?", default=False):
             console.print("[yellow]已取消操作[/yellow]")
             raise click.Abort()
-        remove_existing_project(target_dir)
+        # 不再预先删除旧项目；新项目在同级临时目录生成成功后再原子替换。
 
     # 自动创建父目录（不存在时）
     parent_dir = target_dir.parent
@@ -416,10 +445,15 @@ def init_command(
     console.print()
     console.print(f"[green]→[/green] 正在创建项目 [bold]{package_name}[/bold] ...")
 
+    work_dir = target_dir
     try:
+        if target_existed:
+            work_dir = Path(
+                tempfile.mkdtemp(prefix=f".{package_name}.xb-new-", dir=target_dir.parent)
+            )
         engine = TemplateEngine()
         engine.render_project(
-            target_dir=target_dir,
+            target_dir=work_dir,
             package_name=package_name,
             display_name=display_name,
             backend_port=port,
@@ -444,7 +478,7 @@ def init_command(
             # 安装前测速切换最快 npm 源（nrm 缺失时自动安装；失败不阻塞创建）
             nrm_speedtest(console, npm_command)
             for sub in ("frontend", "electron"):
-                sub_dir = target_dir / sub
+                sub_dir = work_dir / sub
                 if (sub_dir / "package.json").exists():
                     console.print(
                         f"[green]→[/green] 正在安装 {sub} 依赖 ..."
@@ -487,12 +521,14 @@ def init_command(
                 "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
             )
 
-        git_ok = init_git_repo(target_dir, package_name)
+        git_ok = init_git_repo(work_dir, package_name)
         git_line = (
             "[green]→[/green] 已初始化 git 仓库并完成首个 commit\n"
             if git_ok
             else "[yellow]⚠[/yellow]  git 仓库未初始化，请稍后手动 git init\n"
         )
+        if target_existed:
+            replace_existing_project(work_dir, target_dir)
 
         # 脚本自带 shebang 与可执行位，可按文件名直接运行；Windows 靠 .py 文件关联。
         dev_command = ".\\dev.py start" if os.name == "nt" else "./dev.py start"
@@ -512,8 +548,10 @@ def init_command(
         )
 
     except Exception as e:
-        # 本次新建目录失败时清理半成品；覆盖旧目录的场景不假装能恢复旧数据。
-        if not target_existed and target_dir.exists():
-            shutil.rmtree(target_dir, ignore_errors=True)
+        # 覆盖场景只清理临时新项目，旧目录在替换成功前始终保持完整。
+        if work_dir != target_dir and work_dir.exists():
+            remove_existing_project(work_dir)
+        elif not target_existed and target_dir.exists():
+            remove_existing_project(target_dir)
         console.print(f"[red]✗[/red] 创建项目失败: {e}", style="red")
         raise click.Abort() from None

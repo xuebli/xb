@@ -1,3 +1,5 @@
+import click
+import pytest
 from click.testing import CliRunner
 
 import xb.commands.init as init_module
@@ -133,6 +135,109 @@ def test_init_current_directory_rejected(monkeypatch):
 
     assert result.exit_code != 0
     assert "当前工作目录" in result.output
+
+
+def _prepare_interactive_overwrite(monkeypatch, render_project):
+    """隔离 init 的外部副作用，并允许测试进入覆盖流程。"""
+    monkeypatch.setattr(init_module, "get_latest_if_newer", lambda _v: None)
+    monkeypatch.setattr(init_module, "run_config_form", lambda _package, values: values)
+    monkeypatch.setattr(init_module.Confirm, "ask", lambda *_a, **_k: True)
+    monkeypatch.setattr(init_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(init_module, "init_git_repo", lambda *_a, **_k: True)
+    monkeypatch.setattr(init_module.TemplateEngine, "render_project", render_project)
+
+    class TtyInput:
+        @staticmethod
+        def isatty():
+            return True
+
+    monkeypatch.setattr(init_module.sys, "stdin", TtyInput())
+
+
+def _invoke_init_callback(target, icon=None):
+    init_module.init_command.callback(
+        package=str(target),
+        display_name=None,
+        port=None,
+        terminal=False,
+        icon=icon,
+        update=False,
+        logs=False,
+        csv_test=False,
+        skip_install=True,
+    )
+
+
+def test_init_rejects_symlink_without_touching_target(monkeypatch, tmp_path):
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    link = tmp_path / "demo"
+    try:
+        link.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前平台无法创建目录符号链接: {exc}")
+
+    monkeypatch.setattr(init_module, "get_latest_if_newer", lambda _v: None)
+    with pytest.raises(click.Abort):
+        _invoke_init_callback(link)
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert list(external.iterdir()) == [sentinel]
+
+
+def test_init_render_failure_preserves_existing_project(monkeypatch, tmp_path):
+    target = tmp_path / "demo"
+    target.mkdir()
+    sentinel = target / "keep.txt"
+    sentinel.write_text("old", encoding="utf-8")
+
+    def fail_render(_self, **kwargs):
+        work_dir = kwargs["target_dir"]
+        (work_dir / "partial.txt").write_text("partial", encoding="utf-8")
+        raise RuntimeError("render failed")
+
+    _prepare_interactive_overwrite(monkeypatch, fail_render)
+    with pytest.raises(click.Abort):
+        _invoke_init_callback(target)
+
+    assert sentinel.read_text(encoding="utf-8") == "old"
+    assert list(target.iterdir()) == [sentinel]
+    assert not list(tmp_path.glob(".demo.xb-*"))
+
+
+def test_init_replaces_existing_project_only_after_success(monkeypatch, tmp_path):
+    target = tmp_path / "demo"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+
+    def render(_self, **kwargs):
+        work_dir = kwargs["target_dir"]
+        assert work_dir != target
+        (work_dir / "new.txt").write_text("new", encoding="utf-8")
+
+    _prepare_interactive_overwrite(monkeypatch, render)
+    _invoke_init_callback(target)
+
+    assert not (target / "old.txt").exists()
+    assert (target / "new.txt").read_text(encoding="utf-8") == "new"
+    assert not list(tmp_path.glob(".demo.xb-*"))
+
+
+def test_init_missing_icon_preserves_existing_project(monkeypatch, tmp_path):
+    target = tmp_path / "demo"
+    target.mkdir()
+    sentinel = target / "keep.txt"
+    sentinel.write_text("old", encoding="utf-8")
+
+    _prepare_interactive_overwrite(monkeypatch, lambda *_a, **_k: None)
+    with pytest.raises(click.BadParameter):
+        _invoke_init_callback(target, icon=str(tmp_path / "missing.png"))
+
+    assert sentinel.read_text(encoding="utf-8") == "old"
+    assert list(target.iterdir()) == [sentinel]
+    assert not list(tmp_path.glob(".demo.xb-*"))
 
 
 def test_pick_fastest_from_nrm_output():
