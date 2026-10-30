@@ -119,6 +119,18 @@ def test_build_py_electron_eperm_fallback(tmp_path):
     assert "-c.electronDist=dist/electron-skeleton" in build_py
 
 
+def test_build_py_safe_input_and_obfuscate_abort(tmp_path):
+    """build.py 非交互环境 _safe_input 兜底 + 敏感键混淆失败必须中止（防明文进安装包）。"""
+    target = _render(tmp_path, False, True)
+    build_py = (target / "build.py").read_text(encoding="utf-8")
+    assert "def _safe_input(" in build_py
+    assert "sys.stdin.isatty()" in build_py
+    assert 'input("\\n是否上传安装包到飞书云文档？(y/N): ")' not in build_py
+    assert '\n        line = input("   > ")' not in build_py
+    assert "敏感键混淆步骤失败，已中止构建" in build_py
+    assert "继续构建，请人工检查" not in build_py
+
+
 def test_update_windows_install_chain(tmp_path):
     """Windows 应用内更新：bat+一次性计划任务链路、任务名变量化、空格文件名放行。"""
     target = _render(tmp_path, False, True)  # updater 随 --update 生成
@@ -141,6 +153,12 @@ def test_update_windows_install_chain(tmp_path):
 
     doc = (target / "docs" / "自动更新说明.md").read_text(encoding="utf-8")
     assert "UpdateInstall" in doc
+
+    # 网页模式（无头服务）更新闭环：不关闭窗口，轮询服务恢复后自动刷新
+    panel = (target / "frontend" / "src" / "components" / "version" / "UpdatePanel.vue").read_text(encoding="utf-8")
+    assert "window.desktopBridge" in panel
+    assert "服务将自动重启" in panel
+    assert "window.location.reload()" in panel
 
 
 def test_server_deployment_template(tmp_path):

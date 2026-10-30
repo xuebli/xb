@@ -428,7 +428,7 @@ def _build_release_info(platform: str, version: str, pkg: Path, entry: dict) -> 
         print(f"   （默认: {preview}）")
     notes = []
     while True:
-        line = input("   > ").strip()
+        line = _safe_input("   > ").strip()
         if not line:
             break
         notes.append(line)
@@ -488,9 +488,17 @@ def _upload_package(packages: list[Path]) -> None:
     print("=" * 60)
 
 
+def _safe_input(prompt: str, default: str = "") -> str:
+    """无 TTY（CI/后台）环境直接取默认值，避免 input() 抛 EOFError 中断构建。"""
+    if not sys.stdin.isatty():
+        print(f"{prompt}{default}（非交互模式默认值）")
+        return default
+    return input(prompt)
+
+
 def _upload_stage(packages: list[Path]) -> None:
     """发布编排：询问上传 → 子进程跑上传脚本（进度由 _upload_with_progress 渲染）。"""
-    upload = input("\n是否上传安装包到飞书云文档？(y/N): ").strip().lower()
+    upload = _safe_input("\n是否上传安装包到飞书云文档？(y/N): ", "n").strip().lower()
     if upload != "y":
         return
 
@@ -549,7 +557,8 @@ if "-e" in TARGETS or "-a" in TARGETS:
             cwd=ROOT / "backend",
         )
     except Exception as e:
-        print(f"⚠️ 敏感键混淆步骤失败（继续构建，请人工检查 example 是否含明文）: {e}")
+        # 混淆失败继续构建会把明文 example 打进安装包，必须直接中止。
+        raise SystemExit(f"❌ 敏感键混淆步骤失败，已中止构建: {e}")
 [% endif %]
     electron = ROOT / "electron"
     electron_environment = {
