@@ -55,6 +55,13 @@ class TemplateEngine:
         # 后端最大 65534：前端取 +1 后仍不能超过 65535。
         if backend_port is not None and not 1 <= backend_port <= 65534:
             raise ValueError("后端端口必须在 1-65534 之间（前端端口会自动 +1）")
+        # 图标：未指定时用模板自带默认图标（紫青渐变 >_ 终端符），保证所有项目
+        # 都有 favicon/窗口图标/安装包图标，不再退回 Electron 默认图标
+        if icon_path is None:
+            icon_path = (
+                Path(__file__).resolve().parent.parent
+                / "templates" / "assets" / "app-icon.png"
+            )
         context = {
             "package_name": package_name,
             "package_name_upper": package_name.upper(),
@@ -466,7 +473,7 @@ class TemplateEngine:
             self._resize_icon(icon_path, output_path.with_suffix(".ico"), fmt="ICO")
             return
 
-        # 未指定图标时不复制任何默认图标，使用 Electron 原始默认图标
+        # 兜底（正常到不了这里）：render_project 已把 icon_path 兜底为模板默认图标
 
     def _copy_app_icons_set(self, output_dir: Path, context: Dict[str, Any]):
         """生成 hicolor 标准尺寸图标集（Linux DEB 用）。

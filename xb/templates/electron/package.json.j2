@@ -18,20 +18,18 @@
       "preload.js",
       "launcher.js",
       "main.js",
-      "port_diagnostics.js"[% if icon_path %],
+      "port_diagnostics.js",
       "resources/icon.png",
-      "resources/icon.ico"[% endif %]
+      "resources/icon.ico"
     ],
     "linux": {
       "target": "deb",
-[% if icon_path %]
       "icon": "resources/icons",
-[% endif %]
       "category": "Utility"
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }][% if icon_path %],
-      "icon": "resources/icon.ico"[% endif %]
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,

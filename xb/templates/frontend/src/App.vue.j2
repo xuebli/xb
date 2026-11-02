@@ -19,9 +19,7 @@ import FactoryTestView from './views/FactoryTestView.vue'
 [% endif %]
 
 const currentPage = ref('home')
-[% if icon_path %]
 const showIconFallback = ref(false)
-[% endif %]
 [% if enable_feishu_auth %]
 
 const { user: authUser, loaded: authLoaded, required: authRequired, kicked, load: loadAuth, login, logout, startPoll } = useAuth()
@@ -95,16 +93,10 @@ const openSettings = () => {
 
     <header class="topbar">
       <div class="brand-block">
-[% if icon_path %]
         <div class="brand-mark" :class="{ 'has-icon': !showIconFallback }">
           <img v-if="!showIconFallback" src="/app-icon.png" alt="[[ display_name ]]" @error="showIconFallback = true" />
           <span v-else>[[ display_name | first ]]</span>
         </div>
-[% else %]
-        <div class="brand-mark">
-          <span>[[ display_name | first ]]</span>
-        </div>
-[% endif %]
         <div>
           <h1>[[ display_name ]] <GitVersionBadge /></h1>
           <p>AI Native · FastAPI · Electron</p>
