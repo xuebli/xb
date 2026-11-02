@@ -71,17 +71,15 @@ async def lifespan(app: FastAPI):
             logger.info(f"已按新版本对齐配置文件: {synced}")
     except Exception as e:
         logger.warning(f"对齐配置文件失败: {e}")
-
-    # 兜底（仅打包态）：用户 secrets.yaml 万一还有明文敏感键，自动混淆。
-    # 开发态不混淆——发版者本地填的明文保持原样。
-    if path_manager.is_packaged:
-        try:
-            from managers.secret_obfuscator import obfuscate_file_plain_secrets
-
-            obfuscate_file_plain_secrets(path_manager.get_config_path("secrets.yaml"))
-        except Exception as e:
-            logger.warning(f"敏感配置混淆失败: {e}")
 [% endif %]
+    # 兜底：secrets.yaml 万一还有明文敏感键，启动时自动混淆（obf1: 前缀，防围观）。
+    # 读取侧 get_config_value 对混淆值透明解密，业务代码无感知。
+    try:
+        from managers.secret_obfuscator import obfuscate_file_plain_secrets
+
+        obfuscate_file_plain_secrets(path_manager.get_config_path("secrets.yaml"))
+    except Exception as e:
+        logger.warning(f"敏感配置混淆失败: {e}")
     logger.info("应用启动完成")
 
     yield

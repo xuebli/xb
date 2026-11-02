@@ -359,7 +359,6 @@ def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_
         "frontend/src/composables/useTerminalSessions.js": enable_terminal,
         "backend/api/update/__init__.py": enable_update,
         "backend/services/updater.py": enable_update,
-        "backend/managers/secret_obfuscator.py": enable_update,
         "scripts/feishu_upload.py": enable_update,
         "frontend/src/composables/useUpdate.js": enable_update,
         "backend/api/logs.py": enable_logs,

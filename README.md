@@ -209,6 +209,7 @@ postinst 预部署，管理员组无感、无密码落盘），Windows 等退出
 | [polkit免密提权说明.md](xb/templates/root/docs/polkit免密提权说明.md) | Linux polkit 免密提权：安全模型、三件套部署、新增特权操作、排障 |
 | [打包与运行路径说明.md](xb/templates/root/docs/打包与运行路径说明.md) | 构建产物、DEB/NSIS 安装布局、运行时数据目录、三种运行形态判定 |
 | [服务器部署说明.md](xb/templates/root/docs/服务器部署说明.md.j2) | 无头后端服务器部署：Ubuntu systemd / Windows 计划任务、日常管理、升级卸载（`.j2` 按项目渲染包名/端口） |
+| [密钥混淆说明.md](xb/templates/root/docs/密钥混淆说明.md) | 敏感值落盘混淆：SENSITIVE_TAGS 判断规则、obf1 格式、触发时机、防围观边界 |
 | [csv测试引擎说明.md](xb/templates/root/docs/csv测试引擎说明.md) | 产测 CSV 引擎：测试项格式、指令键注册、HTML 报告、纪律（`--csv-test` 项目） |
 | [飞书登录说明.md](xb/templates/root/docs/飞书登录说明.md.j2) | 飞书登录前提条件：开放平台建应用/网页应用/重定向白名单/发布、企业定制域名、单会话制、排障（`--feishu-auth` 项目，`.j2` 按项目渲染端口） |
 | [版本管理说明.md](xb/templates/root/docs/版本管理说明.md) | 版本号 single source of truth、三模态 bump 弹窗、手动 bump、hook 纪律 |

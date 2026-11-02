@@ -242,10 +242,11 @@ async def get_app_settings():
 
 @router.get("/app-settings/reveal")
 async def reveal_secret(key: str):
-    """查看单个密钥明文（前端小眼睛）。只允许 secrets.yaml 里声明过的 key。
+    """查看密钥的落盘原文（前端小眼睛）：显示的是 obf1: 混淆密文，不解密。
 
-    批量接口只出掩码；真实值仅在此显式查看时单条下发。
-    get_config_value 对 obf1: 混淆值透明解密，业务无感知。
+    批量接口只出等长圆点掩码；此接口仅用于确认"落盘确实是密文/配置已生效"，
+    返回原始存储值（未混淆的历史明文键会原样显示，提示用户该值未被混淆）。
+    只允许 secrets.yaml 里声明过的 key。
     """
     secrets_path = path_manager.get_config_path(SECRETS_FILE)
     secret_keys = {
@@ -258,8 +259,10 @@ async def reveal_secret(key: str):
     }
     if key not in secret_keys:
         return JSONResponse({"error": "非法的密钥字段"}, status_code=403)
-    value = path_manager.get_config_value(key, default="", config_file=SECRETS_FILE)
-    return {"value": value or ""}
+    # 注意：刻意不走 get_config_value——它会对 obf1 透明解密，
+    # 这里要看的是落盘原文，直接读文件。
+    value = _get_nested(_load_fresh(SECRETS_FILE), key, "")
+    return {"value": value if isinstance(value, str) else ""}
 
 
 @router.put("/app-settings")
@@ -324,15 +327,9 @@ async def put_app_settings(payload: dict):
         for key, value in updates_secret.items():
             _set_nested(secrets, key, value)
         dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_path), secrets_path)
-        if path_manager.is_packaged:
-            # 运行期写入的明文密钥立即混淆，不等下次启动兜底。
-            # secret_obfuscator 目前随 --update 项目生成，非更新项目允许缺失。
-            try:
-                from managers.secret_obfuscator import obfuscate_file_plain_secrets
-            except ImportError:
-                pass
-            else:
-                obfuscate_file_plain_secrets(secrets_path)
+        # 写入的明文密钥立即混淆（防围观），不等下次启动兜底
+        from managers.secret_obfuscator import obfuscate_file_plain_secrets
+        obfuscate_file_plain_secrets(secrets_path)
         path_manager.reload_config(SECRETS_FILE)
 
     fresh_values = {

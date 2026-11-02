@@ -174,12 +174,14 @@ class TemplateEngine:
                 context,
             )
 
+        # secret_obfuscator 是标配（secrets.yaml 明文敏感键落盘混淆，防围观）
+        self._render_template(
+            "backend/managers/secret_obfuscator.py.j2",
+            backend_dir / "managers" / "secret_obfuscator.py",
+            context,
+        )
+
         if context["enable_update"]:
-            self._render_template(
-                "backend/managers/secret_obfuscator.py.j2",
-                backend_dir / "managers" / "secret_obfuscator.py",
-                context,
-            )
             self._render_template(
                 "backend/app_version.py.j2", backend_dir / "app_version.py", context
             )

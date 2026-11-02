@@ -152,7 +152,6 @@ class PathManager:
             else:
                 return default
 
-[% if enable_update %]
         # 延迟导入：避免 -m 方式执行 secret_obfuscator 时与包初始化产生双导入警告
         from .secret_obfuscator import deobfuscate
 
@@ -160,9 +159,6 @@ class PathManager:
         if isinstance(config, str):
             return deobfuscate(config)
         return config
-[% else %]
-        return config
-[% endif %]
 
     def reload_config(self, config_file: str | None = None) -> None:
         if config_file is None:
