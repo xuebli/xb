@@ -11,6 +11,24 @@ const message = ref('')
 const schema = ref([])
 const form = ref({})
 const restartKeys = ref([])
+// 密钥小眼睛：key → 是否已显示明文（批量接口只给掩码，点此单独取真实值）
+const revealed = ref({})
+
+const toggleReveal = async (key) => {
+  if (revealed.value[key]) {
+    revealed.value[key] = false
+    return
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/app-settings/reveal?key=${encodeURIComponent(key)}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    form.value[key] = data.value
+    revealed.value[key] = true
+  } catch (e) {
+    error.value = `密钥读取失败: ${e.message}`
+  }
+}
 
 const groups = computed(() => {
   const bySection = new Map()
@@ -118,12 +136,27 @@ onMounted(load)
             :step="field.type === 'float' ? 'any' : '1'"
           />
 
+          <span v-else-if="field.secret" class="secret-wrap">
+            <input
+              v-model="form[field.key]"
+              :type="revealed[field.key] ? 'text' : 'password'"
+              autocomplete="new-password"
+              :readonly="!revealed[field.key]"
+              @focus="$event.target.removeAttribute('readonly')"
+            />
+            <button
+              type="button"
+              class="eye-btn"
+              :title="revealed[field.key] ? '隐藏' : '查看'"
+              @click="toggleReveal(field.key)"
+            >{{ revealed[field.key] ? '🙈' : '👁' }}</button>
+          </span>
+
           <input
             v-else
             v-model="form[field.key]"
-            :type="field.secret ? 'password' : 'text'"
-            :autocomplete="field.secret ? 'new-password' : 'off'"
-            :placeholder="field.secret && field.has_value ? '留空表示不修改' : ''"
+            :type="'text'"
+            autocomplete="off"
           />
         </label>
       </section>
@@ -260,6 +293,31 @@ onMounted(load)
 .settings-field select:focus {
   border-color: var(--border-strong);
 }
+
+/* 密钥框 + 小眼睛 */
+.secret-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 320px;
+  flex: 1;
+}
+.secret-wrap input {
+  width: 100%;
+  max-width: none;
+  padding-right: 36px;
+}
+.eye-btn {
+  position: absolute;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  opacity: 0.65;
+}
+.eye-btn:hover { opacity: 1; }
 
 .field-switch {
   display: inline-flex;

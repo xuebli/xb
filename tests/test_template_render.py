@@ -651,12 +651,20 @@ def test_settings_assets(tmp_path):
     assert "{ id: 'settingsView', label: '设置'" in app_vue
     assert "{ id: 'settings'," not in app_vue
 
-    # 密钥 key 自动渲染为密码框；不再有手动新建密钥的卡片
+    # 密钥 key 自动渲染为密码框（等长圆点掩码）；不再有手动新建密钥的卡片
     settings_vue = (target / "frontend" / "src" / "components" / "SettingsView.vue").read_text(
         encoding="utf-8"
     )
-    assert "field.secret ? 'password'" in settings_vue
+    assert "field.secret ? 'password'" not in settings_vue  # 已改为 secret-wrap 分支
+    assert "secret-wrap" in settings_vue
     assert "saveSecret" not in settings_vue
+
+    # 密钥掩码等长且真实值不出后端；小眼睛按需单条取明文
+    assert "_secret_mask" in settings_py
+    assert '"·" * len(text)' in settings_py
+    assert '"/app-settings/reveal"' in settings_py
+    assert "toggleReveal" in settings_vue
+    assert "eye-btn" in settings_vue
 
 
 def test_display_name_defaults_to_capitalized_package(tmp_path):

@@ -50,6 +50,25 @@ SETTINGS_SCHEMA = [
 SECRETS_FILE = "secrets.yaml"
 
 
+def _secret_mask(value) -> str:
+    """按明文长度生成圆点掩码：真实值不出后端，但用户能看到密钥已配置及其长度。
+
+    落盘值可能是 obf1: 混淆密文，需先解密再量长度（否则圆点数对不上真实密钥）。
+    """
+    if not value:
+        return ""
+    text = str(value)
+    if text.startswith("obf1:"):
+        try:
+            from managers.secret_obfuscator import deobfuscate
+        except ImportError:
+            # secret_obfuscator 随 --update 项目生成，非更新项目没有 obf1 值
+            pass
+        else:
+            text = deobfuscate(text)
+    return "·" * len(text)
+
+
 def _flatten(data: dict, prefix: str = ""):
     for key, value in data.items():
         dotted = f"{prefix}.{key}" if prefix else key
@@ -94,9 +113,17 @@ def _get_nested(data: dict, dotted: str, default=None):
 
 
 def _masked_values(schema: list[dict], values: dict) -> dict:
-    """密钥字段只回传是否已设置，不回传值本身（含 obf1 密文）。"""
+    """密钥字段只回传等长圆点掩码，不回传值本身（含 obf1 密文）。
+
+    已设置的密钥显示与其明文等长的圆点（用户看得见"已配置、有多长"）；
+    保存时收到纯圆点串原样回传视为未修改。
+    """
     secret_keys = {field["key"] for field in schema if field.get("secret")}
-    return {key: ("" if key in secret_keys else value) for key, value in values.items()}
+    return {
+        key: _secret_mask(values.get(key))
+        if key in secret_keys else value
+        for key, value in values.items()
+    }
 
 
 def _validate(field: dict, value):
@@ -213,6 +240,28 @@ async def get_app_settings():
     return {"schema": schema, "values": _masked_values(schema, values)}
 
 
+@router.get("/app-settings/reveal")
+async def reveal_secret(key: str):
+    """查看单个密钥明文（前端小眼睛）。只允许 secrets.yaml 里声明过的 key。
+
+    批量接口只出掩码；真实值仅在此显式查看时单条下发。
+    get_config_value 对 obf1: 混淆值透明解密，业务无感知。
+    """
+    secrets_path = path_manager.get_config_path(SECRETS_FILE)
+    secret_keys = {
+        field["key"]
+        for field in _effective_schema(
+            _load_fresh(SECRETS_FILE),
+            parse_yaml_labels(secrets_path),
+            include_defaults=False,
+        )
+    }
+    if key not in secret_keys:
+        return JSONResponse({"error": "非法的密钥字段"}, status_code=403)
+    value = path_manager.get_config_value(key, default="", config_file=SECRETS_FILE)
+    return {"value": value or ""}
+
+
 @router.put("/app-settings")
 async def put_app_settings(payload: dict):
     incoming = payload.get("values")
@@ -240,11 +289,14 @@ async def put_app_settings(payload: dict):
     for key, field in fields.items():
         if key not in incoming:
             continue
-        # 密钥字段回传被脱敏为空串；空串语义 = 不修改已有密钥，避免保存
-        # 无关配置时把已有密码清空。新密钥仍允许填写，已有密钥要改就填新值。
+        # 密钥字段回传被脱敏：空串（未设置）或纯圆点掩码（未改动）都视为不修改，
+        # 避免保存无关配置时把已有密码清空。要改密钥就清空圆点填新值。
         if (
             key in secret_keys
-            and incoming[key] == ""
+            and (
+                incoming[key] == ""
+                or (incoming[key] and set(str(incoming[key])) == {"·"})
+            )
             and _get_nested(secrets, key, "") not in ("", None)
         ):
             continue
