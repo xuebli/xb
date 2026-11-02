@@ -431,6 +431,42 @@ def test_network_defaults_lan_ready(tmp_path):
     assert 'is_local_origin(websocket.headers.get("origin"))' in terminal
     assert "code=1008" in terminal
 
+    # 终端 WS origin 白名单必须放行业内网网段：页面经局域网 IP 打开时
+    # origin 是 http://<内网IP>:<端口>，只认 127.0.0.1/localhost 会被 1008 拒连
+    api_init = (target / "backend" / "api" / "__init__.py").read_text(encoding="utf-8")
+    assert "_is_local_or_lan_host" in api_init
+    assert "ip.is_loopback or ip.is_private or ip.is_link_local" in api_init
+
+
+def test_terminal_ssh_mode(tmp_path):
+    """终端双模式：本地 Shell 仅本机；SSH 模式任意设备输 用户名/IP/密码 连任意机器。"""
+    target = _render(tmp_path, True, False)
+
+    routes = (target / "backend" / "api" / "terminal" / "routes.py").read_text(encoding="utf-8")
+    assert "_handle_ssh_terminal" in routes
+    assert "paramiko" in routes
+    assert "4403" in routes  # 远端设备连本地终端被拒
+    assert "is_local_client" in routes
+    assert '"/terminal/mode"' in routes  # 前端据此决定显示本地终端还是 SSH 表单
+
+    reqs = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert "paramiko" in reqs
+
+    sessions = (target / "frontend" / "src" / "composables" / "useTerminalSessions.js").read_text(encoding="utf-8")
+    assert "type: 'connect'" in sessions and "mode: 'ssh'" in sessions
+
+    panel = (target / "frontend" / "src" / "components" / "TerminalPanel.vue").read_text(encoding="utf-8")
+    assert "ssh-form" in panel
+    assert "/api/terminal/mode" in panel
+
+    # is_local_client：本机回环直连/经 vite 代理（XFF）判定
+    api_init = (target / "backend" / "api" / "__init__.py").read_text(encoding="utf-8")
+    assert "def is_local_client" in api_init
+
+    # vite proxy 必须透传真实客户端 IP，否则 dev 态远端设备被误判本机
+    vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
+    assert "xfwd: true" in vite
+
 
 NETSTAT_SAMPLE = """
   TCP    127.0.0.1:80         0.0.0.0:0          LISTENING       111

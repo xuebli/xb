@@ -1,7 +1,13 @@
-"""本地终端 WebSocket 接口
+"""终端 WebSocket 接口：本机直连本地 Shell，或输入 用户名/IP/密码 SSH 到任意设备。
 
-前端 xterm.js → WebSocket → pty.fork（本地 bash）
-用户可在 Web 终端中直接运行 opencode / codex 等 AI 工具
+模式由握手后首帧 JSON 选择（{type:"connect", mode, host, username, password, rows, cols}）：
+
+- mode=local：仅本机页面可用（is_local_client），pty.fork 本地 bash / Windows ConPTY；
+  远端设备连接会被 4403 拒绝——本机 Shell 不对局域网开放。
+- mode=ssh：任何设备可用，后端用 paramiko 建 SSH 连接并桥接到 xterm.js，
+  可连接局域网/内网里任何开了 SSH 的机器。
+
+用户可在 Web 终端中直接运行 opencode / codex 等 AI 工具（local 模式）。
 """
 
 import asyncio
@@ -9,6 +15,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 
 if os.name != "nt":
     import fcntl
@@ -18,23 +25,201 @@ if os.name != "nt":
     import struct
     import termios
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
-from api import is_local_origin
+from api import is_local_client, is_local_origin
 from managers import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
 
 
+@router.get("/terminal/mode", summary="当前页面是否本机（前端据此显示本地终端或 SSH 表单）")
+async def terminal_mode(request: Request):
+    peer = request.client.host if request.client else None
+    return {"local": is_local_client(peer, request.headers.get("x-forwarded-for"))}
+
+
 @router.websocket("/terminal/ws")
 async def terminal_ws(websocket: WebSocket):
-    """本地交互式终端 WebSocket；拒绝其他网站跨站连接本机 Shell。"""
+    """终端 WebSocket：origin 白名单防跨站劫持，首帧声明连接模式。"""
     if not is_local_origin(websocket.headers.get("origin")):
         await websocket.close(code=1008, reason="仅允许本机应用页面连接终端")
         return
     await websocket.accept()
-    await _handle_local_terminal(websocket)
+
+    # 首帧声明连接模式（凭证不放 URL，避免进日志/历史）
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+        init = json.loads(raw)
+    except Exception:
+        await websocket.close(code=1002, reason="缺少连接参数")
+        return
+    if init.get("type") != "connect":
+        await websocket.close(code=1002, reason="首帧必须是 connect")
+        return
+
+    mode = init.get("mode", "local")
+    if mode == "local":
+        peer = websocket.client.host if websocket.client else None
+        if not is_local_client(peer, websocket.headers.get("x-forwarded-for")):
+            await websocket.send_text(
+                "\r\n\x1b[31m本地终端仅本机可用；远端设备请用 SSH 模式（用户名/IP/密码）连接目标机器。\x1b[0m\r\n"
+            )
+            await websocket.close(code=4403, reason="本地终端仅本机可用")
+            return
+        await _handle_local_terminal(websocket)
+        return
+
+    if mode == "ssh":
+        host = str(init.get("host") or "").strip()
+        username = str(init.get("username") or "").strip()
+        password = str(init.get("password") or "")
+        if not host or not username:
+            await websocket.send_text("\r\n\x1b[31mSSH 模式需要 host 和 username\x1b[0m\r\n")
+            await websocket.close(code=1002, reason="缺少 host/username")
+            return
+        await _handle_ssh_terminal(websocket, host, username, password, init)
+        return
+
+    await websocket.close(code=1002, reason=f"未知模式: {mode}")
+
+
+async def _handle_ssh_terminal(websocket: WebSocket, host: str, username: str, password: str, init: dict):
+    """SSH 终端：paramiko 桥接目标机器的交互 shell 到 WebSocket。"""
+    try:
+        import paramiko
+    except ImportError:
+        await websocket.send_text(
+            "\r\n\x1b[31m缺少 paramiko 依赖，请先执行 uv sync。\x1b[0m\r\n"
+        )
+        await websocket.close()
+        return
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        await websocket.send_text(f"\r\n正在连接 {username}@{host} ...\r\n")
+        await asyncio.to_thread(
+            client.connect,
+            host,
+            username=username,
+            password=password,
+            timeout=10,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+    except Exception as e:
+        logger.info(f"SSH 连接失败 {username}@{host}: {e}")
+        await websocket.send_text(f"\r\n\x1b[31mSSH 连接失败: {e}\x1b[0m\r\n")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        return
+
+    rows = int(init.get("rows") or 40)
+    cols = int(init.get("cols") or 120)
+    chan = client.invoke_shell(term="xterm-256color", width=cols, height=rows)
+    chan.settimeout(0.0)
+    logger.info(f"SSH 终端已连接: {username}@{host}")
+    stop_event = threading.Event()
+
+    try:
+        async def read_from_chan():
+            """从 SSH 通道读输出发送到 WebSocket"""
+            while not stop_event.is_set():
+                try:
+                    data = await asyncio.to_thread(_chan_read, chan, stop_event)
+                    if data:
+                        await websocket.send_text(data)
+                    elif data is None:
+                        break
+                except Exception:
+                    break
+
+        async def write_to_chan():
+            """从 WebSocket 读输入写到 SSH 通道"""
+            while not stop_event.is_set():
+                try:
+                    message = await websocket.receive_text()
+                    resize = _parse_resize(message)
+                    if resize:
+                        chan.resize_pty(width=resize[1], height=resize[0])
+                        continue
+                    chan.send(message)
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    break
+
+        read_task = asyncio.create_task(read_from_chan())
+        write_task = asyncio.create_task(write_to_chan())
+
+        _, pending = await asyncio.wait(
+            [read_task, write_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        stop_event.set()
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+    except Exception as e:
+        logger.error(f"SSH 终端异常: {e}")
+        try:
+            await websocket.send_text(f"\r\n\x1b[31m终端异常: {e}\x1b[0m\r\n")
+        except Exception:
+            pass
+    finally:
+        stop_event.set()
+        try:
+            chan.close()
+        except Exception:
+            pass
+        try:
+            client.close()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        logger.info(f"SSH 终端连接已关闭: {username}@{host}")
+
+
+def _chan_read(chan, stop_event: threading.Event) -> str | None:
+    """轮询读取 SSH 通道数据（在线程中运行）"""
+    while not stop_event.is_set():
+        try:
+            if chan.recv_ready():
+                data = chan.recv(4096)
+                if not data:
+                    return None
+                return data.decode("utf-8", errors="replace")
+            if chan.closed:
+                return None
+            time.sleep(0.05)
+        except Exception:
+            return None
+    return None
+
+
+def _parse_resize(message: str) -> tuple[int, int] | None:
+    """解析前端 resize 控制帧，返回 (rows, cols)；非控制帧返回 None。"""
+    if not message.startswith('{"type":"resize"'):
+        return None
+    try:
+        payload = json.loads(message)
+    except ValueError:
+        return None
+    if payload.get("type") != "resize":
+        return None
+    rows = int(payload.get("rows") or 0)
+    cols = int(payload.get("cols") or 0)
+    return (rows, cols) if rows > 0 and cols > 0 else None
 
 
 async def _handle_local_terminal(websocket: WebSocket):
@@ -211,14 +396,11 @@ async def _handle_windows_terminal(websocket: WebSocket):
 
 def _try_resize_windows_pty(proc, message: str) -> bool:
     """识别前端 resize 控制帧，其他输入原样交给 ConPTY。"""
-    if not message.startswith('{"type":"resize"'):
+    resize = _parse_resize(message)
+    if not resize:
         return False
     try:
-        payload = json.loads(message)
-        rows = int(payload.get("rows") or 0)
-        cols = int(payload.get("cols") or 0)
-        if rows > 0 and cols > 0:
-            proc.setwinsize(rows, cols)
+        proc.setwinsize(*resize)
     except (ValueError, TypeError, EOFError, OSError):
         pass
     return True
@@ -232,18 +414,10 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
 
 def _try_apply_resize(master_fd: int, message: str) -> bool:
     """识别前端的 resize 控制帧；返回 True 表示该消息已消费、不应写入 pty"""
-    if not message.startswith('{"type":"resize"'):
+    resize = _parse_resize(message)
+    if not resize:
         return False
-    try:
-        payload = json.loads(message)
-    except ValueError:
-        return False
-    if payload.get("type") != "resize":
-        return False
-    rows = int(payload.get("rows") or 0)
-    cols = int(payload.get("cols") or 0)
-    if rows > 0 and cols > 0:
-        _set_winsize(master_fd, rows, cols)
+    _set_winsize(master_fd, resize[0], resize[1])
     return True
 
 

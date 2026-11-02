@@ -11,6 +11,13 @@ import {
 
 const viewRefs = ref({})
 
+// 本机页面默认直连本地终端；远端设备只能用 SSH 模式（用户名/IP/密码）连目标机器
+const isLocal = ref(true)
+const showSshForm = ref(false)
+const sshHost = ref('')
+const sshUsername = ref('')
+const sshPassword = ref('')
+
 const activeSession = computed(() => sessions.value.find((s) => s.id === activeId.value))
 
 const statusText = computed(() => {
@@ -23,7 +30,30 @@ function select(id) {
   activeId.value = id
 }
 
-onMounted(() => {
+function connectSsh() {
+  if (!sshHost.value.trim() || !sshUsername.value.trim()) return
+  createSession('ssh', {
+    host: sshHost.value.trim(),
+    username: sshUsername.value.trim(),
+    password: sshPassword.value,
+  })
+  sshPassword.value = ''
+  showSshForm.value = false
+}
+
+onMounted(async () => {
+  try {
+    const r = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/terminal/mode`)
+    const d = r.ok ? await r.json() : {}
+    isLocal.value = d.local !== false
+  } catch {
+    isLocal.value = true
+  }
+  // 远端设备不自动建本地终端（后端也会 4403 拒绝），直接显示 SSH 表单
+  if (!isLocal.value) {
+    showSshForm.value = true
+    return
+  }
   if (sessions.value.length === 0) {
     createSession()
   }
@@ -45,7 +75,8 @@ onMounted(() => {
           <span class="tab-title">{{ s.title }}</span>
           <span class="tab-close" role="button" @click.stop="closeSession(s.id)">×</span>
         </button>
-        <button class="term-new" title="新建终端" @click="createSession()">＋</button>
+        <button v-if="isLocal" class="term-new" title="新建本地终端" @click="createSession()">＋</button>
+        <button class="term-new" title="SSH 连接其他设备" @click="showSshForm = !showSshForm">SSH</button>
       </div>
 
       <div class="toolbar-right">
@@ -58,6 +89,16 @@ onMounted(() => {
           重连
         </button>
       </div>
+    </div>
+
+    <!-- SSH 连接表单：任何设备可用，输入目标机器的 用户名/IP/密码 -->
+    <div v-if="showSshForm" class="ssh-form">
+      <input v-model="sshUsername" class="ssh-input" placeholder="用户名" @keyup.enter="connectSsh" />
+      <input v-model="sshHost" class="ssh-input" placeholder="IP / 主机名" @keyup.enter="connectSsh" />
+      <input v-model="sshPassword" class="ssh-input" type="password" placeholder="密码" @keyup.enter="connectSsh" />
+      <button class="tool-btn connect-btn" :disabled="!sshHost.trim() || !sshUsername.trim()" @click="connectSsh">
+        连接
+      </button>
     </div>
 
     <div class="terminal-stack">
@@ -218,6 +259,30 @@ onMounted(() => {
   min-height: 0;
   display: flex;
 }
+
+.ssh-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--terminal-toolbar-bg, rgba(14, 20, 32, 0.95));
+  border-bottom: 1px solid var(--terminal-border, #1e2740);
+  flex-shrink: 0;
+}
+
+.ssh-input {
+  padding: 5px 10px;
+  border: 1px solid var(--terminal-border, #1e2740);
+  border-radius: 6px;
+  background: var(--terminal-bg, #0a0e17);
+  color: #d6dded;
+  font-size: 12px;
+  width: 140px;
+  outline: none;
+}
+.ssh-input:focus { border-color: #3b82f6; }
+.ssh-input::placeholder { color: #5a6478; }
+:global(:root[data-theme='light']) .ssh-input { color: #1e293b; background: #fff; }
 
 .terminal-slot {
   flex: 1 1 auto;

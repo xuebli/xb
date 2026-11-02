@@ -1,5 +1,9 @@
 from fastapi import APIRouter
 
+import ipaddress
+import time
+import urllib.parse
+
 from managers import path_manager
 
 router = APIRouter()
@@ -18,6 +22,79 @@ def get_local_origins() -> list[str]:
     ]
 
 
+def _is_local_or_lan_host(host: str) -> bool:
+    """本机回环或内网网段（10/8、172.16/12、192.168/16、链路本地）。"""
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
 def is_local_origin(origin: str | None) -> bool:
-    """只接受明确的本机页面来源，拒绝跨站 WebSocket 和 ``Origin: null``。"""
-    return bool(origin) and origin in get_local_origins()
+    """允许本机回环与内网网段的页面来源，拒绝跨站 WebSocket 和 ``Origin: null``。
+
+    dev/服务器部署经局域网 IP 访问时 origin 是 http://<内网IP>:<端口>，
+    不能只认 127.0.0.1/localhost，否则终端 WS 会被 1008 拒连。
+    端口仍限定为配置的后端/前端端口，避免内网里其他服务端口被借用。
+    """
+    if not origin:
+        return False
+    parsed = urllib.parse.urlparse(origin)
+    if not parsed.hostname or not _is_local_or_lan_host(parsed.hostname):
+        return False
+    allowed_ports = {
+        int(path_manager.get_config_value("ports.backend", default=8000)),
+        int(path_manager.get_config_value("ports.frontend", default=5173)),
+    }
+    return parsed.port in allowed_ports
+
+
+_LOCAL_ADDRS_TTL_S = 60
+_local_addrs_cache: tuple[float, set[str]] | None = None
+
+
+def _local_addresses() -> set[str]:
+    """本机地址集合：回环 + 所有网卡 IP（带 60s 缓存，网络切换后自动刷新）。
+
+    页面经本机局域网 IP 打开时（vite 默认行为），来源是本机自己的网卡 IP
+    而不是回环——只认 127.0.0.1 会把本机误判成远端。
+    """
+    global _local_addrs_cache
+    now = time.time()
+    if _local_addrs_cache and now - _local_addrs_cache[0] < _LOCAL_ADDRS_TTL_S:
+        return _local_addrs_cache[1]
+    import socket
+
+    addrs = {"127.0.0.1", "::1", "localhost"}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            addrs.add(info[4][0])
+    except OSError:
+        pass
+    try:
+        # UDP connect 不实际发包，用于拿到主网卡 IP（hostname 解析可能漏）
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            addrs.add(sock.getsockname()[0])
+    except OSError:
+        pass
+    _local_addrs_cache = (now, addrs)
+    return addrs
+
+
+def is_local_client(peer_host: str | None, x_forwarded_for: str | None = None) -> bool:
+    """请求是否来自本机（本地终端仅本机可连，远端设备只能走 SSH 模式）。
+
+    本机 = peer 是回环地址或本机网卡地址。dev 态经 vite 代理时 peer 是回环、
+    真实来源看 X-Forwarded-For **最后一跳**（vite 追加的才是可信的；
+    取第一跳会被远端伪造 XFF 头绕过）。peer 非本机的直连不信 XFF，按远端处理。
+    """
+    if peer_host not in _local_addresses():
+        return False
+    if x_forwarded_for:
+        real = x_forwarded_for.split(",")[-1].strip()
+        return real in _local_addresses()
+    return True

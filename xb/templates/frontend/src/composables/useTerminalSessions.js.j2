@@ -29,6 +29,20 @@ function connect(session) {
   session.ws = ws
 
   ws.onopen = () => {
+    // 首帧声明连接模式（凭证不经 URL，避免进日志/历史）
+    if (session.mode === 'ssh') {
+      ws.send(JSON.stringify({
+        type: 'connect',
+        mode: 'ssh',
+        host: session.host,
+        username: session.username,
+        password: session.password,
+      }))
+      // SSH 密码只用一次，送出后立刻从会话对象里清掉
+      session.password = ''
+    } else {
+      ws.send(JSON.stringify({ type: 'connect', mode: 'local' }))
+    }
     session.status = 'connected'
     session.onReady?.()
   }
@@ -52,11 +66,16 @@ function connect(session) {
   }
 }
 
-export function createSession() {
+export function createSession(mode = 'local', ssh = null) {
   seq += 1
+  const isSsh = mode === 'ssh' && ssh
   sessions.value.push({
     id: `term-${seq}`,
-    title: `终端 ${seq}`,
+    title: isSsh ? `${ssh.username}@${ssh.host}` : `终端 ${seq}`,
+    mode: isSsh ? 'ssh' : 'local',
+    host: ssh?.host || '',
+    username: ssh?.username || '',
+    password: ssh?.password || '',
     buffer: '',
     status: 'idle',
     ws: null,
