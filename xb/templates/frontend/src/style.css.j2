@@ -639,4 +639,56 @@ code {
 .login-card p { color: var(--muted); font-size: 13px; margin: 6px 0; }
 .login-card .tip { font-size: 11px; margin-top: 14px; }
 .login-btn.big { font-size: 15px; padding: 12px 36px; margin-top: 12px; }
+/* === 个人信息卡片（点头像弹出） === */
+.user-menu { position: relative; }
+.user-card-mask { position: fixed; inset: 0; z-index: 999; }
+.user-card {
+  /* Teleport 到 body 后按视口固定定位（摆脱 topbar 层叠上下文） */
+  position: fixed;
+  top: 64px;
+  right: 24px;
+  z-index: 1000;
+  min-width: 220px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.user-card .avatar-big { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; }
+.user-card-name { margin-top: 10px; font-size: 15px; font-weight: 700; color: var(--text-h); }
+.user-card-sub { margin-top: 4px; font-size: 11px; color: var(--muted); word-break: break-all; }
+.logout-btn {
+  margin-top: 14px;
+  width: 100%;
+  padding: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 13px;
+  cursor: pointer;
+}
+.logout-btn:hover { background: rgba(239, 68, 68, 0.08); border-color: #ef4444; }
+.user-card { min-width: 300px; text-align: left; }
+.user-card .avatar-big { display: block; margin: 0 auto; }
+.user-card-name { text-align: center; }
+.user-card-sub { text-align: center; }
+.user-card-rows { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.user-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.user-card-row span { color: var(--muted); flex-shrink: 0; }
+.user-card-row b { color: var(--text-h); font-weight: 500; text-align: right; word-break: break-all; }
+.user-card-row b.mono {
+  font-family: monospace;
+  font-size: 10px;
+  white-space: nowrap;   /* open_id 不换行 */
+}
+
 [% endif %]

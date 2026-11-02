@@ -158,6 +158,16 @@ async def me(request: Request):
                      "has_avatar": bool(user.get("avatar_url"))}}
 
 
+@router.get("/profile", summary="当前用户通讯录名片（职务/部门/邮箱等，字段取决于开通的权限）")
+async def profile(request: Request):
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    token = request.cookies.get(COOKIE_NAME, "")
+    data = feishu_auth.get_profile(token) or {}
+    return data
+
+
 @router.get("/avatar", summary="当前用户头像（后端代理拉取，规避混合内容/ referer 限制）")
 async def avatar(request: Request):
     import urllib.request as _u

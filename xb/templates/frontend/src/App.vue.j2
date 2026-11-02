@@ -26,6 +26,17 @@ const showIconFallback = ref(false)
 
 const { user: authUser, loaded: authLoaded, required: authRequired, kicked, load: loadAuth, login, logout, startPoll } = useAuth()
 const apiBase = import.meta.env.VITE_API_BASE || ''
+const showUserCard = ref(false)
+const profile = ref({})   // 通讯录名片（职务/部门/邮箱等，权限未开通的字段为空不显示）
+const toggleUserCard = async () => {
+  showUserCard.value = !showUserCard.value
+  if (showUserCard.value && !profile.value._loaded) {
+    try {
+      const r = await fetch(`${apiBase}/api/auth/profile`)
+      if (r.ok) profile.value = { ...(await r.json()), _loaded: true }
+    } catch { /* 名片加载失败只显示基础字段 */ }
+  }
+}
 onMounted(() => { loadAuth().then(startPoll) })
 [% endif %]
 
@@ -104,12 +115,35 @@ const openSettings = () => {
         <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
 [% if enable_feishu_auth %]
-        <!-- 飞书登录状态（未登录显示登录按钮，已登录显示头像/姓名，点击登出） -->
+        <!-- 飞书登录状态（未登录显示登录按钮，已登录显示头像/姓名，点击弹出个人信息卡片） -->
         <button v-if="authLoaded && !authUser" class="login-btn" @click="login">飞书登录</button>
-        <div v-else-if="authUser" class="user-chip" :title="`${authUser.name}（点击登出）`" @click="logout">
-          <img v-if="authUser.has_avatar" :src="`${apiBase}/api/auth/avatar`" class="avatar" alt="" />
-          <span class="uname">{{ authUser.name || authUser.en_name }}</span>
+        <div v-else-if="authUser" class="user-menu">
+          <div class="user-chip" :title="authUser.name" @click.stop="toggleUserCard">
+            <img v-if="authUser.has_avatar" :src="`${apiBase}/api/auth/avatar`" class="avatar" alt="" />
+            <span class="uname">{{ authUser.name || authUser.en_name }}</span>
+          </div>
         </div>
+        <!-- 名片卡片 Teleport 到 body：topbar 有 z-index:20 会形成层叠上下文，
+             卡片在内部会被高 z-index 的页面元素（弹窗等）盖住，必须逃出来 -->
+        <Teleport to="body">
+          <div v-if="showUserCard" class="user-card-mask" @click="showUserCard = false"></div>
+          <div v-if="showUserCard" class="user-card" @click.stop>
+            <img v-if="authUser?.has_avatar" :src="`${apiBase}/api/auth/avatar`" class="avatar-big" alt="" />
+            <div class="user-card-name">{{ authUser?.name || authUser?.en_name }}</div>
+            <div v-if="authUser?.en_name && authUser?.en_name !== authUser?.name" class="user-card-sub">{{ authUser.en_name }}</div>
+            <div class="user-card-rows">
+              <div v-if="profile.department" class="user-card-row"><span>部门</span><b>{{ profile.department }}</b></div>
+              <div v-if="profile.job_title" class="user-card-row"><span>职务</span><b>{{ profile.job_title }}</b></div>
+              <div v-if="profile.leader" class="user-card-row"><span>直属上级</span><b>{{ profile.leader }}</b></div>
+              <div v-if="profile.enterprise_email" class="user-card-row"><span>企业邮箱</span><b>{{ profile.enterprise_email }}</b></div>
+              <div v-else-if="profile.email" class="user-card-row"><span>邮箱</span><b>{{ profile.email }}</b></div>
+              <div v-if="profile.employee_no" class="user-card-row"><span>工号</span><b>{{ profile.employee_no }}</b></div>
+              <div v-if="profile.city" class="user-card-row"><span>城市</span><b>{{ profile.city }}</b></div>
+              <div class="user-card-row"><span>ID</span><b class="mono">{{ authUser?.open_id }}</b></div>
+            </div>
+            <button class="logout-btn" @click="showUserCard = false; logout()">退出登录</button>
+          </div>
+        </Teleport>
 [% endif %]
       </div>
     </header>

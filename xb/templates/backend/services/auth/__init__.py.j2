@@ -25,9 +25,13 @@ logger = get_logger(__name__)
 # 不是 open.feishu.cn，在 global_config.yaml 改，不用动代码。
 AUTHORIZE_PATH = "/open-apis/authen/v1/authorize"
 APP_TOKEN_PATH = "/open-apis/auth/v3/app_access_token/internal"
+TENANT_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal"
 OIDC_TOKEN_PATH = "/open-apis/authen/v1/oidc/access_token"
 USERINFO_PATH = "/open-apis/authen/v1/user_info"
+CONTACT_USER_PATH = "/open-apis/contact/v3/users/"
 DEFAULT_BASE_URL = "https://open.feishu.cn"
+
+PROFILE_TTL_S = 3600        # 通讯录名片缓存 1 小时（职务/部门变动不频繁）
 
 SESSION_TTL_S = 7 * 86400   # 会话有效期 7 天
 COOKIE_NAME = "[[ package_name ]]_session"
@@ -35,10 +39,13 @@ COOKIE_NAME = "[[ package_name ]]_session"
 
 class FeishuAuth:
     def __init__(self):
-        self._sessions: dict[str, dict] = {}   # token → user info
+        self._sessions: dict[str, dict] = {}   # token → user info（含 user_token，不下发前端）
         self._states: dict[str, dict] = {}     # OAuth state → {ts, front}（防 CSRF + 记住前端来源）
         self._pending: dict[str, dict] = {}    # 强制登录确认中：pending_token → {user, front, ts}
         self._ws_by_token: dict[str, set] = {} # token → 活 WS 连接（吊销时主动断开实现秒踢）
+        self._profiles: dict[str, dict] = {}   # token → {ts, data} 通讯录名片缓存
+        self._tenant_token = ""                # 应用身份 token（名片优先用它，免用户重新授权）
+        self._tenant_token_exp = 0.0
 
     # ---- WS 连接登记（吊销会话时主动断开，旧设备立刻弹被踢提示） ----
     def register_ws(self, token: str, ws) -> None:
@@ -149,6 +156,20 @@ class FeishuAuth:
             raise RuntimeError(f"获取 app_access_token 失败: {str(result)[:200]}")
         return token
 
+    def _get_tenant_token(self) -> str:
+        """tenant_access_token（应用身份，带缓存）。名片接口优先用它：
+        应用权限发布后即生效，不需要用户重新授权（用户身份 token 的
+        授权范围在签发时定死，新权限必须重新登录才带上，实测易踩坑）。"""
+        if self._tenant_token and time.time() < self._tenant_token_exp:
+            return self._tenant_token
+        result = self._post(f"{self.base_url}{TENANT_TOKEN_PATH}", {"app_id": self.app_id, "app_secret": self.app_secret})
+        token = result.get("tenant_access_token")
+        if not token:
+            raise RuntimeError(f"获取 tenant_access_token 失败: {str(result)[:200]}")
+        self._tenant_token = token
+        self._tenant_token_exp = time.time() + int(result.get("expire", 7200)) * 0.8
+        return token
+
     def _post_with_bearer(self, url: str, token: str, payload: dict) -> dict:
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode(),
@@ -186,12 +207,17 @@ class FeishuAuth:
             "name": data.get("name", ""),
             "en_name": data.get("en_name", ""),
             "avatar_url": data.get("avatar_url", ""),
+            # user_access_token 留存会话：名片页调通讯录接口用（用户身份，
+            # 可见范围跟随本人，无需配置应用通讯录权限范围）。不下发前端。
+            "user_token": user_token,
         }
 
     # ---- 本地会话 ----
     def create_session(self, user: dict) -> str:
         # 单会话制：一个账号同时只能一台电脑在线——新登录吊销该账号所有旧会话
         # （旧电脑下次请求 401 被登出；其租约 90s 无心跳自动回收）
+        user = dict(user)
+        user_token = user.pop("user_token", "")   # 不下发前端，仅服务端留存
         oid = user.get("open_id", "")
         if oid:
             stale = [t for t, s in self._sessions.items() if s.get("open_id") == oid]
@@ -201,7 +227,7 @@ class FeishuAuth:
             if stale:
                 logger.info(f"账号 {user.get('name')} 在新设备登录，已吊销 {len(stale)} 个旧会话")
         token = secrets.token_urlsafe(32)
-        self._sessions[token] = {**user, "expires": time.time() + SESSION_TTL_S}
+        self._sessions[token] = {**user, "user_token": user_token, "expires": time.time() + SESSION_TTL_S}
         return token
 
     def get_user(self, token: str) -> dict | None:
@@ -215,6 +241,88 @@ class FeishuAuth:
 
     def revoke(self, token: str) -> None:
         self._sessions.pop(token or "", None)
+        self._profiles.pop(token or "", None)
+
+    # ---- 通讯录名片（职务/部门/邮箱等，字段取决于开放平台开通的权限） ----
+    def _contact_get_user(self, user_token: str, open_id: str) -> dict:
+        """contact/v3 取单个用户。用 user_access_token 调：可见范围跟随
+        用户本人，避开应用身份 41050（需另配通讯录权限范围）的问题。"""
+        req = urllib.request.Request(
+            f"{self.base_url}{CONTACT_USER_PATH}{open_id}?user_id_type=open_id",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            # 响应体里有具体错误码（如 99991672 未开通 contact:contact.base:readonly），
+            # 只抛 HTTP 状态码排查时两眼一抹黑
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"通讯录接口 HTTP {exc.code}: {detail[:300]}") from exc
+        if result.get("code") != 0:
+            raise RuntimeError(f"通讯录接口 code={result.get('code')}: {result.get('msg', '')[:150]}")
+        return (result.get("data") or {}).get("user") or {}
+
+    def get_profile(self, token: str) -> dict | None:
+        """名片信息（带 1h 缓存）。权限未开通的字段返回空串，前端跳过不显示。
+
+        身份策略：优先应用身份（tenant_access_token，权限发布即生效，
+        不要求用户重新授权）；应用数据权限范围不含该用户（41050）时
+        回退用户身份（user_access_token，可见范围跟随本人）。
+        """
+        session = self.get_user(token)
+        if not session:
+            return None
+        cached = self._profiles.get(token)
+        if cached and time.time() - cached["ts"] < PROFILE_TTL_S:
+            return cached["data"]
+        profile: dict = {}
+
+        tokens: list[str] = []
+        try:
+            tokens.append(self._get_tenant_token())
+        except Exception as e:
+            logger.info(f"tenant_access_token 获取失败: {e}")
+        user_token = session.get("user_token", "")
+        if user_token:
+            tokens.append(user_token)
+
+        u: dict | None = None
+        used_token = ""
+        last_err: Exception | None = None
+        for tk in tokens:
+            try:
+                u = self._contact_get_user(tk, session["open_id"])
+                used_token = tk
+                break
+            except Exception as e:
+                last_err = e
+        if u is None:
+            logger.info(f"通讯录名片获取失败（权限未开通则字段为空）: {last_err}")
+        else:
+            # 部门完整路径（"LEO / 机器人"），需 department_path 权限且
+            # 仅用户身份可拿；应用身份拿不到时退回空（department_ids 只有 ID 没法显示）
+            dept_path = " / ".join(
+                (d.get("department_name") or {}).get("name", "")
+                for d in u.get("department_path") or []
+            )
+            profile = {
+                "job_title": u.get("job_title", ""),
+                "department": dept_path.strip(" /"),
+                "enterprise_email": u.get("enterprise_email", ""),
+                "email": u.get("email", ""),
+                "employee_no": u.get("employee_no", ""),
+                "city": u.get("city", ""),
+                "leader": "",
+            }
+            leader_id = u.get("leader_user_id")
+            if leader_id:
+                try:
+                    profile["leader"] = self._contact_get_user(used_token, leader_id).get("name", "")
+                except Exception:
+                    pass
+        self._profiles[token] = {"ts": time.time(), "data": profile}
+        return profile
 
 
 feishu_auth = FeishuAuth()
