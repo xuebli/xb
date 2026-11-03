@@ -90,7 +90,7 @@ class TestDataService:
 
         # 服务端分页：记录多了前端一次渲染不动；页码越界自动收拢
         total = len(records)
-        page_size = max(1, min(int(page_size), 200))
+        page_size = max(1, min(int(page_size), 10000))
         pages = max(1, (total + page_size - 1) // page_size)
         page = max(1, min(int(page), pages))
         start_idx = (page - 1) * page_size
@@ -135,6 +135,26 @@ class TestDataService:
             except (json.JSONDecodeError, OSError):
                 pass
         return record
+
+    def export_records_csv(self, start: str = "", end: str = "", sn: str = "",
+                           status: str = "", order: str = "desc") -> str:
+        """当前筛选条件下的记录导出为 CSV（带 BOM，Excel 直接打开不乱码）。"""
+        result = self.list_records(start=start, end=end, sn=sn, status=status,
+                                   order=order, page=1, page_size=10000)  # 导出全量（筛选后）
+        status_text = {"passed": "通过", "failed": "失败", "stopped": "中断"}
+        lines = ["SN,测试日期,测试时间,结果,通过,总数,耗时(秒),会话ID"]
+        for r in result["records"]:
+            lines.append(",".join([
+                f'"{r["sn"]}"',
+                r["date"],
+                r["time"],
+                status_text.get(r["status"], r["status"] or "-"),
+                "" if r["passed"] is None else str(r["passed"]),
+                "" if r["total"] is None else str(r["total"]),
+                "" if r["duration"] is None else str(r["duration"]),
+                r["session_id"],
+            ]))
+        return "﻿" + "\n".join(lines) + "\n"
 
     def delete_sessions(self, session_ids: list[str]) -> int:
         """批量删除测试记录（整个会话归档目录）。复用 _get_session_dir 的越界校验。"""

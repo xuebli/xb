@@ -173,6 +173,24 @@ async def list_records(start: str = "", end: str = "", sn: str = "",
         raise HTTPException(status_code=500, detail=f"读取测试记录失败: {str(e)}")
 
 
+@router.get("/records/export")
+async def export_records(start: str = "", end: str = "", sn: str = "",
+                         status: str = "", order: str = "desc"):
+    """当前筛选条件下的测试记录导出 CSV（带 BOM，Excel 直接打开）。"""
+    from fastapi.responses import Response
+    try:
+        csv_text = test_data_service.export_records_csv(start=start, end=end, sn=sn,
+                                                        status=status, order=order)
+        return Response(
+            csv_text.encode("utf-8"),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=test_records.csv"},
+        )
+    except Exception as e:
+        logger.error(f"导出测试记录失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出测试记录失败: {str(e)}")
+
+
 @router.post("/test-data/delete")
 async def delete_test_data(payload: dict):
     """批量删除测试记录（看板多选删除）。"""

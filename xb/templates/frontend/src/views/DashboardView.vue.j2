@@ -35,6 +35,14 @@ const chartMaxStart = computed(() => Math.max(0, itemStats.value.length - CHART_
 const chartItems = computed(() =>
   itemStats.value.slice(chartStart.value, chartStart.value + CHART_WINDOW)
 )
+
+// 导出当前筛选条件下的记录
+const exportCsv = () => {
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(filters.value).filter(([, v]) => v))
+  ).toString()
+  window.open(`${import.meta.env.VITE_API_BASE || ''}/api/factory-test/records/export${qs ? `?${qs}` : ''}`)
+}
 const rateClass = (rate) => (rate >= 90 ? 'rate-ok' : rate >= 70 ? 'rate-mid' : 'rate-bad')
 const hoverItem = ref(null)   // 悬停柱子明细
 const tip = ref({ x: 0, y: 0 })   // 浮层位置（相对图表容器）
@@ -269,6 +277,7 @@ onMounted(() => { load(); loadRecords() })
                 测试时间 {{ filters.order === 'desc' ? '↓' : '↑' }}
               </button>
               <span class="rec-spacer"></span>
+              <button class="btn" type="button" @click="exportCsv">导出 CSV</button>
               <button
                 class="btn btn-danger"
                 type="button"
