@@ -55,7 +55,7 @@ async def save_test_csv(req: TestCsvSaveRequest):
 async def run_test(req: TestRunRequest):
     """开始一轮测试（后台线程执行，轮询 /current-session 获取进度）。"""
     try:
-        return test_control_service.start(req.sn)
+        return test_control_service.start(req.sn, notify=req.notify)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:

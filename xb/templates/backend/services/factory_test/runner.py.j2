@@ -96,7 +96,7 @@ class TestRunner:
             logs=["已加载 CSV 测试计划，等待开始测试。"],
         )
 
-    def run_once(self, sn: str) -> TestSession:
+    def run_once(self, sn: str, notify: bool = False) -> TestSession:
         sn = sn.strip()
         plan = self.definition.get_plan()
         all_items = [TestItem(**item.model_dump()) for item in plan.items]
@@ -182,6 +182,15 @@ class TestRunner:
         except Exception as exc:
             logger.error(f"生成测试报告失败: {exc}", exc_info=True)
             self._log(session.logs, f"报告生成失败: {exc}")
+[% if enable_feishu_notify %]
+        # 飞书群通知（--feishu-notify）：前端勾选「飞书通知」才发；失败不影响测试
+        if notify:
+            try:
+                from services.feishu_notify import notify_test_report
+                notify_test_report(session)
+            except Exception as exc:
+                self._log(session.logs, f"飞书通知发送失败: {exc}")
+[% endif %]
         if self.on_progress:
             self.on_progress(session)
         return session

@@ -18,7 +18,7 @@ class TestControlService:
         self._future: Future | None = None
         self._session: TestSession | None = None
 
-    def start(self, sn: str) -> TestSession:
+    def start(self, sn: str, notify: bool = False) -> TestSession:
         with self._lock:
             if self._future and not self._future.done():
                 raise RuntimeError("已有测试正在执行")
@@ -38,7 +38,7 @@ class TestControlService:
                 "=" * 72,
             ])
             self._session = preview
-            self._future = self._executor.submit(self._run, sn)
+            self._future = self._executor.submit(self._run, sn, notify)
             return self._session
 
     def pause(self) -> TestSession:
@@ -68,14 +68,14 @@ class TestControlService:
                 return self.runner.create_preview_session("")
             return self._session
 
-    def _run(self, sn: str) -> TestSession:
+    def _run(self, sn: str, notify: bool = False) -> TestSession:
         def update_progress(session: TestSession):
             with self._lock:
                 self._session = session
 
         self.runner.on_progress = update_progress
         try:
-            session = self.runner.run_once(sn)
+            session = self.runner.run_once(sn, notify=notify)
         finally:
             self.runner.on_progress = None
         with self._lock:

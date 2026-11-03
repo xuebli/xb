@@ -1,0 +1,26 @@
+"""飞书群通知自测接口（--feishu-notify）：配好凭证点一下验证通道。"""
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+from services.feishu_notify import feishu_notifier
+
+router = APIRouter()
+
+
+@router.post("/notify/test", summary="发送测试通知（验证 webhook/应用凭证是否可用）")
+async def test_notify(payload: dict | None = None):
+    mode = feishu_notifier.mode
+    if mode == "none":
+        return JSONResponse(
+            {"error": "未配置飞书凭证：请在设置页填 notify_webhook 或 app_id/app_secret/receive_id"},
+            status_code=400,
+        )
+    # 默认文案可编辑：前端可传自定义 text
+    text = str((payload or {}).get("text") or "").strip() or "这是一条测试消息，说明通知配置已生效。"
+    ok = feishu_notifier.notify_card({
+        "header": {"title": {"tag": "plain_text", "content": "🔔 [[ display_name ]] 通知通道测试"}, "template": "green"},
+        "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": text}}],
+    })
+    if not ok:
+        return JSONResponse({"error": "发送失败，查看后端日志"}, status_code=500)
+    return {"ok": True, "mode": mode}

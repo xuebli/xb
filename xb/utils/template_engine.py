@@ -42,6 +42,7 @@ class TemplateEngine:
         enable_logs: bool = False,
         enable_csv_test: bool = False,
         enable_feishu_auth: bool = False,
+        enable_feishu_notify: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +75,7 @@ class TemplateEngine:
             "enable_logs": enable_logs,
             "enable_csv_test": enable_csv_test,
             "enable_feishu_auth": enable_feishu_auth,
+            "enable_feishu_notify": enable_feishu_notify,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -167,11 +169,12 @@ class TemplateEngine:
             context,
         )
 
-        # services/ 包：自动更新、CSV 测试引擎、飞书登录任一启用都需要
+        # services/ 包：自动更新、CSV 测试引擎、飞书登录、飞书通知任一启用都需要
         if (
             context["enable_update"]
             or context["enable_csv_test"]
             or context["enable_feishu_auth"]
+            or context["enable_feishu_notify"]
         ):
             services_dir = backend_dir / "services"
             services_dir.mkdir(exist_ok=True)
@@ -200,6 +203,19 @@ class TemplateEngine:
             self._render_template(
                 "backend/services/feishu_client.py.j2",
                 services_dir / "feishu_client.py",
+                context,
+            )
+
+        if context["enable_feishu_notify"]:
+            # 飞书群通知：通用通知服务（webhook / 自建应用双模式）+ 自测接口
+            self._render_template(
+                "backend/services/feishu_notify.py.j2",
+                services_dir / "feishu_notify.py",
+                context,
+            )
+            self._render_template(
+                "backend/api/notify.py.j2",
+                backend_dir / "api" / "notify.py",
                 context,
             )
 
@@ -618,6 +634,7 @@ class TemplateEngine:
                 "images": "enable_update",
                 "csv测试引擎说明.md": "enable_csv_test",
                 "飞书登录说明.md": "enable_feishu_auth",
+                "飞书通知说明.md": "enable_feishu_notify",
             }
             docs_dst = target_dir / "docs"
             docs_dst.mkdir(exist_ok=True)

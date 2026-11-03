@@ -1,0 +1,43 @@
+# 飞书群通知说明（--feishu-notify 项目）
+
+产测完成自动把结果推送到飞书群（结果卡片 + 报告/日志附件）；业务代码也可直接调用
+通用通知服务发任何消息。两种模式二选一，**填了 webhook 就优先用 webhook**（最简单）。
+
+---
+
+## 模式一：群机器人 webhook（推荐先试这个，只发文字）
+
+群里 **添加自定义机器人** → 复制 webhook 地址 → 设置页填 `feishu.notify_webhook`。
+
+- 只能发文字/卡片，**不能传文件**（报告/日志会退化为文件名列表提示）
+- 零权限申请，即配即用
+
+## 模式二：自建应用 + 群聊 ID（能传文件）
+
+设置页填 `feishu.app_id` / `feishu.app_secret` / `feishu.receive_id`（群聊 chat_id）。
+
+前提（飞书开放平台后台）：
+1. 应用**开通机器人能力**；
+2. 权限：`im:message`（发消息）、`im:resource`（上传文件）；
+3. **创建版本并发布**；
+4. 把机器人**拉进目标群**；
+5. chat_id 获取：把机器人拉进群后，用 `GET /im/v1/chats` 或群设置里查看。
+
+报告/日志会作为文件附件发到群里（HTML 报告可直接在飞书里打开看）。
+
+## 代码调用（任何业务都能用）
+
+```python
+from services.feishu_notify import feishu_notifier
+
+feishu_notifier.notify("纯文字消息")
+feishu_notifier.notify_files("说明", [Path("xxx.html"), Path("yyy.log")])  # app 模式才带附件
+```
+
+未配置凭证时所有调用静默跳过（返回 False），不会拖垮业务逻辑。
+
+## 排障
+
+- **没收到消息**：看后端日志"飞书通知发送失败"的具体错误；webhook 模式
+  检查机器人的关键词限制；app 模式检查权限是否已随版本发布、机器人是否在群里
+- **文字到了文件没到**：你在用 webhook 模式（不支持文件），或 app 模式缺 `im:resource` 权限

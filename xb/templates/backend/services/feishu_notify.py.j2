@@ -1,0 +1,228 @@
+"""飞书群通知：两种模式，自动选择（防围观注释见 secret_obfuscator，凭证读 secrets.yaml）。
+
+- **自建应用模式**（feishu.app_id + app_secret + receive_id=群聊 chat_id）：
+  能发文字、卡片和**文件**（报告/日志附件）。
+  前提：应用开通机器人能力 + im:message / im:resource 权限，机器人已拉进群。
+- **群机器人 webhook 模式**（feishu.notify_webhook）：
+  群里「添加自定义机器人」拿到的 webhook，只能发文字（可选加签密钥）。
+  文件退化为文件名列表文字。
+
+优先级：填了 webhook 用 webhook（最简单），否则用自建应用；都没填 = 静默关闭。
+
+通用入口：
+    from services.feishu_notify import feishu_notifier
+    feishu_notifier.notify("文字消息")
+    feishu_notifier.notify_files("说明文字", [Path("a.html"), Path("b.log")])
+"""
+import json
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from managers import get_logger, path_manager
+
+logger = get_logger(__name__)
+
+BASE_URL = "https://open.feishu.cn/open-apis"
+
+
+class FeishuNotifier:
+    """飞书群通知器：webhook 优先，自建应用兜底，都没配则静默跳过。"""
+
+    def __init__(self):
+        self._token = ""
+        self._token_expires = 0.0
+
+    # ---- 配置 ----
+    @property
+    def webhook(self) -> str:
+        return path_manager.get_config_value("feishu.notify_webhook", default="", config_file="secrets.yaml")
+
+    @property
+    def app_id(self) -> str:
+        return path_manager.get_config_value("feishu.app_id", default="", config_file="secrets.yaml")
+
+    @property
+    def app_secret(self) -> str:
+        return path_manager.get_config_value("feishu.app_secret", default="", config_file="secrets.yaml")
+
+    @property
+    def receive_id(self) -> str:
+        return path_manager.get_config_value("feishu.receive_id", default="", config_file="secrets.yaml")
+
+    @property
+    def mode(self) -> str:
+        """webhook / app / none"""
+        if self.webhook:
+            return "webhook"
+        if self.app_id and self.app_secret and self.receive_id:
+            return "app"
+        return "none"
+
+    # ---- 对外入口 ----
+    def notify(self, text: str) -> bool:
+        """发文字消息。未配置/发送失败都不抛异常（通知不该拖垮业务）。"""
+        if not text:
+            return False
+        try:
+            if self.mode == "webhook":
+                self._webhook_send({"msg_type": "text", "content": {"text": text}})
+                return True
+            if self.mode == "app":
+                self._app_send_message("text", json.dumps({"text": text}))
+                return True
+        except Exception as e:
+            logger.warning(f"飞书通知发送失败: {e}")
+        return False
+
+    def notify_card(self, card: dict) -> bool:
+        """发卡片消息（两种模式都支持）。注意载荷结构不同：
+        webhook 用 card 字段，im/v1/messages 用 content(JSON 字符串)。"""
+        try:
+            if self.mode == "webhook":
+                self._webhook_send({"msg_type": "interactive", "card": card})
+                return True
+            if self.mode == "app":
+                self._app_send_message("interactive", json.dumps(card))
+                return True
+        except Exception as e:
+            logger.warning(f"飞书卡片发送失败: {e}")
+        return False
+
+    def notify_files(self, text: str, files: list[Path]) -> bool:
+        """发文字 + 文件附件。text 为空则只发文件（app 模式）；
+        webhook 模式不能传文件，仅在有 text 时发出（附文件名列表）。"""
+        files = [Path(f) for f in files if Path(f).exists()]
+        if self.mode == "webhook":
+            if not text:
+                return False   # webhook 发不了文件，无文字时不发任何消息
+            note = text
+            if files:
+                note += "\n\n附件（webhook 不支持传文件，请在机器上查看）:\n" + "\n".join(f"📎 {f.name}" for f in files)
+            return self.notify(note)
+        if self.mode != "app":
+            return False
+        ok = self.notify(text) if text else True
+        for f in files:
+            try:
+                file_key = self._upload_im_file(f)
+                self._app_send_message("file", json.dumps({"file_key": file_key}))
+            except Exception as e:
+                logger.warning(f"飞书文件发送失败 {f.name}: {e}")
+                ok = False
+        return ok
+
+    # ---- webhook 模式 ----
+    def _webhook_send(self, payload: dict) -> None:
+        """群机器人 webhook。"""
+        req = urllib.request.Request(
+            self.webhook,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if result.get("code") not in (0, None):
+            raise RuntimeError(f"webhook 返回错误: {result}")
+
+    # ---- 自建应用模式 ----
+    def _get_tenant_token(self) -> str:
+        if self._token and time.time() < self._token_expires:
+            return self._token
+        req = urllib.request.Request(
+            f"{BASE_URL}/auth/v3/tenant_access_token/internal",
+            data=json.dumps({"app_id": self.app_id, "app_secret": self.app_secret}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if result.get("code") != 0:
+            raise RuntimeError(f"获取 tenant_access_token 失败: {result}")
+        self._token = result["tenant_access_token"]
+        self._token_expires = time.time() + result.get("expire", 7200) - 300
+        return self._token
+
+    def _app_request(self, path: str, data: bytes, content_type: str = "application/json") -> dict:
+        req = urllib.request.Request(
+            f"{BASE_URL}{path}",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self._get_tenant_token()}",
+                "Content-Type": content_type,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"请求 {path} HTTP {exc.code}: {detail}") from exc
+        if result.get("code") != 0:
+            raise RuntimeError(f"请求 {path} 失败: {result}")
+        return result
+
+    def _app_send_message(self, msg_type: str, content: str) -> None:
+        self._app_request(
+            "/im/v1/messages?receive_id_type=chat_id",
+            json.dumps({
+                "receive_id": self.receive_id,
+                "msg_type": msg_type,
+                "content": content,
+            }).encode(),
+        )
+
+    def _upload_im_file(self, file_path: Path) -> str:
+        """上传文件到 IM（发文件消息用），返回 file_key。"""
+        file_data = file_path.read_bytes()
+        boundary = f"----Boundary{int(time.time() * 1000)}"
+        body = b""
+        for name, value in (("file_type", "stream"), ("file_name", file_path.name)):
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        body += f"--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode()
+        body += b"Content-Type: application/octet-stream\r\n\r\n"
+        body += file_data
+        body += f"\r\n--{boundary}--\r\n".encode()
+        result = self._app_request("/im/v1/files", body, f"multipart/form-data; boundary={boundary}")
+        return result["data"]["file_key"]
+
+
+feishu_notifier = FeishuNotifier()
+
+
+def notify_test_report(session) -> bool:
+    """CSV 测试引擎归档后的群通知：结果卡片 + 报告/日志附件（仅 app 模式带附件）。
+
+    通用实现：卡片只含引擎通用字段（SN/结果/统计/耗时/会话ID），
+    业务字段（板型/测试员等）各项目自行扩展或改写本函数。
+    """
+    if feishu_notifier.mode == "none":
+        return False
+    summary = session.summary
+    status_text, color = {
+        "passed": ("✅ 测试通过", "green"),
+        "failed": ("❌ 测试失败", "red"),
+    }.get(session.status, ("⏹ 测试中断", "grey"))
+    card = {
+        "header": {
+            "title": {"tag": "plain_text", "content": f"{status_text} · [[ display_name ]]"},
+            "template": color,
+        },
+        "elements": [
+            {"tag": "div", "fields": [
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**SN** {session.sn or '(未输入)'}"}},
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**耗时** {session.total_duration}s"}},
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"✅ {summary.passed}　❌ {summary.failed}　⏭ {summary.skipped}"}},
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**会话** {session.session_id}"}},
+            ]},
+        ],
+    }
+    feishu_notifier.notify_card(card)
+    if feishu_notifier.mode == "app":
+        # 附件静默跟随卡片，不单独发文字消息
+        reports_dir = path_manager.get_report_path(session.session_id)
+        files = [reports_dir / f"{session.session_id}.html", reports_dir / f"{session.session_id}.log"]
+        return feishu_notifier.notify_files("", files)
+    return True

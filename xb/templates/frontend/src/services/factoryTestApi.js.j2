@@ -16,9 +16,9 @@ async function request(path, options = {}) {
 export const factoryTestApi = {
   getPlan: (options = {}) => request('/plan', options),
   getCurrentSession: (options = {}) => request('/current-session', options),
-  run: (sn) => request('/run', {
+  run: (sn, notify = false) => request('/run', {
     method: 'POST',
-    body: JSON.stringify({ sn }),
+    body: JSON.stringify({ sn, notify }),
   }),
   stop: () => request('/stop', { method: 'POST' }),
   pause: () => request('/pause', { method: 'POST' }),

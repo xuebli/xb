@@ -25,6 +25,9 @@ from api.factory_test import router as factory_test_router
 [% if enable_feishu_auth %]
 from api.auth.routes import router as auth_router
 [% endif %]
+[% if enable_feishu_notify %]
+from api.notify import router as notify_router
+[% endif %]
 from api.settings import router as settings_router
 
 logger = get_logger(__name__)
@@ -147,6 +150,9 @@ app.include_router(update_router, prefix="/api")
 [% endif %]
 [% if enable_feishu_auth %]
 app.include_router(auth_router, prefix="/api/auth")
+[% endif %]
+[% if enable_feishu_notify %]
+app.include_router(notify_router, prefix="/api")
 [% endif %]
 [% if enable_logs %]
 app.include_router(logs_router, prefix="/api")

@@ -72,6 +72,11 @@ class ConfigForm:
                 "hint": "OAuth 扫码登录 + 单会话制，多人协作/服务器部署用",
             },
             {
+                "key": "feishu_notify", "label": "飞书群通知", "type": "toggle",
+                "checked": bool(cli.get("feishu_notify")),
+                "hint": "webhook 只发文字 / 自建应用可发文件附件",
+            },
+            {
                 "key": "icon", "label": "应用图标", "type": "text",
                 "checked": False,
                 "value": str(cli.get("icon") or ""),
@@ -265,6 +270,7 @@ class ConfigForm:
         logs = self._row("logs")["checked"]
         csv_test = self._row("csv_test")["checked"]
         feishu_auth = self._row("feishu_auth")["checked"]
+        feishu_notify = self._row("feishu_notify")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
@@ -290,6 +296,7 @@ class ConfigForm:
             "logs": logs,
             "csv_test": csv_test,
             "feishu_auth": feishu_auth,
+            "feishu_notify": feishu_notify,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
             "skip_install": self._row("skip_install")["checked"],
         }
@@ -306,6 +313,7 @@ def run_config_form(package: str, cli: dict) -> dict:
             "logs": bool(cli.get("logs")),
             "csv_test": bool(cli.get("csv_test")),
             "feishu_auth": bool(cli.get("feishu_auth")),
+            "feishu_notify": bool(cli.get("feishu_notify")),
             "icon": cli.get("icon"),
             "skip_install": bool(cli.get("skip_install")),
         }

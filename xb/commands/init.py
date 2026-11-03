@@ -319,6 +319,16 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
+    "--feishu-notify",
+    "feishu_notify",
+    is_flag=True,
+    default=False,
+    help=(
+        "启用飞书群通知：群机器人 webhook（只发文字）或自建应用+群聊ID（可发文件附件），"
+        "产测完成自动推送报告/日志；通用通知服务，业务代码可直接调用"
+    ),
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
@@ -342,6 +352,7 @@ def init_command(
     logs: bool,
     csv_test: bool,
     feishu_auth: bool,
+    feishu_notify: bool,
     skip_install: bool,
 ):
     """
@@ -425,6 +436,7 @@ def init_command(
         "logs": logs,
         "csv_test": csv_test,
         "feishu_auth": feishu_auth,
+        "feishu_notify": feishu_notify,
         "icon": icon,
         "skip_install": skip_install,
     })
@@ -435,6 +447,7 @@ def init_command(
     logs = form_result["logs"]
     csv_test = form_result["csv_test"]
     feishu_auth = form_result["feishu_auth"]
+    feishu_notify = form_result["feishu_notify"]
     icon = form_result["icon"]
     skip_install = form_result["skip_install"]
 
@@ -459,6 +472,12 @@ def init_command(
             "凭证在设置页填 feishu.app_id/app_secret，"
             "飞书后台需开通「网页应用」并配置回调白名单"
         )
+    if feishu_notify:
+        console.print(
+            "[cyan]ℹ[/cyan] 已启用 --feishu-notify：群通知（webhook 或自建应用），"
+            "在设置页填 feishu.notify_webhook 或 app_id/app_secret/receive_id，"
+            "详见 docs/飞书通知说明.md"
+        )
 
     # 创建项目
     console.print()
@@ -481,6 +500,7 @@ def init_command(
             enable_logs=logs,
             enable_csv_test=csv_test,
             enable_feishu_auth=feishu_auth,
+            enable_feishu_notify=feishu_notify,
             icon_path=icon_path,
         )
 

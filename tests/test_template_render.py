@@ -33,7 +33,7 @@ COMBOS = list(itertools.product([False, True], repeat=3))
 
 def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
             display_name=None, backend_port=None, enable_csv_test=False,
-            enable_feishu_auth=False):
+            enable_feishu_auth=False, enable_feishu_notify=False):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -45,6 +45,7 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
         enable_logs=enable_logs,
         enable_csv_test=enable_csv_test,
         enable_feishu_auth=enable_feishu_auth,
+        enable_feishu_notify=enable_feishu_notify,
     )
     return target
 
@@ -1143,3 +1144,49 @@ def test_csv_test_assets_absent_by_default(tmp_path):
     assert "FactoryTestView" not in app_vue
     # services/__init__.py 仅在 update/csv_test 任一启用时生成
     assert not (target / "backend" / "services").exists()
+
+
+def test_feishu_notify_template(tmp_path):
+    """--feishu-notify：通用通知服务（webhook/app 双模式），产测归档后自动推送。"""
+    target = _render(tmp_path, False, False, enable_csv_test=True, enable_feishu_notify=True)
+
+    svc = (target / "backend" / "services" / "feishu_notify.py").read_text(encoding="utf-8")
+    compile(svc, "feishu_notify.py", "exec")
+    assert "def notify_files" in svc and "_webhook_send" in svc and "_upload_im_file" in svc
+    assert "notify_webhook" in svc and "receive_id" in svc
+
+    # csv 引擎归档后自动通知（runner 挂钩，前端勾选「飞书通知」才发）
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    assert "notify_test_report" in runner
+    assert "if notify:" in runner
+    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    assert "notifyFeishu" in view
+    schemas = (target / "backend" / "schemas" / "factory_test.py").read_text(encoding="utf-8")
+    assert "notify: bool = False" in schemas
+
+    # secrets 声明 + 文档
+    secrets = (target / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert "notify_webhook" in secrets and "receive_id" in secrets
+    assert (target / "docs" / "飞书通知说明.md").exists()
+
+    # 通知自测接口 + 顶栏测试按钮（无 csv 项目也能验证通道）
+    notify_api = (target / "backend" / "api" / "notify.py").read_text(encoding="utf-8")
+    compile(notify_api, "notify.py", "exec")
+    assert '"/notify/test"' in notify_api
+    main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "notify_router" in main_py
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "testNotify" in app_vue
+
+    # 未启用：服务/挂钩/文档全部缺席（secrets 里也没有 webhook 字段）
+    plain = _render(tmp_path / "plain", False, False, enable_csv_test=True)
+    assert not (plain / "backend" / "services" / "feishu_notify.py").exists()
+    assert not (plain / "docs" / "飞书通知说明.md").exists()
+    plain_runner = (plain / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    assert "notify_test_report" not in plain_runner
+    plain_view = (plain / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    assert "notifyFeishu" not in plain_view  # 无通知功能的项目不显示勾选框
+    assert "notify_webhook" not in (plain / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert not (plain / "backend" / "api" / "notify.py").exists()
+    plain_app = (plain / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "testNotify" not in plain_app

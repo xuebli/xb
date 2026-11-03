@@ -18,6 +18,7 @@
 - 可选应用内自动更新（`--update`，飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 - 可选 CSV 测试引擎（`--csv-test`，产测专用：CSV 定义测试项、人工确认、PASS 判定、HTML 报告归档与历史查看）
 - 可选飞书登录（`--feishu-auth`，OAuth 扫码登录 + 单会话制 + 可开关的强制登录墙，多人协作/服务器部署用）
+- 可选飞书群通知（`--feishu-notify`，webhook 只发文字 / 自建应用可发文件附件，产测归档自动推送，业务可直接调用）
 - 特权操作免密提权标配（Linux polkit，管理员组无感、无密码落盘；helper 白名单执行器）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
@@ -94,7 +95,7 @@ xb dev stop
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
 ```
 
-- `--name/--port/--terminal/--update/--logs/--csv-test/--feishu-auth/--icon/--skip-install` 传了的参数
+- `--name/--port/--terminal/--update/--logs/--csv-test/--feishu-auth/--feishu-notify/--icon/--skip-install` 传了的参数
   直接预填进表单并勾上，回车即确认，老用法不受影响
 - 文本行（显示名/端口/图标）勾选时若仍是默认值则自动清空，直接输入即可
 - stdin 非终端时（脚本/CI 管道调用）自动跳过表单，沿用 CLI 参数
@@ -138,7 +139,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
