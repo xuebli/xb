@@ -3,7 +3,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import CsvEditor from '../components/factory_test/CsvEditor.vue'
 import ManualConfirmBanner from '../components/factory_test/ManualConfirmBanner.vue'
-import TestDataViewer from '../components/factory_test/TestDataViewer.vue'
 import TestGroupTable from '../components/factory_test/TestGroupTable.vue'
 import TestLogPanel from '../components/factory_test/TestLogPanel.vue'
 import { factoryTestApi } from '../services/factoryTestApi'
@@ -12,7 +11,6 @@ const sn = ref('')
 const session = ref(null)
 const loading = ref(false)
 const csvEditorRef = ref(null)
-const testDataViewerRef = ref(null)
 let pollTimer = null
 let pollController = null
 let pollGeneration = 0
@@ -213,13 +211,11 @@ onBeforeUnmount(() => {
         ▶ 开始测试
       </button>
       <button class="btn btn-stop" :disabled="!isActive" @click="stopTest">⏹ 停止</button>
-      <button class="btn btn-plain" :disabled="isActive" @click="testDataViewerRef?.open()">📊 历史报告</button>
       <button class="btn btn-plain" :disabled="isActive" @click="csvEditorRef?.open()">📝 编辑测试项</button>
       <span class="summary-text">{{ summaryText }}</span>
     </div>
 
     <CsvEditor ref="csvEditorRef" @saved="onCsvSaved" />
-    <TestDataViewer ref="testDataViewerRef" />
 
     <div v-if="resultBanner" class="result-banner" :class="resultBanner.cls">
       {{ resultBanner.text }}

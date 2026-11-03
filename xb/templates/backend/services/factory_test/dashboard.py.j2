@@ -1,0 +1,117 @@
+"""数据看板聚合：读取各会话归档目录里的 result.json，统计通过率与趋势。
+
+数据源是 report.py 归档时写出的 result.json（结构化结果）；没有该文件的
+历史会话自动跳过（老数据不参与统计，不解析 HTML）。
+所有统计都从通用字段推导（状态/耗时/测试项），任何项目开箱即用，无需配置。
+"""
+import json
+from datetime import datetime
+
+from managers import get_logger, path_manager
+
+logger = get_logger(__name__)
+
+MAX_SESSIONS = 200   # 最多统计最近 200 次测试，防止历史过长拖慢聚合
+
+
+class DashboardService:
+    """聚合历史测试结果，产出看板数据。"""
+
+    def get_dashboard(self) -> dict:
+        records = self._load_records()
+        return {
+            "summary": self._summary(records),
+            "trend": self._trend(records),
+            "item_stats": self._item_stats(records),
+        }
+
+    # ---- 数据加载 ----
+    def _load_records(self) -> list[dict]:
+        reports_dir = path_manager.get_report_path("")
+        if not reports_dir.exists():
+            return []
+        records = []
+        # 目录名即 session_id（sn_YYYYMMDD_HHMMSS），按时间倒序取最近 N 个
+        session_dirs = sorted(
+            (d for d in reports_dir.iterdir() if d.is_dir()),
+            key=lambda d: d.name,
+            reverse=True,
+        )[:MAX_SESSIONS]
+        for session_dir in session_dirs:
+            result_file = session_dir / "result.json"
+            if not result_file.exists():
+                continue   # 老会话没有结构化结果，跳过
+            try:
+                records.append(json.loads(result_file.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"看板数据读取失败 {result_file.name}: {e}")
+        return records
+
+    @staticmethod
+    def _session_time(record: dict) -> str:
+        """session_id 里的时间戳转可读时间。"""
+        parts = record.get("session_id", "").rsplit("_", 2)
+        if len(parts) != 3:
+            return ""
+        try:
+            return datetime.strptime(parts[1] + parts[2], "%Y%m%d%H%M%S").strftime("%m-%d %H:%M")
+        except ValueError:
+            return ""
+
+    # ---- 统计卡片 ----
+    @staticmethod
+    def _summary(records: list[dict]) -> dict:
+        total = len(records)
+        passed = sum(1 for r in records if r.get("status") == "passed")
+        durations = [r.get("total_duration", 0) for r in records if r.get("total_duration")]
+        return {
+            "total_runs": total,
+            "passed_runs": passed,
+            "pass_rate": round(passed / total * 100, 1) if total else 0.0,
+            "avg_duration": round(sum(durations) / len(durations), 1) if durations else 0.0,
+            "last_status": records[0].get("status", "") if records else "",
+            "last_time": DashboardService._session_time(records[0]) if records else "",
+        }
+
+    # ---- 趋势（按时间正序，供柱状图） ----
+    def _trend(self, records: list[dict]) -> list[dict]:
+        trend = []
+        for r in reversed(records[-30:]):   # 最近 30 次，按时间正序
+            summary = r.get("summary") or {}
+            total = summary.get("total", 0)
+            trend.append({
+                "session_id": r.get("session_id", ""),
+                "sn": r.get("sn", ""),
+                "time": self._session_time(r),
+                "status": r.get("status", ""),
+                "pass_rate": round(summary.get("passed", 0) / total * 100, 1) if total else 0.0,
+            })
+        return trend
+
+    # ---- 测试项通过率（保持 CSV 计划顺序，看板柱状图按窗口滑块浏览） ----
+    @staticmethod
+    def _item_stats(records: list[dict]) -> list[dict]:
+        stats: dict[str, dict] = {}
+        for r in reversed(records):   # 按时间正序遍历，首次出现顺序 = CSV 顺序
+            for item in r.get("items") or []:
+                if item.get("status") == "skipped":
+                    continue
+                entry = stats.setdefault(item["id"], {
+                    "id": item["id"],
+                    "name": item.get("name", ""),
+                    "category": item.get("category", ""),
+                    "total": 0, "passed": 0, "failed": 0,
+                })
+                entry["total"] += 1
+                if item.get("status") == "passed":
+                    entry["passed"] += 1
+                elif item.get("status") == "failed":
+                    entry["failed"] += 1
+        result = []
+        for entry in stats.values():   # dict 保持插入顺序（首次出现 = CSV 顺序）
+            entry["pass_rate"] = round(entry["passed"] / entry["total"] * 100, 1) if entry["total"] else 0.0
+            result.append(entry)
+        return result
+
+
+dashboard_service = DashboardService()

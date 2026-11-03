@@ -1,4 +1,7 @@
 """历史测试数据：读取 datas/reports/ 下按会话归档的报告和日志。"""
+import json
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -53,6 +56,106 @@ class TestDataService:
             report_html=self._read_text(session_dir / report_file.name) if report_file else "",
             log_text=self._read_text(session_dir / log_file.name) if log_file else "",
         )
+
+    def list_records(self, start: str = "", end: str = "", sn: str = "",
+                     status: str = "", order: str = "desc",
+                     page: int = 1, page_size: int = 20) -> dict:
+        """看板测试记录：日期范围 / SN 模糊 / 结果筛选，按测试时间排序 + 分页。
+
+        状态/耗时等来自归档时写出的 result.json（老会话没有则留空，
+        按结果筛选时不参与）。
+        """
+        reports_dir = path_manager.get_report_path("")
+        if not reports_dir.exists():
+            return []
+
+        records = []
+        for session_dir in reports_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            record = self._record_of(session_dir)
+            if record:
+                records.append(record)
+
+        if start:
+            records = [r for r in records if r["date"] >= start]
+        if end:
+            records = [r for r in records if r["date"] <= end]
+        if sn:
+            records = [r for r in records if sn.lower() in r["sn"].lower()]
+        if status:
+            records = [r for r in records if r["status"] == status]
+
+        records.sort(key=lambda r: (r["date"], r["time"]), reverse=(order != "asc"))
+
+        # 服务端分页：记录多了前端一次渲染不动；页码越界自动收拢
+        total = len(records)
+        page_size = max(1, min(int(page_size), 200))
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(int(page), pages))
+        start_idx = (page - 1) * page_size
+        return {
+            "records": records[start_idx:start_idx + page_size],
+            "total": total,
+            "page": page,
+            "pages": pages,
+        }
+
+    def _record_of(self, session_dir: Path) -> dict | None:
+        session_id = session_dir.name
+        date_part, time_part = self._parse_date_time(session_id)
+        if not date_part:
+            # 会话目录名不含时间戳时退回目录修改时间
+            mtime = datetime.fromtimestamp(session_dir.stat().st_mtime)
+            date_part, time_part = mtime.strftime("%Y-%m-%d"), mtime.strftime("%H:%M:%S")
+
+        record = {
+            "session_id": session_id,
+            "sn": self._parse_sn(session_id),
+            "date": date_part,
+            "time": time_part,
+            "status": "",
+            "passed": None,
+            "total": None,
+            "duration": None,
+            "has_report": (session_dir / f"{session_id}.html").exists(),
+            "has_log": (session_dir / f"{session_id}.log").exists(),
+        }
+        result_file = session_dir / "result.json"
+        if result_file.exists():
+            try:
+                result = json.loads(result_file.read_text(encoding="utf-8"))
+                summary = result.get("summary") or {}
+                record.update({
+                    "status": result.get("status", ""),
+                    "passed": summary.get("passed"),
+                    "total": summary.get("total"),
+                    "duration": result.get("total_duration"),
+                })
+            except (json.JSONDecodeError, OSError):
+                pass
+        return record
+
+    def delete_sessions(self, session_ids: list[str]) -> int:
+        """批量删除测试记录（整个会话归档目录）。复用 _get_session_dir 的越界校验。"""
+        deleted = 0
+        for session_id in session_ids:
+            try:
+                session_dir = self._get_session_dir(session_id)
+            except HTTPException:
+                continue
+            shutil.rmtree(session_dir)
+            deleted += 1
+        return deleted
+
+    @staticmethod
+    def _parse_date_time(session_id: str) -> tuple[str, str]:
+        """session_id（sn_YYYYMMDD_HHMMSS）→ (YYYY-MM-DD, HH:MM:SS)，解析失败返回空。"""
+        parts = session_id.rsplit("_", 2)
+        if len(parts) != 3 or len(parts[1]) != 8 or len(parts[2]) != 6:
+            return "", ""
+        d, t = parts[1], parts[2]
+        return f"{d[:4]}-{d[4:6]}-{d[6:8]}", f"{t[:2]}:{t[2:4]}:{t[4:6]}"
 
     def _get_session_dir(self, session_id: str) -> Path:
         if not session_id or "/" in session_id or "\\" in session_id or session_id in {".", ".."}:

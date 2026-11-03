@@ -11,6 +11,7 @@ from services.factory_test import (
 )
 import services.factory_test.commands  # noqa: F401  注册指令键
 from services.factory_test.test_data import test_data_service
+from services.factory_test.dashboard import dashboard_service
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -147,6 +148,43 @@ async def get_test_data(session_id: str):
     except Exception as e:
         logger.error(f"读取测试数据详情失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"读取测试数据详情失败: {str(e)}")
+
+
+@router.get("/dashboard")
+async def get_dashboard():
+    """数据看板：通过率统计/趋势/测试项排行（聚合历史 result.json）。"""
+    try:
+        return dashboard_service.get_dashboard()
+    except Exception as e:
+        logger.error(f"看板数据聚合失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"看板数据聚合失败: {str(e)}")
+
+
+@router.get("/records")
+async def list_records(start: str = "", end: str = "", sn: str = "",
+                       status: str = "", order: str = "desc",
+                       page: int = 1, page_size: int = 20):
+    """看板测试记录：日期范围/SN/结果筛选 + 分页，默认测试时间倒序。"""
+    try:
+        return test_data_service.list_records(start=start, end=end, sn=sn, status=status,
+                                              order=order, page=page, page_size=page_size)
+    except Exception as e:
+        logger.error(f"读取测试记录失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取测试记录失败: {str(e)}")
+
+
+@router.post("/test-data/delete")
+async def delete_test_data(payload: dict):
+    """批量删除测试记录（看板多选删除）。"""
+    session_ids = payload.get("session_ids")
+    if not isinstance(session_ids, list) or not session_ids:
+        raise HTTPException(status_code=400, detail="session_ids 必须是非空数组")
+    try:
+        deleted = test_data_service.delete_sessions([str(s) for s in session_ids])
+        return {"deleted": deleted}
+    except Exception as e:
+        logger.error(f"删除测试记录失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除测试记录失败: {str(e)}")
 
 
 @router.put("/item-standalone")

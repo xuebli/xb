@@ -1,0 +1,622 @@
+<script setup>
+/** 数据看板页：通过率统计 / 趋势 / 测试项排行 / 最近记录（聚合历史 result.json，零配置） */
+import { computed, onMounted, ref } from 'vue'
+import { factoryTestApi } from '../services/factoryTestApi'
+
+const loading = ref(false)
+const data = ref(null)
+
+// 报告/日志查看器（点击最近记录的操作按钮打开）
+const viewer = ref({ open: false, kind: 'report', sn: '', content: '', loading: false })
+
+const openViewer = async (record, kind) => {
+  viewer.value = { open: true, kind, sn: record.sn, content: '', loading: true }
+  try {
+    const detail = await factoryTestApi.getTestDataDetail(record.session_id)
+    viewer.value.content = kind === 'report' ? (detail.report_html || '') : (detail.log_text || '')
+  } catch (err) {
+    viewer.value.content = ''
+    alert(`读取${kind === 'report' ? '报告' : '日志'}失败: ${err.message}`)
+  } finally {
+    viewer.value.loading = false
+  }
+}
+
+const closeViewer = () => { viewer.value.open = false }
+
+const summary = computed(() => data.value?.summary || {})
+const trend = computed(() => data.value?.trend || [])
+const itemStats = computed(() => data.value?.item_stats || [])
+
+// 测试项通过率柱状图：CSV 顺序，滑块拖动窗口（项 ≤ 窗口宽时隐藏滑块）
+const CHART_WINDOW = 20
+const chartStart = ref(0)
+const chartMaxStart = computed(() => Math.max(0, itemStats.value.length - CHART_WINDOW))
+const chartItems = computed(() =>
+  itemStats.value.slice(chartStart.value, chartStart.value + CHART_WINDOW)
+)
+const rateClass = (rate) => (rate >= 90 ? 'rate-ok' : rate >= 70 ? 'rate-mid' : 'rate-bad')
+const hoverItem = ref(null)   // 悬停柱子明细
+const tip = ref({ x: 0, y: 0 })   // 浮层位置（相对图表容器）
+
+const trackTip = (e) => {
+  const rect = e.currentTarget.getBoundingClientRect()
+  tip.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+}
+const hoverTrend = ref(null)
+
+// 测试记录：筛选/排序/搜索/多选删除/分页
+const records = ref([])
+const recordsLoading = ref(false)
+const filters = ref({ sn: '', start: '', end: '', status: '', order: 'desc' })  // 默认测试时间倒序
+const page = ref(1)
+const pageSize = ref(20)
+const pageTotal = ref(0)
+const pageCount = ref(1)
+const checked = ref(new Set())
+
+const allChecked = computed(() =>
+  records.value.length > 0 && records.value.every((r) => checked.value.has(r.session_id))
+)
+
+const loadRecords = async () => {
+  recordsLoading.value = true
+  try {
+    const resp = await factoryTestApi.getRecords({
+      ...filters.value, page: page.value, page_size: pageSize.value,
+    })
+    records.value = resp.records || []
+    pageTotal.value = resp.total || 0
+    pageCount.value = resp.pages || 1
+    page.value = resp.page || 1   // 后端收拢越界页码（删除后页数变少等场景）
+    checked.value = new Set()
+  } catch (err) {
+    alert(`读取测试记录失败: ${err.message}`)
+  } finally {
+    recordsLoading.value = false
+  }
+}
+
+// 筛选/搜索/每页条数变化 → 回第 1 页
+const applyFilters = () => { page.value = 1; loadRecords() }
+
+const goPage = (n) => {
+  const target = Math.max(1, Math.min(Number(n) || 1, pageCount.value))
+  if (target === page.value) return
+  page.value = target
+  loadRecords()
+}
+
+const changePageSize = () => { page.value = 1; loadRecords() }
+
+const toggleOne = (id) => {
+  const next = new Set(checked.value)
+  next.has(id) ? next.delete(id) : next.add(id)
+  checked.value = next
+}
+
+const toggleAll = () => {
+  checked.value = allChecked.value
+    ? new Set()
+    : new Set(records.value.map((r) => r.session_id))
+}
+
+const toggleOrder = () => {
+  filters.value.order = filters.value.order === 'desc' ? 'asc' : 'desc'
+  applyFilters()
+}
+
+const deleteSelected = async () => {
+  if (!checked.value.size) return
+  if (!confirm(`确定删除选中的 ${checked.value.size} 条测试记录？（报告与日志文件一并删除，不可恢复）`)) return
+  try {
+    await factoryTestApi.deleteRecords([...checked.value])
+    checked.value = new Set()
+    await Promise.all([loadRecords(), load()])   // 统计卡片/趋势同步刷新
+  } catch (err) {
+    alert(`删除失败: ${err.message}`)
+  }
+}
+
+const statusText = (s) => ({ passed: 'PASS', failed: 'FAIL', stopped: '中断' }[s] || s || '-')
+
+const load = async () => {
+  loading.value = true
+  try {
+    data.value = await factoryTestApi.getDashboard()
+  } catch (err) {
+    alert(`读取看板数据失败: ${err.message}`)
+    console.error(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => { load(); loadRecords() })
+</script>
+
+<template>
+  <div class="dashboard-page">
+    <section class="panel">
+      <header class="header">
+          <div>
+            <h2>数据看板</h2>
+            <p>聚合历次测试结果：通过率趋势、易失败项定位</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn" type="button" :disabled="loading" @click="load">刷新</button>
+          </div>
+        </header>
+
+        <div v-if="loading && !data" class="empty">正在统计...</div>
+        <div v-else-if="!summary.total_runs" class="empty">暂无可统计的历史测试（老报告无结构化数据，新跑的测试会自动计入）</div>
+
+        <div v-else class="dashboard">
+          <!-- 统计卡片 -->
+          <div class="cards">
+            <div class="card">
+              <span class="card-label">测试次数</span>
+              <strong class="card-value">{{ summary.total_runs }}</strong>
+            </div>
+            <div class="card">
+              <span class="card-label">通过率</span>
+              <strong class="card-value" :class="summary.pass_rate >= 90 ? 'ok' : 'bad'">
+                {{ summary.pass_rate }}%
+              </strong>
+            </div>
+            <div class="card">
+              <span class="card-label">平均耗时</span>
+              <strong class="card-value">{{ summary.avg_duration }}s</strong>
+            </div>
+            <div class="card">
+              <span class="card-label">最近结果</span>
+              <strong class="card-value" :class="summary.last_status === 'passed' ? 'ok' : 'bad'">
+                {{ statusText(summary.last_status) }}
+              </strong>
+              <span class="card-sub">{{ summary.last_time }}</span>
+            </div>
+          </div>
+
+          <!-- 通过率趋势（最近 30 次） -->
+          <div v-if="trend.length" class="block">
+            <h3>通过率趋势（近 {{ trend.length }} 次）</h3>
+            <div class="trend">
+              <div
+                v-for="tr in trend"
+                :key="tr.session_id"
+                class="trend-col"
+                @mouseenter="hoverTrend = tr"
+                @mouseleave="hoverTrend = null"
+              >
+                <div class="trend-bar" :class="tr.status" :style="{ height: `${tr.pass_rate}%` }"></div>
+              </div>
+            </div>
+            <div class="trend-info">
+              <template v-if="hoverTrend">{{ hoverTrend.sn }}　{{ hoverTrend.time }}　{{ statusText(hoverTrend.status) }}　通过率 {{ hoverTrend.pass_rate }}%</template>
+              <template v-else>&nbsp;</template>
+            </div>
+          </div>
+
+          <!-- 测试项通过率：CSV 顺序柱状图，项多时滑块平移窗口 -->
+          <div v-if="itemStats.length" class="block">
+            <h3>测试项通过率<span class="h3-sub">（按 CSV 顺序，绿≥90% / 黄≥70% / 红&lt;70%）</span></h3>
+            <div class="chart-wrap" @mousemove="trackTip" @mouseleave="hoverItem = null">
+              <!-- 纵轴：通过率刻度 -->
+              <div class="chart-y-axis">
+                <span v-for="tick in [100, 75, 50, 25, 0]" :key="tick">{{ tick }}%</span>
+              </div>
+              <div class="chart-plot">
+                <!-- 网格线：只覆盖绘图区（柱高量程），刻度即通过率百分比 -->
+                <div class="chart-grid">
+                  <div v-for="tick in [75, 50, 25]" :key="tick" class="gridline" :style="{ bottom: `${tick}%` }"></div>
+                  <div class="baseline"></div>
+                </div>
+                <!-- 柱高严格 = 通过率%；横轴为测试项名称；柱顶标数值 -->
+                <div
+                  v-for="(item, i) in chartItems"
+                  :key="item.id"
+                  class="bar-col"
+                  @mouseenter="hoverItem = { ...item, _i: i }"
+                >
+                  <div class="bar-track">
+                    <span class="bar-value" :style="{ bottom: `calc(${item.pass_rate}% + 4px)` }">{{ item.pass_rate }}</span>
+                    <div class="item-bar" :class="rateClass(item.pass_rate)" :style="{ height: `${item.pass_rate}%` }"></div>
+                  </div>
+                  <span class="bar-label">{{ item.name }}</span>
+                </div>
+                <!-- 悬停浮层：跟随鼠标的明细卡片 -->
+                <div
+                  v-if="hoverItem"
+                  class="chart-tip"
+                  :style="{ left: `${Math.min(tip.x + 14, 560)}px`, top: `${Math.max(tip.y - 10, 4)}px` }"
+                >
+                  <strong>{{ chartStart + hoverItem._i + 1 }}. {{ hoverItem.name }}</strong>
+                  <span>{{ hoverItem.category }}</span>
+                  <div class="tip-rate" :class="rateClass(hoverItem.pass_rate)">通过率 {{ hoverItem.pass_rate }}%</div>
+                  <span class="tip-detail">通过 {{ hoverItem.passed }} / {{ hoverItem.total }}　失败 {{ hoverItem.failed }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="chartMaxStart > 0" class="chart-slider">
+              <button class="btn btn-xs" type="button" :disabled="chartStart === 0" @click="chartStart--">◄</button>
+              <input
+                v-model.number="chartStart"
+                type="range"
+                min="0"
+                :max="chartMaxStart"
+                class="slider"
+              />
+              <button class="btn btn-xs" type="button" :disabled="chartStart >= chartMaxStart" @click="chartStart++">►</button>
+              <span class="chart-pos">{{ chartStart + 1 }} ~ {{ chartStart + chartItems.length }} / {{ itemStats.length }} 项</span>
+            </div>
+          </div>
+
+          <!-- 测试记录：筛选 / 搜索 / 排序 / 多选删除 / 行内查看 -->
+          <div class="block">
+            <h3>测试记录</h3>
+            <div class="rec-toolbar">
+              <input v-model="filters.sn" class="rec-input" placeholder="SN 搜索" @input="applyFilters" />
+              <input v-model="filters.start" type="date" class="rec-input" @change="applyFilters" />
+              <span class="rec-sep">~</span>
+              <input v-model="filters.end" type="date" class="rec-input" @change="applyFilters" />
+              <select v-model="filters.status" class="rec-input" @change="loadRecords">
+                <option value="">全部结果</option>
+                <option value="passed">通过</option>
+                <option value="failed">失败</option>
+                <option value="stopped">中断</option>
+              </select>
+              <button class="btn" type="button" @click="toggleOrder">
+                测试时间 {{ filters.order === 'desc' ? '↓' : '↑' }}
+              </button>
+              <span class="rec-spacer"></span>
+              <button
+                class="btn btn-danger"
+                type="button"
+                :disabled="!checked.size"
+                @click="deleteSelected"
+              >删除所选（{{ checked.size }}）</button>
+            </div>
+            <div v-if="recordsLoading" class="empty">正在读取...</div>
+            <div v-else-if="!records.length" class="empty">没有符合条件的测试记录</div>
+            <table v-else class="table">
+              <thead>
+                <tr>
+                  <th class="cb"><input type="checkbox" :checked="allChecked" @change="toggleAll" /></th>
+                  <th>SN</th><th>测试时间</th><th>结果</th><th>通过/总数</th><th>耗时</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in records" :key="r.session_id">
+                  <td class="cb"><input type="checkbox" :checked="checked.has(r.session_id)" @change="toggleOne(r.session_id)" /></td>
+                  <td>{{ r.sn }}</td>
+                  <td>{{ r.date }} {{ r.time }}</td>
+                  <td :class="r.status === 'passed' ? 'ok' : 'bad'">{{ r.status ? statusText(r.status) : '-' }}</td>
+                  <td>{{ r.passed != null ? `${r.passed}/${r.total}` : '-' }}</td>
+                  <td>{{ r.duration != null ? `${r.duration}s` : '-' }}</td>
+                  <td class="ops">
+                    <button class="btn btn-xs" type="button" :disabled="!r.has_report" @click="openViewer(r, 'report')">报告</button>
+                    <button class="btn btn-xs" type="button" :disabled="!r.has_log" @click="openViewer(r, 'log')">日志</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="pager">
+              <select v-model.number="pageSize" class="rec-input" @change="changePageSize">
+                <option :value="10">10 条/页</option>
+                <option :value="20">20 条/页</option>
+                <option :value="50">50 条/页</option>
+                <option :value="100">100 条/页</option>
+              </select>
+              <button class="btn" type="button" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+              <span class="pager-info">第 {{ page }} / {{ pageCount }} 页</span>
+              <button class="btn" type="button" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
+              <span class="pager-jump">
+                跳至
+                <input
+                  class="rec-input pager-input"
+                  type="number"
+                  :min="1"
+                  :max="pageCount"
+                  :placeholder="String(page)"
+                  @keyup.enter="goPage($event.target.value); $event.target.value = ''"
+                />
+                页
+              </span>
+              <span class="pager-total">共 {{ pageTotal }} 条</span>
+            </div>
+          </div>
+        </div>
+    </section>
+
+    <!-- 报告/日志查看器 -->
+    <Teleport to="body">
+      <div v-if="viewer.open" class="viewer-mask" @click="closeViewer">
+        <section class="viewer-panel" @click.stop>
+          <header class="header">
+            <h2>{{ viewer.sn }} · {{ viewer.kind === 'report' ? '测试报告' : '测试日志' }}</h2>
+            <button class="btn" type="button" @click="closeViewer">关闭</button>
+          </header>
+          <div v-if="viewer.loading" class="empty">正在加载...</div>
+          <iframe
+            v-else-if="viewer.kind === 'report' && viewer.content"
+            :srcdoc="viewer.content"
+            sandbox="allow-scripts"
+            referrerpolicy="no-referrer"
+            title="测试报告预览"
+            class="viewer-iframe"
+          ></iframe>
+          <pre v-else-if="viewer.kind === 'log' && viewer.content" class="viewer-log">{{ viewer.content }}</pre>
+          <div v-else class="empty">该会话没有{{ viewer.kind === 'report' ? '报告' : '日志' }}</div>
+        </section>
+      </div>
+    </Teleport>
+  </div>
+</template>
+
+<style scoped>
+.dashboard-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px;
+}
+.panel {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.header h2 { margin: 0 0 4px; font-size: 18px; color: var(--text-h, #101828); }
+.header p { margin: 0; font-size: 12px; color: var(--muted, #667085); }
+.header-actions { display: flex; gap: 8px; }
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text, #344054);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--border-strong, #94a3b8); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.empty { padding: 48px 0; text-align: center; color: var(--muted, #667085); font-size: 13px; }
+
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.card {
+  padding: 14px 16px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-soft, #f8fafc);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.card-label { font-size: 11px; color: var(--muted, #667085); }
+.card-value { font-size: 24px; color: var(--text-h, #101828); }
+.card-sub { font-size: 11px; color: var(--muted, #667085); }
+.ok { color: #16a34a; }
+.bad { color: #dc2626; }
+
+.block { margin-top: 20px; }
+.block h3 { margin: 0 0 10px; font-size: 14px; color: var(--text-h, #101828); }
+
+.trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 96px;
+  padding: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-soft, #f8fafc);
+}
+.trend-bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; background: #16a34a; }
+.trend-bar.failed { background: #dc2626; }
+.trend-bar.stopped { background: #d97706; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table th, .table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  text-align: left;
+  color: var(--text, #344054);
+}
+.table th { color: var(--muted, #667085); font-weight: 600; }
+.ops { white-space: nowrap; }
+.rec-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.rec-input {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--text, #344054);
+  font-size: 12px;
+  outline: none;
+}
+.rec-input:focus { border-color: var(--border-strong, #94a3b8); }
+.rec-sep { color: var(--muted, #667085); }
+.rec-spacer { flex: 1; }
+.btn-danger { color: #dc2626; }
+.btn-danger:hover:not(:disabled) { border-color: #dc2626; background: rgba(220, 38, 38, 0.06); }
+.cb { width: 28px; text-align: center; }
+.h3-sub { font-size: 11px; font-weight: 400; color: var(--muted, #667085); margin-left: 8px; }
+
+/* 通过率趋势：细柱居中，单条数据也不再是巨型色块 */
+.trend {
+  display: flex;
+  align-items: flex-end;
+  height: 120px;
+  padding: 10px 12px 6px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-soft, #f8fafc);
+}
+.trend-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.trend-bar {
+  width: 100%;
+  max-width: 36px;
+  border-radius: 4px 4px 0 0;
+  transition: filter 0.15s;
+}
+.trend-col:hover .trend-bar { filter: brightness(1.15); }
+.trend-bar.passed { background: linear-gradient(180deg, #34d399, #059669); }
+.trend-bar.failed { background: linear-gradient(180deg, #f87171, #dc2626); }
+.trend-bar.stopped { background: linear-gradient(180deg, #fbbf24, #d97706); }
+.trend-info { min-height: 18px; margin-top: 4px; font-size: 11px; color: var(--muted, #667085); }
+
+/* 测试项通过率：坐标系严格（纵轴刻度 + 网格线 + 基线），柱高=通过率 */
+.chart-wrap {
+  display: flex;
+  gap: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-soft, #f8fafc);
+  padding: 12px 14px 10px 10px;
+}
+.chart-y-axis {
+  height: 176px;          /* 与绘图区同高，刻度与量程严格对齐 */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted, #94a3b8);
+  text-align: right;
+  min-width: 34px;
+}
+.chart-plot {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.chart-grid {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 176px;          /* 只覆盖绘图区，bottom 百分比 = 通过率刻度 */
+  pointer-events: none;
+}
+.gridline {
+  position: absolute;
+  left: 0; right: 0;
+  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+}
+.baseline {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  border-top: 1.5px solid rgba(100, 116, 139, 0.4);
+}
+.bar-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.bar-track {
+  position: relative;
+  width: 100%;
+  height: 176px;          /* 绘图区：0~100% 的完整量程 */
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.bar-value {
+  position: absolute;         /* bottom 由模板按柱高计算：calc(通过率% + 4px) */
+  font-size: 10px;
+  color: var(--muted, #667085);
+}
+.item-bar {
+  width: 100%;
+  max-width: 30px;
+  border-radius: 5px 5px 0 0;
+  transition: filter 0.15s, transform 0.15s;
+}
+.item-bar.rate-ok { background: linear-gradient(180deg, #34d399, #059669); }
+.item-bar.rate-mid { background: linear-gradient(180deg, #fbbf24, #d97706); }
+.item-bar.rate-bad { background: linear-gradient(180deg, #f87171, #dc2626); }
+.bar-col:hover .item-bar { filter: brightness(1.12); transform: scaleY(1.01); transform-origin: bottom; }
+.bar-label {
+  margin-top: 6px;
+  writing-mode: vertical-rl;
+  max-height: 58px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--muted, #94a3b8);
+  white-space: nowrap;
+}
+.bar-col:hover .bar-label { color: var(--text-h, #101828); }
+
+/* 悬停浮层卡片 */
+.chart-tip {
+  position: absolute;
+  z-index: 10;
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
+  font-size: 12px;
+  color: var(--text, #344054);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+.chart-tip strong { color: var(--text-h, #101828); font-size: 13px; }
+.chart-tip .tip-rate { font-weight: 700; }
+.chart-tip .tip-rate.rate-ok { color: #059669; background: none; }
+.chart-tip .tip-rate.rate-mid { color: #d97706; background: none; }
+.chart-tip .tip-rate.rate-bad { color: #dc2626; background: none; }
+.chart-tip .tip-detail { color: var(--muted, #667085); font-size: 11px; }
+
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.pager-info, .pager-jump, .pager-total { font-size: 12px; color: var(--muted, #667085); }
+.pager-input { width: 56px; text-align: center; }
+.pager-total { margin-left: auto; }
+.btn-xs { padding: 3px 10px; font-size: 11px; margin-right: 4px; }
+
+.viewer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(15, 18, 25, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.viewer-panel {
+  width: min(1100px, 94vw);
+  height: min(820px, 90vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 14px;
+  padding: 16px 20px;
+  box-shadow: var(--shadow, 0 20px 60px rgba(0, 0, 0, 0.25));
+}
+.viewer-iframe { flex: 1; border: 0; border-radius: 8px; background: #fff; }
+.viewer-log {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--surface-soft, #f8fafc);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text, #344054);
+}
+</style>

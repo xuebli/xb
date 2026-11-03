@@ -3,7 +3,9 @@ import { ref[% if enable_feishu_auth %], onMounted[% endif %] } from 'vue'
 [% if enable_feishu_auth %]
 import { useAuth } from './composables/useAuth'
 [% endif %]
+[% if not enable_csv_test %]
 import DashboardHome from './components/DashboardHome.vue'
+[% endif %]
 [% if enable_terminal %]
 import TerminalPanel from './components/TerminalPanel.vue'
 [% endif %]
@@ -16,9 +18,11 @@ import LogViewer from './components/LogViewer.vue'
 [% endif %]
 [% if enable_csv_test %]
 import FactoryTestView from './views/FactoryTestView.vue'
+import DashboardView from './views/DashboardView.vue'
 [% endif %]
 
-const currentPage = ref('home')
+// csv-test 项目没有首页：看板即首页
+const currentPage = ref([% if enable_csv_test %]'dashboard'[% else %]'home'[% endif %])
 const showIconFallback = ref(false)
 [% if enable_feishu_auth %]
 
@@ -39,9 +43,12 @@ onMounted(() => { loadAuth().then(startPoll) })
 [% endif %]
 
 const navItems = [
-  { id: 'home', label: '首页', icon: '🏠' },
 [% if enable_csv_test %]
+  // 产测项目：看板即首页（置顶），无独立首页
+  { id: 'dashboard', label: '看板', icon: '📈' },
   { id: 'csvTest', label: '产测', icon: '🧪' },
+[% else %]
+  { id: 'home', label: '首页', icon: '🏠' },
 [% endif %]
 [% if enable_logs %]
   { id: 'logs', label: '日志', icon: '📜' },
@@ -156,11 +163,13 @@ const openSettings = () => {
       </nav>
       <div
         class="page-content"
-        :class="currentPage === 'home' ? 'page-content--centered' : 'page-content--stretch'"
+        :class="currentPage === '[% if not enable_csv_test %]home[% endif %]' ? 'page-content--centered' : 'page-content--stretch'"
       >
-        <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
 [% if enable_csv_test %]
+        <DashboardView v-if="currentPage === 'dashboard'" />
         <FactoryTestView v-else-if="currentPage === 'csvTest'" />
+[% else %]
+        <DashboardHome v-if="currentPage === 'home'" @open-settings="openSettings" />
 [% endif %]
 [% if enable_logs %]
         <LogViewer v-else-if="currentPage === 'logs'" />

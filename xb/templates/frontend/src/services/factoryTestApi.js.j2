@@ -26,6 +26,17 @@ export const factoryTestApi = {
   startManual: () => request('/manual-start', { method: 'POST' }),
   failManual: () => request('/fail-manual', { method: 'POST' }),
   getTestDataList: () => request('/test-data'),
+  getDashboard: () => request('/dashboard'),
+  getRecords: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v))
+    ).toString()
+    return request(`/records${qs ? `?${qs}` : ''}`)
+  },
+  deleteRecords: (sessionIds) => request('/test-data/delete', {
+    method: 'POST',
+    body: JSON.stringify({ session_ids: sessionIds }),
+  }),
   getTestDataDetail: (sessionId) => request(`/test-data/${encodeURIComponent(sessionId)}`),
   getTestCsv: () => request('/test-csv'),
   saveTestCsv: (rows) => request('/test-csv', { method: 'PUT', body: JSON.stringify({ rows }) }),

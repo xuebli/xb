@@ -934,13 +934,14 @@ def test_csv_test_assets(tmp_path):
     """--csv-test 生成 CSV 测试引擎全套：后端引擎 + 前端页面 + demo CSV + 文档。"""
     target = _render(tmp_path, False, False, enable_csv_test=True)
 
-    # 后端：引擎九件 + schemas + api
+    # 后端：引擎十件（含看板聚合） + schemas + api
     for rel in (
         "backend/schemas/factory_test.py",
         "backend/services/__init__.py",
         "backend/services/factory_test/__init__.py",
         "backend/services/factory_test/command_executor.py",
         "backend/services/factory_test/commands.py",
+        "backend/services/factory_test/dashboard.py",
         "backend/services/factory_test/definition.py",
         "backend/services/factory_test/report.py",
         "backend/services/factory_test/result_compare.py",
@@ -951,6 +952,12 @@ def test_csv_test_assets(tmp_path):
         "backend/api/factory_test/routes.py",
     ):
         assert (target / rel).exists(), f"缺少文件 {rel}"
+
+    # 数据看板：归档写结构化 result.json + 聚合路由
+    report = (target / "backend" / "services" / "factory_test" / "report.py").read_text(encoding="utf-8")
+    assert "result.json" in report
+    routes = (target / "backend" / "api" / "factory_test" / "routes.py").read_text(encoding="utf-8")
+    assert '"/dashboard"' in routes
 
     # main.py 注册路由；backend_build 收录隐式导入
     main_py = (target / "backend" / "main.py").read_text(encoding="utf-8")
@@ -972,17 +979,38 @@ def test_csv_test_assets(tmp_path):
     commands = (target / "backend" / "services" / "factory_test" / "commands.py").read_text(encoding="utf-8")
     assert 'command_registry.register("demo_echo"' in commands
 
-    # 前端：主页 + 5 组件 + API 客户端 + 导航
+    # 前端：主页 + 6 组件（含看板面板） + API 客户端 + 导航
     for rel in (
         "frontend/src/views/FactoryTestView.vue",
         "frontend/src/services/factoryTestApi.js",
         "frontend/src/components/factory_test/CsvEditor.vue",
+        "frontend/src/views/DashboardView.vue",
         "frontend/src/components/factory_test/ManualConfirmBanner.vue",
-        "frontend/src/components/factory_test/TestDataViewer.vue",
         "frontend/src/components/factory_test/TestGroupTable.vue",
         "frontend/src/components/factory_test/TestLogPanel.vue",
     ):
         assert (target / rel).exists(), f"缺少文件 {rel}"
+    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(encoding="utf-8")
+    assert "getDashboard" in api_js
+    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    assert "TestDataViewer" not in view  # 历史报告并入看板页，产测页不再有入口
+    assert not (target / "frontend" / "src" / "components" / "factory_test" / "TestDataViewer.vue").exists()
+    dash = (target / "frontend" / "src" / "views" / "DashboardView.vue").read_text(encoding="utf-8")
+    assert "openViewer" in dash and "sandbox=" in dash  # 记录行内报告/日志直看
+    app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "{ id: 'dashboard', label: '看板'" in app_vue
+
+    # csv-test 项目无首页：看板即首页（导航置顶、默认页），DashboardHome 不生成
+    assert not (target / "frontend" / "src" / "components" / "DashboardHome.vue").exists()
+    assert "'home'" not in app_vue
+    assert "const currentPage = ref('dashboard')" in app_vue
+    assert app_vue.index("'dashboard'") < app_vue.index("'csvTest'")  # 看板导航在产测之前
+
+    # 非 csv-test 项目保持原样：首页在、无看板
+    plain = _render(tmp_path / "plain", False, False)
+    assert (plain / "frontend" / "src" / "components" / "DashboardHome.vue").exists()
+    plain_app = (plain / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
+    assert "'home'" in plain_app and "'dashboard'" not in plain_app
     app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
     assert "FactoryTestView" in app_vue and "产测" in app_vue
     api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(encoding="utf-8")
@@ -1050,8 +1078,9 @@ def test_factory_polling_is_serial_and_cancelable(tmp_path):
 
 def test_history_report_preview_is_sandboxed(tmp_path):
     target = _render(tmp_path, False, False, enable_csv_test=True)
+    # 报告预览在看板页的查看器里（TestDataViewer 已并入 DashboardView）
     viewer = (
-        target / "frontend" / "src" / "components" / "factory_test" / "TestDataViewer.vue"
+        target / "frontend" / "src" / "views" / "DashboardView.vue"
     ).read_text(encoding="utf-8")
     assert 'sandbox="allow-scripts"' in viewer
     assert "allow-same-origin" not in viewer

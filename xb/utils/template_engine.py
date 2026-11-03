@@ -244,6 +244,7 @@ class TemplateEngine:
                 "__init__",
                 "command_executor",
                 "commands",
+                "dashboard",
                 "definition",
                 "report",
                 "result_compare",
@@ -296,9 +297,11 @@ class TemplateEngine:
         self._render_template("frontend/src/App.vue.j2", src_dir / "App.vue", context)
         self._render_template("frontend/src/style.css.j2", src_dir / "style.css", context)
 
-        self._render_template(
-            "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
-        )
+        # csv-test 项目没有首页（看板即首页），DashboardHome 不生成
+        if not context["enable_csv_test"]:
+            self._render_template(
+                "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
+            )
         self._render_template(
             "frontend/src/components/ThemeToggle.vue.j2",
             components_dir / "ThemeToggle.vue",
@@ -385,10 +388,14 @@ class TemplateEngine:
                 views_dir / "FactoryTestView.vue",
                 context,
             )
+            self._render_template(
+                "frontend/src/views/DashboardView.vue.j2",
+                views_dir / "DashboardView.vue",
+                context,
+            )
             for name in (
                 "CsvEditor",
                 "ManualConfirmBanner",
-                "TestDataViewer",
                 "TestGroupTable",
                 "TestLogPanel",
             ):

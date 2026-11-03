@@ -1,5 +1,6 @@
-"""测试报告归档：每个会话一个目录，生成 HTML 报告 + 文本日志。"""
+"""测试报告归档：每个会话一个目录，生成 HTML 报告 + 文本日志 + 结构化结果。"""
 import html
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -56,8 +57,34 @@ class ReportService:
         log_path = session_dir / f"{session.session_id}.log"
         html_path.write_text(self._render_html(session), encoding="utf-8")
         log_path.write_text(self._render_log(session), encoding="utf-8")
+        # 结构化结果：数据看板聚合用（dashboard.py 只读它，不解析 HTML）
+        (session_dir / "result.json").write_text(
+            json.dumps(self._result_record(session), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         logger.info(f"已生成测试报告: {html_path}")
         return html_path
+
+    @staticmethod
+    def _result_record(session: TestSession) -> dict:
+        """看板聚合的最小必要字段：状态、耗时、每项结果。"""
+        return {
+            "session_id": session.session_id,
+            "sn": session.sn,
+            "status": session.status,
+            "total_duration": session.total_duration,
+            "summary": session.summary.model_dump(),
+            "items": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "category": item.category,
+                    "status": item.status,
+                    "duration": item.duration,
+                }
+                for item in session.items
+            ],
+        }
 
     def _render_html(self, session: TestSession) -> str:
         total = session.summary.total
