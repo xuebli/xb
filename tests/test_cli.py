@@ -166,6 +166,7 @@ def _invoke_init_callback(target, icon=None):
         csv_test=False,
         feishu_auth=False,
         feishu_notify=False,
+        feishu_bitable=False,
         skip_install=True,
     )
 

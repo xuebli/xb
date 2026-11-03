@@ -1,0 +1,95 @@
+# 飞书多维表格说明（--feishu-bitable 项目）
+
+把数据写入飞书多维表格（产测结果、业务数据均可），含报告/日志附件。
+
+## 配置（设置页填三项）
+
+| 配置 | 说明 |
+|---|---|
+| `feishu.app_id` / `feishu.app_secret` | 自建应用凭证 |
+| `feishu.bitable_url` | **直接粘贴表格页面的浏览器地址**（wiki/独立 base 链接均可，自动解析） |
+
+## 飞书侧前提
+
+1. 应用权限：加开 `bitable:app`（多维表格）；要发消息附件再按需开 `im:*`
+2. **创建版本并发布**
+3. **把应用加为表格协作者（可编辑）**：表格页面右上「分享」→ 添加应用
+
+## 自动化行为（写入时自动处理，无需手工准备表结构）
+
+- wiki 链接自动换算真实 app_token；
+- 字段缺失自动创建（字段清单见 `services/feishu_bitable.py` 顶部 `BITABLE_FIELDS`，业务要加列改这里）；
+- 新建表格默认主字段「文本」自动改名复用为第一个字段；
+- 新建表自带的空白行自动清理；
+- 表名还是默认「数据表」时自动改为「数据汇总」；
+- 结构准备全部成功才缓存，部分失败下次写入自动重试（权限补上后无需重启）。
+
+## 代码调用
+
+```python
+from services.feishu_bitable import bitable_writer
+
+bitable_writer.write_record({"会话ID": "...", "SN": "..."})                 # 纯字段
+bitable_writer.write_record(fields, {"报告": Path("a.html")})               # 带附件
+```
+
+csv 产测：勾选「飞书通知」跑完一轮后自动写入（与群通知同一开关）。
+
+---
+
+## 数据上传逻辑（完整链路）
+
+### 触发三重门（csv 产测为例）
+
+```
+① 前端勾选「飞书通知」  →  run 请求带 notify=true
+② 测试自然跑完          →  status ∈ {passed, failed} 且 abort_reason 为空
+                          （人工停止/中止的测试不推送——结果不完整，推出去也是噪音）
+③ 后台线程异步执行      →  不阻塞测试收尾，失败只记日志
+```
+
+### 写入流程（`bitable_writer.write_record`）
+
+```
+1. ready 检查：app_id + app_secret + bitable_url 三项齐备，缺一静默返回 False
+2. 解析链接：bitable_url → (app_token, table_id)
+   - wiki 链接：node_token 先经 get_node 接口换算真实 app_token（带缓存）
+   - base 链接/裸 token：直接用
+3. 换 tenant_access_token（缓存至有效期 80%）
+4. 表结构准备 _ensure_fields（与第 5 步并行）：
+   - 表名还是默认「数据表」→ 改名「数据汇总」（PATCH）
+   - 默认主字段「文本」→ 改名复用为首个字段（PUT，不新建重复列）
+   - 缺失字段逐个创建（POST fields）
+   - 清掉新建表自带的空白行（batch_delete）
+   - 全部成功才写缓存；部分失败不缓存，下次写入自动重试
+5. 附件并行上传（与第 4 步并行，多附件之间也并行）：
+   报告/日志 → drive/v1/medias/upload_all（parent_type=bitable_file）→ file_token
+6. 写记录：POST records，附件字段填 [{file_token}]
+```
+
+### 字段映射（write_test_session）
+
+| 表格列 | 来源 | 说明 |
+|---|---|---|
+| 会话ID | `session.session_id` | sn_YYYYMMDD_HHMMSS |
+| SN | `session.sn` | 未输入显示「(未输入)」 |
+| 测试结果 | `session.status` | passed→通过 / failed→失败 / 其他→中断 |
+| 通过数/失败数/跳过数 | `session.summary` | 引擎统计 |
+| 总耗时 | `session.total_duration` | 秒 |
+| 测试时间 | session_id 内嵌时间戳 → 毫秒 | 日期时间列 |
+| 报告 / 日志 | 归档目录的 .html / .log | 附件列，点击可直接预览 |
+
+业务要加列：改 `services/feishu_bitable.py` 顶部 `BITABLE_FIELDS`（字段清单）
++ `write_test_session`（字段取值），表结构会自动补齐。
+
+### 失败语义
+
+- 未配置凭证 → 静默 False（不打扰业务）
+- 任一步骤失败 → 记 WARNING 日志返回 False，**不重试不阻塞**；
+  表结构失败不写缓存，下次写入自动重做结构准备
+
+## 排障
+
+- **写不进去**：看后端日志；常见是应用没加为表格协作者，或权限没随版本发布
+- **FieldNameNotFound**：表结构准备失败过的缓存问题——本实现已处理（失败不缓存），
+  若仍出现，确认应用协作者权限后重写一条即可

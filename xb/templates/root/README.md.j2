@@ -8,6 +8,18 @@
 - 智能路径管理（开发/生产自动切换）；版本管理（提交时自动 bump）
 - 特权操作免密提权（Linux polkit，管理员组无感、无密码落盘）
 - 全局亮色/暗色主题切换
+[% if enable_feishu_notify or enable_feishu_bitable %]
+## 飞书推送
+[% if enable_feishu_notify %]
+群通知（产测勾选「飞书通知」跑完推送结果卡片+附件；业务可直接调 `feishu_notifier`）。
+配置与排障见 **[docs/飞书通知说明.md](docs/飞书通知说明.md)**。
+[% endif %]
+[% if enable_feishu_bitable %]
+多维表格上传（与群通知同一勾选开关；业务可直接调 `bitable_writer.write_record`）。
+配置、完整写入链路与字段映射见 **[docs/飞书多维表格说明.md](docs/飞书多维表格说明.md)**。
+[% endif %]
+
+[% endif %]
 [% if enable_csv_test %]
 - CSV 测试引擎（产测：CSV 定义测试项 + HTML 报告归档 + 历史查看）
 [% endif %]

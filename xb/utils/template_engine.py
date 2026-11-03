@@ -43,6 +43,7 @@ class TemplateEngine:
         enable_csv_test: bool = False,
         enable_feishu_auth: bool = False,
         enable_feishu_notify: bool = False,
+        enable_feishu_bitable: bool = False,
         icon_path: Path | None = None,
     ):
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -76,6 +77,7 @@ class TemplateEngine:
             "enable_csv_test": enable_csv_test,
             "enable_feishu_auth": enable_feishu_auth,
             "enable_feishu_notify": enable_feishu_notify,
+            "enable_feishu_bitable": enable_feishu_bitable,
             "icon_path": icon_path,
             "current_year": datetime.now().year,
         }
@@ -175,6 +177,7 @@ class TemplateEngine:
             or context["enable_csv_test"]
             or context["enable_feishu_auth"]
             or context["enable_feishu_notify"]
+            or context["enable_feishu_bitable"]
         ):
             services_dir = backend_dir / "services"
             services_dir.mkdir(exist_ok=True)
@@ -207,15 +210,24 @@ class TemplateEngine:
             )
 
         if context["enable_feishu_notify"]:
-            # 飞书群通知：通用通知服务（webhook / 自建应用双模式）+ 自测接口
+            # 飞书群通知：通用通知服务（webhook / 自建应用双模式）
             self._render_template(
                 "backend/services/feishu_notify.py.j2",
                 services_dir / "feishu_notify.py",
                 context,
             )
+        if context["enable_feishu_notify"] or context["enable_feishu_bitable"]:
+            # 飞书自测接口（群通知/多维表格共用一个面板）
             self._render_template(
                 "backend/api/notify.py.j2",
                 backend_dir / "api" / "notify.py",
+                context,
+            )
+        if context["enable_feishu_bitable"]:
+            # 飞书多维表格：通用写入服务（自动建字段/附件上传/wiki 链接解析）
+            self._render_template(
+                "backend/services/feishu_bitable.py.j2",
+                services_dir / "feishu_bitable.py",
                 context,
             )
 
@@ -635,6 +647,7 @@ class TemplateEngine:
                 "csv测试引擎说明.md": "enable_csv_test",
                 "飞书登录说明.md": "enable_feishu_auth",
                 "飞书通知说明.md": "enable_feishu_notify",
+                "飞书多维表格说明.md": "enable_feishu_bitable",
             }
             docs_dst = target_dir / "docs"
             docs_dst.mkdir(exist_ok=True)

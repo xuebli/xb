@@ -77,6 +77,11 @@ class ConfigForm:
                 "hint": "webhook 只发文字 / 自建应用可发文件附件",
             },
             {
+                "key": "feishu_bitable", "label": "飞书多维表格", "type": "toggle",
+                "checked": bool(cli.get("feishu_bitable")),
+                "hint": "测试数据写入多维表格（自动建字段/附件上传）",
+            },
+            {
                 "key": "icon", "label": "应用图标", "type": "text",
                 "checked": False,
                 "value": str(cli.get("icon") or ""),
@@ -271,6 +276,7 @@ class ConfigForm:
         csv_test = self._row("csv_test")["checked"]
         feishu_auth = self._row("feishu_auth")["checked"]
         feishu_notify = self._row("feishu_notify")["checked"]
+        feishu_bitable = self._row("feishu_bitable")["checked"]
 
         print()
         enabled = f"{GREEN}开{RESET}"
@@ -297,6 +303,7 @@ class ConfigForm:
             "csv_test": csv_test,
             "feishu_auth": feishu_auth,
             "feishu_notify": feishu_notify,
+            "feishu_bitable": feishu_bitable,
             "icon": icon["value"].strip() if icon["checked"] and icon["value"].strip() else None,
             "skip_install": self._row("skip_install")["checked"],
         }
@@ -314,6 +321,7 @@ def run_config_form(package: str, cli: dict) -> dict:
             "csv_test": bool(cli.get("csv_test")),
             "feishu_auth": bool(cli.get("feishu_auth")),
             "feishu_notify": bool(cli.get("feishu_notify")),
+            "feishu_bitable": bool(cli.get("feishu_bitable")),
             "icon": cli.get("icon"),
             "skip_install": bool(cli.get("skip_install")),
         }

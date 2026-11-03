@@ -1,14 +1,42 @@
-"""飞书群通知自测接口（--feishu-notify）：配好凭证点一下验证通道。"""
+"""飞书自测接口（--feishu-notify / --feishu-bitable）：配好凭证点一下验证通道。"""
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+[% if enable_feishu_notify %]
 from services.feishu_notify import feishu_notifier
+[% endif %]
+[% if enable_feishu_bitable %]
+from services.feishu_bitable import bitable_writer, session_timestamp_ms
+import time as _time
+[% endif %]
 
 router = APIRouter()
 
 
-@router.post("/notify/test", summary="发送测试通知（验证 webhook/应用凭证是否可用）")
+@router.post("/notify/test", summary="飞书通道自测：kind=notify 发测试卡片 / kind=bitable 写测试记录")
 async def test_notify(payload: dict | None = None):
+    payload = payload or {}
+    kind = payload.get("kind", "notify")
+
+[% if enable_feishu_bitable %]
+    if kind == "bitable":
+        if not bitable_writer.ready:
+            return JSONResponse(
+                {"error": "未配置多维表格：请在设置页填 feishu.app_id/app_secret/bitable_url"},
+                status_code=400,
+            )
+        ok = bitable_writer.write_record({
+            "会话ID": f"selftest-{int(_time.time())}",
+            "SN": "自测",
+            "测试结果": "通过",
+            "测试时间": int(_time.time() * 1000),
+        })
+        if not ok:
+            return JSONResponse({"error": "写入失败，查看后端日志"}, status_code=500)
+        return {"ok": True, "mode": "bitable"}
+[% endif %]
+
+[% if enable_feishu_notify %]
     mode = feishu_notifier.mode
     if mode == "none":
         return JSONResponse(
@@ -16,7 +44,7 @@ async def test_notify(payload: dict | None = None):
             status_code=400,
         )
     # 默认文案可编辑：前端可传自定义 text
-    text = str((payload or {}).get("text") or "").strip() or "这是一条测试消息，说明通知配置已生效。"
+    text = str(payload.get("text") or "").strip() or "这是一条测试消息，说明通知配置已生效。"
     ok = feishu_notifier.notify_card({
         "header": {"title": {"tag": "plain_text", "content": "🔔 [[ display_name ]] 通知通道测试"}, "template": "green"},
         "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": text}}],
@@ -24,3 +52,6 @@ async def test_notify(payload: dict | None = None):
     if not ok:
         return JSONResponse({"error": "发送失败，查看后端日志"}, status_code=500)
     return {"ok": True, "mode": mode}
+[% else %]
+    return JSONResponse({"error": "未启用群通知功能"}, status_code=400)
+[% endif %]

@@ -329,6 +329,16 @@ class XbGroup(click.Group):
     ),
 )
 @click.option(
+    "--feishu-bitable",
+    "feishu_bitable",
+    is_flag=True,
+    default=False,
+    help=(
+        "启用飞书多维表格上传：测试结果写入多维表格（自动建字段/改默认主字段/清空白行/"
+        "wiki 链接解析/报告附件），通用写入服务业务可直接调用"
+    ),
+)
+@click.option(
     "--icon",
     "icon",
     type=click.Path(dir_okay=False, path_type=str),
@@ -353,6 +363,7 @@ def init_command(
     csv_test: bool,
     feishu_auth: bool,
     feishu_notify: bool,
+    feishu_bitable: bool,
     skip_install: bool,
 ):
     """
@@ -437,6 +448,7 @@ def init_command(
         "csv_test": csv_test,
         "feishu_auth": feishu_auth,
         "feishu_notify": feishu_notify,
+        "feishu_bitable": feishu_bitable,
         "icon": icon,
         "skip_install": skip_install,
     })
@@ -448,6 +460,7 @@ def init_command(
     csv_test = form_result["csv_test"]
     feishu_auth = form_result["feishu_auth"]
     feishu_notify = form_result["feishu_notify"]
+    feishu_bitable = form_result["feishu_bitable"]
     icon = form_result["icon"]
     skip_install = form_result["skip_install"]
 
@@ -478,6 +491,12 @@ def init_command(
             "在设置页填 feishu.notify_webhook 或 app_id/app_secret/receive_id，"
             "详见 docs/飞书通知说明.md"
         )
+    if feishu_bitable:
+        console.print(
+            "[cyan]ℹ[/cyan] 已启用 --feishu-bitable：多维表格上传，"
+            "在设置页填 feishu.app_id/app_secret/bitable_url，"
+            "详见 docs/飞书多维表格说明.md"
+        )
 
     # 创建项目
     console.print()
@@ -501,6 +520,7 @@ def init_command(
             enable_csv_test=csv_test,
             enable_feishu_auth=feishu_auth,
             enable_feishu_notify=feishu_notify,
+            enable_feishu_bitable=feishu_bitable,
             icon_path=icon_path,
         )
 

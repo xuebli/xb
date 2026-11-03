@@ -19,6 +19,7 @@
 - 可选 CSV 测试引擎（`--csv-test`，产测专用：CSV 定义测试项、人工确认、PASS 判定、HTML 报告归档与历史查看）
 - 可选飞书登录（`--feishu-auth`，OAuth 扫码登录 + 单会话制 + 可开关的强制登录墙，多人协作/服务器部署用）
 - 可选飞书群通知（`--feishu-notify`，webhook 只发文字 / 自建应用可发文件附件，产测归档自动推送，业务可直接调用）
+- 可选飞书多维表格（`--feishu-bitable`，数据写入多维表格：自动建字段/附件上传/wiki 链接解析，产测勾选推送，业务可直接调用）
 - 特权操作免密提权标配（Linux polkit，管理员组无感、无密码落盘；helper 白名单执行器）
 - 可选自定义应用图标（`--icon`）
 - 内置开发、构建、版本管理命令
@@ -95,7 +96,7 @@ xb dev stop
   [ ] 跳过依赖安装  ✘  (离线环境可跳过)
 ```
 
-- `--name/--port/--terminal/--update/--logs/--csv-test/--feishu-auth/--feishu-notify/--icon/--skip-install` 传了的参数
+- `--name/--port/--terminal/--update/--logs/--csv-test/--feishu-auth/--feishu-notify/--feishu-bitable/--icon/--skip-install` 传了的参数
   直接预填进表单并勾上，回车即确认，老用法不受影响
 - 文本行（显示名/端口/图标）勾选时若仍是默认值则自动清空，直接输入即可
 - stdin 非终端时（脚本/CI 管道调用）自动跳过表单，沿用 CLI 参数
@@ -139,7 +140,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 
 | 命令 | 说明 |
 |------|------|
-| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--icon PATH] [--skip-install]` | 初始化项目 |
+| `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--feishu-bitable] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -213,6 +214,8 @@ postinst 预部署，管理员组无感、无密码落盘），Windows 等退出
 | [密钥混淆说明.md](xb/templates/root/docs/密钥混淆说明.md) | 敏感值落盘混淆：SENSITIVE_TAGS 判断规则、obf1 格式、触发时机、防围观边界 |
 | [csv测试引擎说明.md](xb/templates/root/docs/csv测试引擎说明.md) | 产测 CSV 引擎：测试项格式、指令键注册、HTML 报告、纪律（`--csv-test` 项目） |
 | [飞书登录说明.md](xb/templates/root/docs/飞书登录说明.md.j2) | 飞书登录前提条件：开放平台建应用/网页应用/重定向白名单/发布、企业定制域名、单会话制、排障（`--feishu-auth` 项目，`.j2` 按项目渲染端口） |
+| [飞书通知说明.md](xb/templates/root/docs/飞书通知说明.md.j2) | 群通知双模式（webhook/自建应用+chat_id）、配置步骤、排障（`--feishu-notify` 项目） |
+| [飞书多维表格说明.md](xb/templates/root/docs/飞书多维表格说明.md.j2) | 多维表格上传：配置、完整写入链路（三重门/结构准备/附件并行）、字段映射、排障（`--feishu-bitable` 项目） |
 | [版本管理说明.md](xb/templates/root/docs/版本管理说明.md) | 版本号 single source of truth、三模态 bump 弹窗、手动 bump、hook 纪律 |
 
 ## 生成的项目结构

@@ -1,5 +1,5 @@
 <script setup>
-import { ref[% if enable_feishu_notify or enable_feishu_auth %], computed[% endif %][% if enable_feishu_auth %], onMounted[% endif %] } from 'vue'
+import { ref[% if enable_feishu_notify or enable_feishu_bitable or enable_feishu_auth %], computed[% endif %][% if enable_feishu_auth %], onMounted[% endif %] } from 'vue'
 [% if enable_feishu_auth %]
 import { useAuth } from './composables/useAuth'
 [% endif %]
@@ -24,22 +24,22 @@ import DashboardView from './views/DashboardView.vue'
 // csv-test 项目没有首页：看板即首页
 const currentPage = ref([% if enable_csv_test %]'dashboard'[% else %]'home'[% endif %])
 const showIconFallback = ref(false)
-[% if enable_feishu_notify %]
+[% if enable_feishu_notify or enable_feishu_bitable %]
 // 飞书通知自测：点 🔔 弹出可编辑的测试消息（默认文案可改），验证 webhook/应用凭证配置
 const notifyOpen = ref(false)
 const notifyText = ref('这是一条测试消息，说明通知配置已生效。')
 const notifySending = ref(false)
 const notifyMsg = ref('')
-async function testNotify() {
+async function testNotify(kind) {
   notifySending.value = true
   try {
     const r = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/notify/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: notifyText.value }),
+      body: JSON.stringify({ kind, text: notifyText.value }),
     })
     const d = await r.json()
-    notifyMsg.value = r.ok ? '✅ 已发送' : `❌ ${d.error || d.detail || '失败'}`
+    notifyMsg.value = r.ok ? '✅ 成功' : `❌ ${d.error || d.detail || '失败'}`
     if (r.ok) setTimeout(() => { notifyOpen.value = false; notifyMsg.value = '' }, 1200)
   } catch {
     notifyMsg.value = '❌ 请求失败'
@@ -129,14 +129,14 @@ const openSettings = () => {
           <span v-else>[[ display_name | first ]]</span>
         </div>
         <div>
-          <h1>[[ display_name ]] <GitVersionBadge />[% if enable_feishu_notify %] <span class="notify-msg">{{ notifyMsg }}</span>[% endif %]</h1>
+          <h1>[[ display_name ]] <GitVersionBadge />[% if enable_feishu_notify or enable_feishu_bitable %] <span class="notify-msg">{{ notifyMsg }}</span>[% endif %]</h1>
           <p>AI Native · FastAPI · Electron</p>
         </div>
       </div>
 
       <div class="toolbar">
-[% if enable_feishu_notify %]
-        <button class="notify-test-btn" title="发送飞书测试通知" @click="notifyOpen = !notifyOpen">🔔</button>
+[% if enable_feishu_notify or enable_feishu_bitable %]
+        <button class="notify-test-btn" title="飞书通道自测" @click="notifyOpen = !notifyOpen">🔔</button>
 [% endif %]
         <ThemeToggle />
         <RefreshButton @refresh="handleRefresh" />
@@ -207,14 +207,19 @@ const openSettings = () => {
 [% endif %]
       </div>
     </main>
-[% if enable_feishu_notify %]
-    <!-- 测试通知弹层：Teleport 到 body 置顶（topbar 的 backdrop-filter 会困住内部弹层） -->
+[% if enable_feishu_notify or enable_feishu_bitable %]
+    <!-- 飞书自测弹层：Teleport 到 body 置顶（topbar 的 backdrop-filter 会困住内部弹层） -->
     <Teleport to="body">
       <div v-if="notifyOpen" class="notify-mask" @click="notifyOpen = false"></div>
       <div v-if="notifyOpen" class="notify-pop">
         <textarea v-model="notifyText" rows="3" placeholder="测试消息内容"></textarea>
         <div class="notify-pop-actions">
-          <button class="notify-send" :disabled="notifySending" @click="testNotify">{{ notifySending ? '发送中...' : '发送' }}</button>
+[% if enable_feishu_notify %]
+          <button class="notify-send" :disabled="notifySending" @click="testNotify('notify')">{{ notifySending ? '发送中...' : '发群通知' }}</button>
+[% endif %]
+[% if enable_feishu_bitable %]
+          <button class="notify-send" :disabled="notifySending" @click="testNotify('bitable')">{{ notifySending ? '写入中...' : '写多维表格' }}</button>
+[% endif %]
           <button class="notify-cancel" @click="notifyOpen = false">取消</button>
         </div>
         <div v-if="notifyMsg" class="notify-result">{{ notifyMsg }}</div>

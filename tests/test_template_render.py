@@ -33,7 +33,7 @@ COMBOS = list(itertools.product([False, True], repeat=3))
 
 def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
             display_name=None, backend_port=None, enable_csv_test=False,
-            enable_feishu_auth=False, enable_feishu_notify=False):
+            enable_feishu_auth=False, enable_feishu_notify=False, enable_feishu_bitable=False):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -46,6 +46,7 @@ def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
         enable_csv_test=enable_csv_test,
         enable_feishu_auth=enable_feishu_auth,
         enable_feishu_notify=enable_feishu_notify,
+        enable_feishu_bitable=enable_feishu_bitable,
     )
     return target
 
@@ -1190,3 +1191,26 @@ def test_feishu_notify_template(tmp_path):
     assert not (plain / "backend" / "api" / "notify.py").exists()
     plain_app = (plain / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
     assert "testNotify" not in plain_app
+
+
+def test_feishu_bitable_template(tmp_path):
+    """--feishu-bitable：多维表格写入服务（URL 解析/自动建字段/清空白行/附件上传），
+    与群通知共用产测勾选开关。"""
+    target = _render(tmp_path, False, False, enable_csv_test=True, enable_feishu_bitable=True)
+
+    svc = (target / "backend" / "services" / "feishu_bitable.py").read_text(encoding="utf-8")
+    compile(svc, "feishu_bitable.py", "exec")
+    assert "parse_bitable_url" in svc
+    assert "重命名" in svc and "空白行" in svc  # 默认主字段改名 + 空白行清理
+    assert "bitable_file" in svc              # 附件上传
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    assert "write_test_session" in runner and "if notify:" in runner
+    secrets = (target / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert "bitable_url" in secrets
+    assert (target / "docs" / "飞书多维表格说明.md").exists()
+
+    # 未启用：全部缺席
+    plain = _render(tmp_path / "plain", False, False, enable_csv_test=True)
+    assert not (plain / "backend" / "services" / "feishu_bitable.py").exists()
+    assert "bitable_url" not in (plain / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert not (plain / "docs" / "飞书多维表格说明.md").exists()

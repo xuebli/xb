@@ -1,0 +1,314 @@
+"""飞书多维表格写入（--feishu-bitable）：把数据上传到飞书多维表格。
+
+配置只需把表格页面的浏览器地址粘到设置页 `feishu.bitable_url`——wiki/独立 base
+链接或裸 app_token 都能解析。
+
+通用入口：
+    from services.feishu_bitable import bitable_writer
+    bitable_writer.write_record({"会话ID": "...", "SN": "...", ...})   # 字段缺失自动创建
+
+细节处理（产线实测踩过的坑）：
+- wiki 链接的 node_token 必须先换真实 app_token（get_node 接口）；
+- 新建表格默认主字段叫「文本」，改名复用为首个字段，不新建重复列；
+- 新建表自带空白行要清掉，否则表里留一堆空行；
+- 表名还是默认「数据表」时自动改为「数据汇总」；
+- 准备动作全部成功才写缓存——中途失败（如应用未被加为协作者）不写缓存，
+  否则权限补上后本进程不再重试，会一直 FieldNameNotFound。
+
+前提：自建应用开通 bitable 相关权限（bitable:app），发布版本，
+并把应用加为表格协作者（可编辑）。
+"""
+import json
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from managers import get_logger, path_manager
+
+logger = get_logger(__name__)
+
+BASE_URL = "https://open.feishu.cn/open-apis"
+
+# 多维表格字段类型（飞书开放平台约定）
+FIELD_TEXT = 1
+FIELD_NUMBER = 2
+FIELD_SINGLE_SELECT = 3
+FIELD_DATETIME = 5
+FIELD_ATTACHMENT = 17
+
+# 数据汇总表字段（通用字段；业务要加列改这里即可，缺失字段写入时自动创建）
+BITABLE_TABLE_NAME = "数据汇总"
+BITABLE_FIELDS = [
+    {"field_name": "会话ID", "type": FIELD_TEXT},
+    {"field_name": "SN", "type": FIELD_TEXT},
+    {"field_name": "测试结果", "type": FIELD_SINGLE_SELECT,
+     "property": {"options": [{"name": "通过"}, {"name": "失败"}, {"name": "中断"}]}},
+    {"field_name": "通过数", "type": FIELD_NUMBER},
+    {"field_name": "失败数", "type": FIELD_NUMBER},
+    {"field_name": "跳过数", "type": FIELD_NUMBER},
+    {"field_name": "总耗时", "type": FIELD_NUMBER},
+    {"field_name": "测试时间", "type": FIELD_DATETIME},
+    {"field_name": "报告", "type": FIELD_ATTACHMENT},
+    {"field_name": "日志", "type": FIELD_ATTACHMENT},
+]
+
+
+def parse_bitable_url(url: str) -> tuple[str, str, str | None]:
+    """解析多维表格链接，返回 (kind, token, table_id)。
+
+    kind: "wiki"（知识库节点，token 需再换成真实 app_token）/
+    "base"（独立表格，token 即 app_token）/ "token"（裸 token 原样用）。
+    """
+    url = (url or "").strip()
+    if not url:
+        return "token", "", None
+    parsed = urlsplit(url)
+    if not parsed.scheme:
+        return "token", url, None
+    parts = [p for p in parsed.path.split("/") if p]
+    table_id = parse_qs(parsed.query).get("table", [None])[0]
+    for kind in ("wiki", "base"):
+        if kind in parts:
+            idx = parts.index(kind)
+            token = parts[idx + 1] if idx + 1 < len(parts) else ""
+            return kind, token, table_id
+    return "token", url, table_id
+
+
+class BitableWriter:
+    """多维表格写入器。"""
+
+    def __init__(self):
+        self._token = ""
+        self._token_expires = 0.0
+        self._wiki_token_cache: dict[str, str] = {}
+        self._ensured_tables: set[str] = set()
+
+    # ---- 配置 ----
+    @property
+    def app_id(self) -> str:
+        return path_manager.get_config_value("feishu.app_id", default="", config_file="secrets.yaml")
+
+    @property
+    def app_secret(self) -> str:
+        return path_manager.get_config_value("feishu.app_secret", default="", config_file="secrets.yaml")
+
+    @property
+    def bitable_url(self) -> str:
+        return path_manager.get_config_value("feishu.bitable_url", default="", config_file="secrets.yaml")
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.app_id and self.app_secret and self.bitable_url)
+
+    # ---- 对外入口 ----
+    def write_record(self, fields: dict, files: dict[str, Path] | None = None) -> bool:
+        """写一条记录；files 把本地文件传到附件字段（{字段名: 路径}）。
+        未配置/失败静默 False（上传不该拖垮业务）。
+
+        速度优化：表结构准备与附件上传并行、多个附件之间也并行
+        （飞书 API 单次往返延迟是主要耗时，串行会叠加）。
+        """
+        if not self.ready:
+            return False
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            app_token, table_id = self._resolve_table_url(self.bitable_url)
+            files = {name: Path(p) for name, p in (files or {}).items() if Path(p).exists()}
+            with ThreadPoolExecutor(max_workers=1 + min(4, len(files))) as pool:
+                ensure_fut = pool.submit(self._ensure_fields, app_token, table_id)
+                if files:
+                    tokens = dict(zip(files, pool.map(lambda kv: self._upload(kv[1], app_token), files.items())))
+                    for name, token in tokens.items():
+                        fields[name] = [{"file_token": token}]
+                ensure_fut.result()   # 结构准备失败要抛出，不能把记录写进坏表
+            self._request("POST", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
+                          {"fields": fields})
+            return True
+        except Exception as e:
+            logger.warning(f"写入多维表格失败: {e}")
+            return False
+
+    # ---- HTTP ----
+    def _get_tenant_token(self) -> str:
+        if self._token and time.time() < self._token_expires:
+            return self._token
+        result = self._raw_request("POST", "/auth/v3/tenant_access_token/internal",
+                                   {"app_id": self.app_id, "app_secret": self.app_secret})
+        token = result.get("tenant_access_token")
+        if not token:
+            raise RuntimeError(f"获取 tenant_access_token 失败: {result}")
+        self._token = token
+        self._token_expires = time.time() + result.get("expire", 7200) - 300
+        return token
+
+    def _raw_request(self, method: str, path: str, payload: dict | None = None,
+                     raw_body: bytes | None = None, content_type: str = "application/json") -> dict:
+        headers = {"Content-Type": content_type}
+        if not path.startswith("/auth/"):
+            headers["Authorization"] = f"Bearer {self._get_tenant_token()}"
+        data = raw_body if raw_body is not None else (json.dumps(payload).encode() if payload is not None else None)
+        req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"请求 {path} HTTP {exc.code}: {detail}") from exc
+        if result.get("code") != 0:
+            raise RuntimeError(f"请求 {path} 失败: {result}")
+        return result
+
+    def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
+        return self._raw_request(method, path, payload=payload)
+
+    # ---- 链接解析 ----
+    def _resolve_table_url(self, url: str) -> tuple[str, str]:
+        kind, token, table_id = parse_bitable_url(url)
+        if not token:
+            raise ValueError(f"无法从链接中解析出 token: {url!r}")
+        if not table_id:
+            raise ValueError(f"链接缺少 table 参数，请复制表格页面完整地址: {url!r}")
+        if kind != "wiki":
+            return token, table_id
+        if token in self._wiki_token_cache:
+            return self._wiki_token_cache[token], table_id
+        result = self._request("GET", f"/wiki/v2/spaces/get_node?token={token}&obj_type=wiki")
+        app_token = (result.get("data", {}).get("node") or {}).get("obj_token")
+        if not app_token:
+            raise RuntimeError(f"解析 Wiki 节点失败: {result}")
+        self._wiki_token_cache[token] = app_token
+        return app_token, table_id
+
+    # ---- 附件上传（bitable 素材接口） ----
+    def _upload(self, file_path: Path, app_token: str) -> str:
+        boundary = f"----Boundary{int(time.time() * 1000)}"
+        body = b""
+        for name, value in (("file_name", file_path.name), ("parent_type", "bitable_file"),
+                            ("parent_node", app_token), ("size", str(file_path.stat().st_size))):
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        body += f"--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode()
+        body += b"Content-Type: application/octet-stream\r\n\r\n"
+        body += file_path.read_bytes()
+        body += f"\r\n--{boundary}--\r\n".encode()
+        result = self._raw_request("POST", "/drive/v1/medias/upload_all", raw_body=body,
+                                   content_type=f"multipart/form-data; boundary={boundary}")
+        return result["data"]["file_token"]
+
+    # ---- 表结构自动准备 ----
+    def _ensure_fields(self, app_token: str, table_id: str) -> None:
+        cache_key = f"{app_token}:{table_id}"
+        if cache_key in self._ensured_tables:
+            return
+        ok = True
+
+        # 表名还是默认「数据表」时自动改名
+        try:
+            tables = self._request("GET", f"/bitable/v1/apps/{app_token}/tables").get("data", {}).get("items", [])
+            current = next((t for t in tables if t.get("table_id") == table_id), None)
+            current_name = current.get("name", "") if current else ""
+            if current_name and current_name != BITABLE_TABLE_NAME and current_name.startswith("数据表"):
+                self._request("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}",
+                              {"name": BITABLE_TABLE_NAME})
+                logger.info(f"已将数据表「{current_name}」重命名为: {BITABLE_TABLE_NAME}")
+        except Exception as e:
+            logger.warning(f"重命名数据表失败: {e}")
+            ok = False
+
+        try:
+            fields = self._request("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields") \
+                .get("data", {}).get("items", [])
+        except Exception as e:
+            logger.warning(f"获取字段列表失败，跳过自动建字段: {e}")
+            return
+        existing = {f["field_name"] for f in fields}
+
+        # 默认主字段「文本」改名复用为第一个字段（不新建重复列）
+        primary = next((f for f in fields if f.get("field_name") == "文本" and f.get("is_primary")), None)
+        if primary and BITABLE_FIELDS and BITABLE_FIELDS[0]["field_name"] not in existing:
+            try:
+                self._request("PUT",
+                              f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields/{primary['field_id']}",
+                              {"field_name": BITABLE_FIELDS[0]["field_name"], "type": FIELD_TEXT})
+                existing.discard("文本")
+                existing.add(BITABLE_FIELDS[0]["field_name"])
+                logger.info(f"已将默认主字段「文本」重命名为: {BITABLE_FIELDS[0]['field_name']}")
+            except Exception as e:
+                logger.warning(f"重命名默认主字段失败: {e}")
+                ok = False
+
+        for field in BITABLE_FIELDS:
+            if field["field_name"] in existing:
+                continue
+            try:
+                self._request("POST", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", field)
+                logger.info(f"已自动创建字段: {field['field_name']}")
+            except Exception as e:
+                logger.warning(f"创建字段失败 {field['field_name']}: {e}")
+                ok = False
+
+        # 清掉飞书新建表格自带的默认空白行
+        try:
+            records = self._request("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records?page_size=100") \
+                .get("data", {}).get("items", [])
+            blank_ids = [r["record_id"] for r in records
+                         if not any(v not in (None, "", []) for v in r.get("fields", {}).values())]
+            if blank_ids:
+                self._request("POST", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_delete",
+                              {"records": blank_ids})
+                logger.info(f"已清理默认空白行 {len(blank_ids)} 条")
+        except Exception as e:
+            logger.warning(f"清理空白行失败: {e}")
+            ok = False
+
+        if ok:
+            self._ensured_tables.add(cache_key)
+        else:
+            logger.warning("多维表格结构准备未全部成功，下次写入会重试（请确认应用已是该表格的可编辑协作者）")
+
+
+bitable_writer = BitableWriter()
+
+
+def session_timestamp_ms(session_id: str) -> int | None:
+    """session_id（sn_YYYYMMDD_HHMMSS）里的测试时间 → 毫秒时间戳。"""
+    from datetime import datetime
+    parts = session_id.rsplit("_", 2)
+    if len(parts) != 3 or len(parts[1]) != 8 or len(parts[2]) != 6:
+        return None
+    try:
+        return int(datetime.strptime(parts[1] + parts[2], "%Y%m%d%H%M%S").timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def write_test_session(session) -> bool:
+    """把一次测试结果写入多维表格（含报告/日志附件）。通用字段映射，
+    业务要加列改 BITABLE_FIELDS 并在本函数补充 fields 即可。"""
+    summary = session.summary
+    fields = {
+        "会话ID": session.session_id,
+        "SN": session.sn or "(未输入)",
+        "测试结果": {"passed": "通过", "failed": "失败"}.get(session.status, "中断"),
+        "通过数": summary.passed,
+        "失败数": summary.failed,
+        "跳过数": summary.skipped,
+        "总耗时": session.total_duration,
+    }
+    ts = session_timestamp_ms(session.session_id)
+    if ts:
+        fields["测试时间"] = ts
+    session_dir = path_manager.get_report_path(session.session_id)
+    files = {
+        "报告": session_dir / f"{session.session_id}.html",
+        "日志": session_dir / f"{session.session_id}.log",
+    }
+    ok = bitable_writer.write_record(fields, files)
+    if ok:
+        logger.info(f"测试结果已写入多维表格: {session.session_id}")
+    return ok

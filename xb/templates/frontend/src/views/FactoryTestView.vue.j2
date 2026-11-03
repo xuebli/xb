@@ -1,6 +1,6 @@
 <script setup>
 /** CSV 测试引擎主页：一键测试、分组进度、日志、人工确认、历史报告 */
-import { computed, onBeforeUnmount, onMounted, ref[% if enable_feishu_notify %], watch[% endif %] } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref[% if enable_feishu_notify or enable_feishu_bitable %], watch[% endif %] } from 'vue'
 import CsvEditor from '../components/factory_test/CsvEditor.vue'
 import ManualConfirmBanner from '../components/factory_test/ManualConfirmBanner.vue'
 import TestGroupTable from '../components/factory_test/TestGroupTable.vue'
@@ -9,8 +9,8 @@ import { factoryTestApi } from '../services/factoryTestApi'
 
 const sn = ref('')
 const session = ref(null)
-// 飞书群通知开关（[% if enable_feishu_notify %]勾选才发，记住上次选择[% endif %]）
-[% if enable_feishu_notify %]
+// 飞书群通知开关（[% if enable_feishu_notify or enable_feishu_bitable %]勾选才发，记住上次选择[% endif %]）
+[% if enable_feishu_notify or enable_feishu_bitable %]
 const notifyFeishu = ref(localStorage.getItem('factory-test-notify') === '1')
 watch(notifyFeishu, (v) => localStorage.setItem('factory-test-notify', v ? '1' : '0'))
 [% endif %]
@@ -76,7 +76,7 @@ const resultBanner = computed(() => {
 async function startTest() {
   loading.value = true
   try {
-    const current = await factoryTestApi.run(sn.value.trim()[% if enable_feishu_notify %], notifyFeishu.value[% endif %])
+    const current = await factoryTestApi.run(sn.value.trim()[% if enable_feishu_notify or enable_feishu_bitable %], notifyFeishu.value[% endif %])
     if (unmounted) return
     session.value = current
     startPolling()
@@ -212,8 +212,8 @@ onBeforeUnmount(() => {
         placeholder="板卡序列号 SN（可扫码枪录入，可留空）"
         :disabled="isActive"
       />
-[% if enable_feishu_notify %]
-      <label class="notify-check" title="勾选后本轮测试完成时推送飞书群（卡片+报告/日志附件）">
+[% if enable_feishu_notify or enable_feishu_bitable %]
+      <label class="notify-check" title="勾选后本轮测试完成时推送飞书（群通知卡片/附件、多维表格上传，以配置为准）">
         <input v-model="notifyFeishu" type="checkbox" :disabled="isActive" />
         飞书通知
       </label>
