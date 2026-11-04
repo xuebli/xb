@@ -8,18 +8,6 @@
 - 智能路径管理（开发/生产自动切换）；版本管理（提交时自动 bump）
 - 特权操作免密提权（Linux polkit，管理员组无感、无密码落盘）
 - 全局亮色/暗色主题切换
-[% if enable_feishu_notify or enable_feishu_bitable %]
-## 飞书推送
-[% if enable_feishu_notify %]
-群通知（产测勾选「飞书通知」跑完推送结果卡片+附件；业务可直接调 `feishu_notifier`）。
-配置与排障见 **[docs/飞书通知说明.md](docs/飞书通知说明.md)**。
-[% endif %]
-[% if enable_feishu_bitable %]
-多维表格上传（与群通知同一勾选开关；业务可直接调 `bitable_writer.write_record`）。
-配置、完整写入链路与字段映射见 **[docs/飞书多维表格说明.md](docs/飞书多维表格说明.md)**。
-[% endif %]
-
-[% endif %]
 [% if enable_csv_test %]
 - CSV 测试引擎（产测：CSV 定义测试项 + HTML 报告归档 + 历史查看）
 [% endif %]
@@ -32,7 +20,94 @@
 [% if enable_update %]
 - 应用内自动更新（飞书云盘发布 + 版本检查 + 下载校验 + 自动安装）
 [% endif %]
+[% if enable_feishu_auth %]
+- 飞书登录（OAuth 扫码 + 单会话制 + 可开关强制登录墙）
+[% endif %]
+[% if enable_feishu_notify %]
+- 飞书群通知（webhook / 自建应用双模式，产测归档自动推送）
+[% endif %]
+[% if enable_feishu_bitable %]
+- 飞书多维表格上传（自动建字段/附件上传，业务可直接调用）
+[% endif %]
 
+[% if enable_feishu_auth or enable_feishu_notify or enable_feishu_bitable or enable_update %]
+## 首次配置（人工操作清单）
+
+> 只用读这一节就能完成所有配置；docs/ 下的说明文档是深入理解用的，不强制阅读。
+> 按你启用的功能做对应小节即可，做完一劳永逸。
+[% if enable_feishu_auth or enable_feishu_notify or enable_feishu_bitable or enable_update %]
+
+### 创建飞书自建应用（所有飞书功能共用）
+
+1. 打开 [飞书开放平台](https://open.feishu.cn) → 开发者后台 → **创建企业自建应用**（名称随意，如「[[ display_name ]]」）
+   ![create-app](docs/images/setup-01-create-app.png)
+2. 应用详情页左侧「凭证与基础信息」→ 复制 **App ID** 和 **App Secret**
+   ![app-credential](docs/images/setup-02-app-credential.png)
+3. 打开本软件 →「设置」→ 填入 `feishu.app_id` / `feishu.app_secret` → 保存
+   ![fill-secrets](docs/images/setup-03-fill-secrets.png)
+
+> **机器人能力只有「应用模式发群消息」才需要开通**（飞书群通知方式 B）；
+> 登录、多维表格、自动更新都不碰机器人，不用开。
+> 开通位置：应用后台 → 添加应用能力 → 机器人。
+[% endif %]
+[% if enable_feishu_auth %]
+
+### 飞书登录（--feishu-auth）
+
+1. 权限管理 → 开通 `contact:user.base:readonly`（获取用户基本信息）
+   ![开通权限](docs/images/setup-04-permission.png)
+2. 「安全设置」→ 重定向 URL 白名单添加：
+   `http://<访问host>:[[ backend_port ]]/api/auth/feishu/callback`
+   （本机用 `http://localhost:[[ backend_port ]]/api/auth/feishu/callback`；服务器/局域网各加一条）
+   ![redirect-url](docs/images/setup-06-redirect-url.png)
+3. **创建版本并发布**（只配置不发布 = 没生效），等管理员审核通过
+   ![publish](docs/images/setup-07-publish.png)
+[% endif %]
+[% if enable_feishu_notify %]
+
+### 飞书群通知（--feishu-notify，两种方式选一）
+
+**方式 A · 群机器人 webhook（最简单，只发文字）**
+
+1. 目标群 → 群设置 → 机器人 → **添加自定义机器人** → 复制 webhook 地址
+   ![webhook](docs/images/setup-08-webhook.png)
+2. 设置页填 `feishu.notify_webhook` → 保存 → 点顶栏 🔔 发测试消息验证
+
+**方式 B · 自建应用发群消息（可发文件附件）**
+
+1. 应用后台开通**机器人能力**；权限加开 `im:message:send_as_bot`（以应用身份发消息）、`im:resource`（上传图片/文件资源）；**创建版本并发布**
+   ![开通权限](docs/images/setup-04-permission.png)
+2. 把机器人**拉进目标群**
+   ![bot-into-group](docs/images/setup-09-bot-into-group.png)
+3. 获取群聊 chat_id（群设置查看，或用机器人调 `GET /im/v1/chats` 查）→ 设置页填 `feishu.receive_id`
+4. 点顶栏 🔔 发测试消息验证
+[% endif %]
+[% if enable_feishu_bitable %]
+
+### 飞书多维表格（--feishu-bitable）
+
+1. 应用后台权限加开 `bitable:app`（多维表格）；表格在知识库下（wiki 链接）再加开 `wiki:wiki`；要传附件再加开 `drive:file:upload` → **创建版本并发布**
+   ![开通权限](docs/images/setup-04-permission.png)
+2. 新建一个多维表格（或打开已有的）
+   ![create-bitable](docs/images/setup-10-create-bitable.png)
+3. 表格页面右上「分享」→ **把应用添加为协作者（可编辑）** ← 最常漏的一步
+   ![bitable-collaborator](docs/images/setup-11-bitable-collaborator.png)
+4. 复制表格页面浏览器地址 → 设置页填 `feishu.bitable_url` → 保存
+5. 点顶栏 🔔 →「写多维表格」验证（会写入一条"自测"记录）
+[% endif %]
+[% if enable_update %]
+
+### 自动更新（--update）
+
+1. 应用后台权限加开 `drive:drive`（云文档管理）、`drive:file:upload`（上传）、`drive:file:download`（下载）、`space:document:delete`（清理旧包）；货架文件夹在知识库下再加开 `wiki:wiki` → **创建版本并发布**
+   ![开通权限](docs/images/setup-04-permission.png)
+2. 飞书云文档新建一个文件夹作为"更新货架" → **把应用加为文件夹协作者（可编辑）**
+   ![文件夹协作者](docs/images/feishu-folder.png)
+3. 复制文件夹浏览器地址 → 设置页填 `feishu.update_folder_url` → 保存
+4. 发版：`./build.py -a`（打包并自动上传）
+[% endif %]
+
+[% endif %]
 ## 环境要求
 
 - Python 3.10+、Node.js 20.19+（Vite 8 要求，低版本构建报错）、uv、Git
@@ -144,6 +219,27 @@ hooks 由 `dev.py start` 自动安装，无需手动操作。
 把上位机部署到内网服务器供多人浏览器访问：Ubuntu 走 systemd
 （DEB 安装自动写好单元文件），Windows 走计划任务，桌面 Electron 用法不受影响。
 
+```bash
+# Ubuntu：安装 DEB 后启用后端服务（一条命令）
+sudo dpkg -i [[ package_name ]]_*.deb
+sudo systemctl enable --now [[ package_name]]-server
+
+# 日常管理
+systemctl status [[ package_name]]-server          # 看状态
+journalctl -u [[ package_name]]-server -f          # 看实时日志
+sudo systemctl restart [[ package_name]]-server    # 重启
+
+# 升级：装新包后重启生效
+sudo dpkg -i [[ package_name ]]_<新版本>.deb && sudo systemctl restart [[ package_name]]-server
+
+# 卸载（自动停止并删除服务单元）
+sudo dpkg -r [[ package_name ]]
+
+# Windows：注册计划任务 + 放行防火墙（详见部署文档）
+```
+
+之后浏览器访问 `http://<服务器IP>:[[ backend_port ]]`。
+
 > 部署/日常管理/升级/卸载全流程详见
 > **[docs/服务器部署说明.md](docs/服务器部署说明.md)**。
 [% if enable_feishu_auth %]
@@ -155,7 +251,7 @@ hooks 由 `dev.py start` 自动安装，无需手动操作。
 `auth.required` 控制（设置页可改）。企业定制部署域名不是
 open.feishu.cn 时，改 `auth.feishu_base_url` 即可，不用动代码。
 
-> 飞书开放平台准备（建应用/开网页应用/重定向白名单/发布）、单会话制行为
+> 飞书开放平台准备（建应用/重定向白名单/发布）、单会话制行为
 > 与排障详见 **[docs/飞书登录说明.md](docs/飞书登录说明.md)**。
 [% endif %]
 [% if enable_csv_test %]

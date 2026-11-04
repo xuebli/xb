@@ -643,7 +643,6 @@ class TemplateEngine:
         if docs_src.exists():
             gated_docs = {
                 "自动更新说明.md": "enable_update",
-                "images": "enable_update",
                 "csv测试引擎说明.md": "enable_csv_test",
                 "飞书登录说明.md": "enable_feishu_auth",
                 "飞书通知说明.md": "enable_feishu_notify",

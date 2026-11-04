@@ -919,7 +919,7 @@ def test_docs_distribution(tmp_path):
     assert (plain / "docs" / "polkit免密提权说明.md").exists()
     assert not (plain / "docs" / "自动更新说明.md").exists()
     assert not (plain / "docs" / "csv测试引擎说明.md").exists()
-    assert not (plain / "docs" / "images").exists()
+    assert (plain / "docs" / "images").exists()  # 截图参考资料全项目分发
 
     full = _render(tmp_path / "full", False, True)
     for name in (
