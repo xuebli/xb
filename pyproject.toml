@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xb-init"
-version = "3.2.0"
+version = "3.2.1"
 description = "Project management tool for UV + FastAPI + Vue3 + Electron desktop applications"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,7 +30,8 @@ dependencies = [
     "rich>=13.0.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+# uv 默认装 dev 组（uv sync/uv run 自动带上），不再因裸 uv run 被清掉
 dev = [
     "pytest>=7.0",
     "black>=23.0",
