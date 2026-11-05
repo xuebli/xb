@@ -141,8 +141,8 @@
 - **配置默认保存即生效**：除端口、Electron 窗口初始化、打包资源路径这类必须重启进程才能接管的启动期配置外，保存配置后必须调用 `path_manager.reload_config(<filename>)`，业务侧通过 `@property` 或每次读取 `path_manager` 实现热重载。必须重启的配置要在 UI 上明确提示。
 [% if enable_terminal %]- **终端平台实现**：Unix 分支使用 `pty.openpty()` + `/bin/bash`，保持现有 bash 行为；Windows 分支使用 `pywinpty.PtyProcess` + `powershell.exe -NoLogo -NoProfile`，由 PowerShell/ConPTY 原生处理历史命令、方向键、复制粘贴、Tab 补全、Ctrl+C 和 ANSI 控制序列。不要在 Windows 分支手写行编辑器，也不要重新引入 `cmd.exe` 管道实现。
 [% endif %]
-- **开发服务进程隔离**：`dev.py` 将后端和 Vite 的 stdout/stderr 写入 `datas/logs/`；Windows 使用隐藏控制台与 `stdin=DEVNULL`，不能继承或占用用户当前 PowerShell 输入。首次同步 `uv`/`npm` 依赖必须有超时和明确提示。
-- **进程托管走 Python 子进程 + PID 文件**：`dev.py` 把 PID 写到 `datas/pids/backend.pid` 与 `datas/pids/frontend.pid`，日志写入 `datas/logs/`；Linux 使用进程组结束服务，Windows 使用 `taskkill /PID ... /T /F`。不要用模糊的 `pkill -f` 作为正常流程。
+- **开发服务进程隔离**：后端日志由 loguru 自行写入 `datas/logs/backend.log`，`dev.py` 不再接管后端输出（stdout/stderr 丢 DEVNULL），否则同一行日志落盘两次；前端 Vite 无文件日志，`dev.py` 仍把其输出重定向到 `datas/logs/frontend.log`。Windows 使用隐藏控制台与 `stdin=DEVNULL`，不能继承或占用用户当前 PowerShell 输入。首次同步 `uv`/`npm` 依赖必须有超时和明确提示。
+- **进程托管走 Python 子进程 + PID 文件**：`dev.py` 把 PID 写到 `datas/pids/backend.pid` 与 `datas/pids/frontend.pid`；Linux 使用进程组结束服务，Windows 使用 `taskkill /PID ... /T /F`。不要用模糊的 `pkill -f` 作为正常流程。
 - **HTTPException 透传**：`api/*.py` 所有 endpoint 用 `try / except HTTPException: raise / except Exception: 500` 模式，不要把 `HTTPException` 误吞成 500。
 - **YAML 字符串语法校验**：使用 `yaml.safe_load(content)` 并捕获 `yaml.YAMLError`，语法错误直接返回 400。写之前先 `shutil.copy2(file_path, file_path.with_suffix(".yaml.bak"))` 备份；写回仍统一走 `managers/yaml_comments.py` 保留行尾注释。
 - **写完配置必须精确 reload**：`path_manager.reload_config(<filename>)` 传具体文件名，**不要** `reload_config()` 全清——配置缓存是按文件名独立的，全清会无端废掉其他文件的缓存（详见 `path_manager.reload_config` docstring）。

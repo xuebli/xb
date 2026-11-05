@@ -275,10 +275,21 @@ def start_service(
     command: list[str],
     cwd: Path = ROOT,
     environment_updates: dict[str, str] | None = None,
+    redirect_log: bool = False,
 ) -> None:
-    """启动服务，将标准输出和错误统一写入 datas/logs。"""
+    """启动服务。
+
+    子进程输出默认丢弃（DEVNULL）：后端日志由 loguru 自行写入
+    datas/logs/backend.log，dev 再接管输出会导致同一行日志落盘两次。
+    redirect_log=True（前端 Vite 自身无文件日志）时把 stdout/stderr
+    追加写入 datas/logs/<name>.log。Windows 隐藏控制台。
+    """
     stop_service(name)
-    log_file = (LOG_DIR / f"{name}.log").open("a", encoding="utf-8", newline="")
+    output = (
+        (LOG_DIR / f"{name}.log").open("a", encoding="utf-8", newline="")
+        if redirect_log
+        else subprocess.DEVNULL
+    )
     environment = os.environ.copy()
     if environment_updates:
         environment.update(environment_updates)
@@ -293,8 +304,8 @@ def start_service(
         command,
         cwd=cwd,
         stdin=subprocess.DEVNULL,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
+        stdout=output,
+        stderr=output,
         env=environment,
         start_new_session=os.name != "nt",
         creationflags=creationflags,
@@ -499,6 +510,7 @@ if action in {"start", "restart"}:
                 "VITE_DEV_PORT": str(frontend_port),
                 "VITE_BACKEND_PORT": str(backend_port),
             },
+            redirect_log=True,
         )
         print(f"✓ 前端已启动（PID 文件: {PID_DIR / 'frontend.pid'}，端口: {frontend_port}）")
         if not wait_for_port(frontend_port):
