@@ -130,6 +130,11 @@ SYNC_EXCLUDE_FILES = {
 }
 SYNC_EXCLUDE_PREFIXES = ("electron/resources/icons/",)
 
+# 上次同步到的纯净模板缓存：sync/add 完成后把 theirs 渲染树快照到这里，
+# 作为下次 sync 的基准（base）。没有它才退回首个 commit——基准固定在过去
+# 会导致模板增量被反复重放（重复合并噪音、已裁决文件被重新打上冲突标记）
+SYNC_CACHE_DIR = ".xb/cache"
+
 _TOP_KEY_RE = re.compile(r"^[A-Za-z_][\w\-]*:")
 
 
@@ -739,6 +744,7 @@ def run_add(
         _require_ai_if_needed(predicted_conflicts, predicted_missing)
 
         _apply_actions(project_dir, actions, work, result)
+        _write_template_cache(project_dir, work / "theirs")  # 下次 sync 的精确基准
 
     result.missing_infra = _check_required_symbols(project_dir, spec)
 
@@ -814,6 +820,56 @@ def _first_commit(project_dir: Path):
     return files, read
 
 
+def _increment_integrated(ours_text: str, base_text: str, theirs_text: str) -> bool:
+    """模板增量（theirs 相对 base 的纯新增行）是否已全部存在于用户文件中。
+
+    这是"AI 已裁决过"的标志：上轮 sync 的冲突文件经裁决后既含用户业务
+    又含模板增量，若不加此护栏，本轮 sync 会把冲突标记重新写回去。
+    模板改动含修改/删除行时无法安全判定 → 返回 False 走正常合并。
+    """
+    import difflib
+
+    base_lines = base_text.splitlines()
+    theirs_lines = theirs_text.splitlines()
+    ours_lines = {line.strip() for line in ours_text.splitlines() if line.strip()}
+    matcher = difflib.SequenceMatcher(a=base_lines, b=theirs_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag == "insert":
+            for line in theirs_lines[j1:j2]:
+                if line.strip() and line.strip() not in ours_lines:
+                    return False
+        elif tag in ("replace", "delete"):
+            return False
+    return True
+
+
+def _cache_base(project_dir: Path):
+    """上次同步的模板缓存作为基准；没有缓存返回 None（调用方退回首个 commit）。"""
+    cache_dir = project_dir / SYNC_CACHE_DIR
+    if not cache_dir.is_dir():
+        return None
+    files = _tree_files(cache_dir)
+    if not files:
+        return None
+
+    def read(relpath: str) -> bytes | None:
+        path = files.get(relpath)
+        return path.read_bytes() if path else None
+
+    return set(files), read
+
+
+def _write_template_cache(project_dir: Path, theirs_dir: Path) -> None:
+    """把本次 theirs 渲染树快照为下次 sync 的基准（git 忽略，丢了退回首个 commit）。"""
+    cache_dir = project_dir / SYNC_CACHE_DIR
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    for relpath, src in _tree_files(theirs_dir).items():
+        dest = cache_dir / relpath
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
+
 def compute_sync_actions(
     project_dir: Path, theirs_dir: Path, work: Path, base_files: set[str], read_base
 ) -> list[FileAction]:
@@ -877,9 +933,25 @@ def compute_sync_actions(
         elif dest.read_bytes() == theirs_bytes:
             continue  # 已是新模板内容
         else:
+            dest_text = dest.read_text(encoding="utf-8", errors="ignore")
+            base_text = base_bytes.decode("utf-8", errors="ignore")
+            theirs_text = theirs_path.read_text(encoding="utf-8", errors="ignore")
+            # 护栏 1：模板增量已集成（含 AI 裁决过的文件）→ 不动。
+            # 必须先于重放合并：git 对"双方同位置插入不同内容"会静默拼接，
+            # 重放已集成的合并会产出重复 import/路由定义
+            if _increment_integrated(dest_text, base_text, theirs_text):
+                continue
             base_path = base_dir / relpath
             base_path.parent.mkdir(parents=True, exist_ok=True)
             base_path.write_bytes(base_bytes)
+            try:
+                merged_text, _conflicts = merge3(ours=dest, base=base_path, theirs=theirs_path)
+            except UnicodeDecodeError:
+                actions.append(FileAction(relpath, "merge"))  # 二进制交给 apply 报跳过
+                continue
+            # 护栏 2：重放结果与现状逐字节一致 → 静默跳过（消除重复合并噪音）
+            if merged_text.encode("utf-8") == dest.read_bytes():
+                continue
             actions.append(FileAction(relpath, "merge"))
 
     # 模板删除的文件
@@ -920,7 +992,13 @@ def run_sync(
     from .. import __version__
 
     _check_preflight(project_dir, force)
-    base_files, read_base = _first_commit(project_dir)
+    # 基准选择：优先上次同步的模板缓存（精确反映"上次同步到哪个模板"，含
+    # 历次 add 带入的特性文件）；没有缓存才退回首个 commit（旧版 xb 的渲染）
+    cached = _cache_base(project_dir)
+    if cached is not None:
+        base_files, read_base = cached
+    else:
+        base_files, read_base = _first_commit(project_dir)
 
     result = AddResult(feature="sync", dry_run=dry_run)
     result.synced_from = manifest.get("xb_version")
@@ -955,6 +1033,7 @@ def run_sync(
         _require_ai_if_needed(_predict_conflicts(project_dir, actions, work), [])
 
         _apply_actions(project_dir, actions, work, result)
+        _write_template_cache(project_dir, theirs_dir)  # 下次 sync 的精确基准
 
     if result.conflicts:
         result.brief_path = _write_merge_brief(

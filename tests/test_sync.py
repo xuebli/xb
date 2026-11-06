@@ -1,9 +1,11 @@
-"""xb sync 测试：模板升级（base=首个 commit，theirs=当前模板同特性渲染）。
+"""xb sync 测试：模板升级（base=首个 commit 或 .xb/cache，theirs=当前模板同特性渲染）。
 
 真实模板在同一版本内不会自我演进，所以"模板变化"用合成目录
 （compute_sync_actions 直接注入 base/theirs）与伪造旧版首个 commit 两种方式模拟。
 """
 
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -265,6 +267,120 @@ def test_sync_refuses_without_ai_when_conflicts(tmp_path, monkeypatch):
     with pytest.raises(AddError, match="未找到可用的 AI CLI"):
         _sync(project)
     assert main_py.read_bytes() == before  # 一个文件都没改
+
+
+def test_sync_second_run_is_noop(tmp_path):
+    """sync 后再 sync 必须零动作（用户真实抱怨的场景）。
+
+    第一次 sync 有真实增量（伪造旧模板：无 health 端点）；完成后基准缓存
+    落盘，第二次 sync 的 base == 当前渲染，天然零动作。
+    """
+    project = tmp_path / "demo"
+    TemplateEngine().render_project(target_dir=project, package_name="demo")
+    main_py = project / "backend/main.py"
+    health_block = (
+        '@app.get("/api/health")\nasync def health():\n    return {"status": "healthy"}\n'
+    )
+    content = main_py.read_text(encoding="utf-8")
+    main_py.write_text(content.replace(health_block, ""), encoding="utf-8")
+    save_manifest(
+        project,
+        {
+            "xb_version": "9.9.9",
+            "package_name": "demo",
+            "display_name": None,
+            "backend_port": None,
+            "features": [],
+        },
+    )
+    _git(project, "init", "-q")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "chore: xb init（旧版）")
+    main_py.write_text(main_py.read_text(encoding="utf-8") + "\n# 业务\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "业务")
+
+    first = _sync(project)
+    assert first.merged_clean or first.conflicts  # 第一次确有动作（health 回归）
+    assert (project / ".xb/cache/backend/main.py").exists()  # 基准缓存已写
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "sync")
+
+    second = _sync(project)
+    assert not (
+        second.added
+        or second.merged_clean
+        or second.conflicts
+        or second.deleted
+        or second.yaml_appended
+    ), "第二次 sync 不应有任何动作"
+
+
+def _project_with_logs_resolution(tmp_path, *, complete: bool) -> Path:
+    """构造场景：基准缓存=无 logs 模板；清单开了 logs（本次 theirs 有增量）；
+    用户 main.py 已含部分/全部 logs 缝合行 + 业务行（AI 裁决过的状态）。"""
+    project = _make_project(tmp_path)  # features=[]，文件无 logs
+
+    # 缓存 = 无 logs 的模板（上次同步的基准）
+    with tempfile.TemporaryDirectory(dir=tmp_path) as tmp:
+        tpl = Path(tmp) / "cache"
+        TemplateEngine().render_project(target_dir=tpl, package_name="demo")
+        for f in tpl.rglob("*"):
+            if f.is_file():
+                dest = project / ".xb/cache" / f.relative_to(tpl)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+
+    manifest = load_manifest(project)
+    manifest["features"] = ["logs"]
+    save_manifest(project, manifest)
+
+    main_py = project / "backend/main.py"
+    resolved = main_py.read_text(encoding="utf-8").replace(
+        "from api.settings import router as settings_router",
+        "from api.logs import attach_log_sink, router as logs_router\n"
+        "from api.settings import router as settings_router\n"
+        "from api.mybiz import router as mybiz_router  # 用户业务",
+    )
+    if complete:
+        resolved = resolved.replace(
+            'app.include_router(settings_router, prefix="/api")',
+            'app.include_router(logs_router, prefix="/api")\n'
+            "attach_log_sink()\n"
+            'app.include_router(settings_router, prefix="/api")',
+        )
+    main_py.write_text(resolved, encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "准备场景")
+    return project
+
+
+def test_sync_skips_fully_integrated_file(tmp_path):
+    """AI 裁决完整（增量全在）→ 该文件完全跳过，一个字节都不动。"""
+    project = _project_with_logs_resolution(tmp_path, complete=True)
+    main_py = project / "backend/main.py"
+    before = main_py.read_bytes()
+
+    result = _sync(project)
+
+    assert main_py.read_bytes() == before
+    assert "backend/main.py" not in result.conflicts
+    assert "backend/main.py" not in result.merged_clean
+    assert (project / "backend/api/logs.py").exists()  # logs 新文件正常落地
+
+
+def test_sync_partially_integrated_merges_without_duplication(tmp_path):
+    """AI 裁决不完整（只有 import 缺路由注册）→ 干净合并补齐，不重复拼接。"""
+    project = _project_with_logs_resolution(tmp_path, complete=False)
+
+    _sync(project)
+
+    text = (project / "backend/main.py").read_text(encoding="utf-8")
+    assert "<<<<<<<" not in text
+    assert text.count("from api.logs import") == 1  # 已有行不重复
+    assert 'app.include_router(logs_router, prefix="/api")' in text  # 缺口补上
+    assert "mybiz_router" in text  # 业务保留
+    compile(text, "main.py", "exec")
 
 
 def test_sync_dry_run_writes_nothing(tmp_path):
