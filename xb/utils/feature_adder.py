@@ -636,6 +636,54 @@ def verify_startup(project_dir: Path, health_endpoint: str | None, console) -> t
         )
 
 
+def _say(console, message: str) -> None:
+    """console 为 None（测试/脚本）时退化为 print。"""
+    (console.print if console else print)(message)
+
+
+def auto_commit(project_dir: Path, result: AddResult, message: str, console) -> bool:
+    """--commit：确认合并产物完整后自动 git 提交。
+
+    提交门槛（任一不满足则放弃提交，交用户处理）：
+    - 冲突文件的 <<<<<<< 标记必须清零（AI 裁决完毕）
+    - 基建缺失符号必须已补齐
+    - --verify 跑过的必须是通过（未跑不拦）
+    AI 忘删的裁决任务文件由这里代为清理。
+    """
+    for relpath in result.conflicts:
+        text = (project_dir / relpath).read_text(encoding="utf-8", errors="ignore")
+        if "<<<<<<<" in text or ">>>>>>>" in text:
+            _say(console, f"[yellow]⚠[/yellow]  {relpath} 仍有冲突标记，裁决未完成，跳过自动提交")
+            return False
+    still_missing = [
+        (p, s)
+        for p, s in result.missing_infra
+        if not (project_dir / p).exists()
+        or s not in (project_dir / p).read_text(encoding="utf-8", errors="ignore")
+    ]
+    if still_missing:
+        _say(console, "[yellow]⚠[/yellow]  基建符号未补齐，跳过自动提交")
+        return False
+    if result.verified is False:
+        _say(console, "[yellow]⚠[/yellow]  启动验证未通过，跳过自动提交")
+        return False
+    if result.brief_path and result.brief_path.exists():
+        result.brief_path.unlink()  # AI 干完活忘删的任务文件，代为清理
+
+    add = subprocess.run(["git", "add", "-A"], cwd=project_dir, capture_output=True)
+    if add.returncode != 0:
+        _say(console, "[yellow]⚠[/yellow]  git add 失败，跳过自动提交")
+        return False
+    commit = subprocess.run(
+        ["git", "commit", "-m", message], cwd=project_dir, capture_output=True, text=True
+    )
+    if commit.returncode != 0:
+        _say(console, f"[yellow]⚠[/yellow]  git commit 失败: {commit.stderr.strip()[:200]}")
+        return False
+    _say(console, f"[green]✓[/green] 已自动提交: {message}")
+    return True
+
+
 def run_add(
     project_dir: Path,
     feature_name: str,

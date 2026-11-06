@@ -143,8 +143,8 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 | 命令 | 说明 |
 |------|------|
 | `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--feishu-bitable] [--icon PATH] [--skip-install]` | 初始化项目 |
-| `xb add <特性> [--dry-run] [--force] [--skip-install] [--no-ai] [--verify]` | 向已有项目增量添加特性（`logs`/`terminal`/`update`/`csv-test`/`feishu-auth`/`feishu-notify`/`feishu-bitable`） |
-| `xb sync [--dry-run] [--force] [--skip-install] [--no-ai] [--verify]` | 把老项目的模板/基建升级到当前 xb 版本（特性开关不变） |
+| `xb add <特性> [--dry-run] [--force] [--skip-install] [--no-ai] [--verify] [--commit]` | 向已有项目增量添加特性（`logs`/`terminal`/`update`/`csv-test`/`feishu-auth`/`feishu-notify`/`feishu-bitable`） |
+| `xb sync [--dry-run] [--force] [--skip-install] [--no-ai] [--verify] [--commit]` | 把老项目的模板/基建升级到当前 xb 版本（特性开关不变） |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -189,7 +189,9 @@ commit 入库。`xb add` 据此重新渲染"加特性前/后"两份纯净模板�
   （opencode / Claude Code / Codex），一个都找不到就拒绝执行、一个文件都
   不改——xb 不做规则猜测，留下没人会解的冲突标记比不做更糟
 - 前置要求：git 仓库且工作区干净（干净工作区 = 出错可 `git checkout .` 全回滚）
-- 执行后不自动 commit：`git diff` 审查 → 解决冲突（如有）→ 验证 → 自行提交
+- 执行后不自动 commit（默认留 `git diff` 审查环节）；带 `--commit` 则
+  自动提交——有冲突时会等 AI 裁决完、校验标记清零 + 基建符号补齐
+  + 启动验证通过（如跑了 `--verify`）才提交，任一不满足则放弃提交
 - `uv.lock`/`package-lock.json` 等可再生文件不参与合并（装依赖时自动更新）
 - 幂等：重复添加已启用特性直接提示退出
 

@@ -317,6 +317,41 @@ def test_add_refuses_without_ai_when_infra_missing(tmp_path, monkeypatch):
     assert not (project / "backend/api/terminal/routes.py").exists()
 
 
+def test_auto_commit_after_clean_add(tmp_path):
+    """干净合并后 --commit 直接提交，工作区归零。"""
+    from xb.utils.feature_adder import auto_commit
+
+    project = _make_project(tmp_path)
+    result = _add(project, "logs")
+    assert auto_commit(project, result, "feat: xb add logs（测试）", console=None)
+    log = _git(project, "log", "-1", "--format=%s").stdout.strip()
+    assert log == "feat: xb add logs（测试）"
+    assert _git(project, "status", "--porcelain").stdout == ""
+
+
+def test_auto_commit_blocked_when_markers_remain(tmp_path):
+    """冲突标记没清完（AI 没干完/没干）→ 不提交。"""
+    from xb.utils.feature_adder import auto_commit
+
+    project = _make_project(tmp_path)
+    readme = project / "README.md"
+    readme.write_text("# 完全重写\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "重写 README")
+    result = _add(project, "logs")
+    assert result.conflicts  # 重写 README 必冲突
+
+    head_before = _git(project, "rev-parse", "HEAD").stdout
+    assert not auto_commit(project, result, "feat: 不该提交", console=None)
+    assert _git(project, "rev-parse", "HEAD").stdout == head_before
+
+    # 模拟 AI 裁决完成：清掉标记、删任务文件 → 可以提交了
+    readme.write_text("# 完全重写\n\n- 日志中心\n", encoding="utf-8")
+    assert auto_commit(project, result, "feat: xb add logs（测试）", console=None)
+    assert _git(project, "log", "-1", "--format=%s").stdout.strip() == "feat: xb add logs（测试）"
+    assert not result.brief_path.exists()  # 任务文件被代为清理
+
+
 def test_add_refuses_dirty_worktree(tmp_path):
     project = _make_project(tmp_path)
     (project / "backend/main.py").write_text("# dirty\n", encoding="utf-8")

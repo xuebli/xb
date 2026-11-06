@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
-from ..utils.feature_adder import AddError, run_sync
+from ..utils.feature_adder import AddError, auto_commit, run_sync
 from ..utils.manifest import load_or_infer
 from ..utils.project import find_project_root
 from .add import _files_group, _maybe_invoke_ai
@@ -104,7 +104,13 @@ def _print_result(result) -> None:
     default=False,
     help="升级后自动启动开发环境验证（探测后端健康端点，完成自动停止）",
 )
-def sync(dry_run: bool, force: bool, skip_install: bool, no_ai: bool, verify: bool):
+@click.option(
+    "--commit",
+    is_flag=True,
+    default=False,
+    help="完成后自动 git 提交（有冲突时等 AI 裁决完、校验标记清零才提交）",
+)
+def sync(dry_run: bool, force: bool, skip_install: bool, no_ai: bool, verify: bool, commit: bool):
     """
     把老项目的模板/基建升级到当前 xb 版本（特性开关不变）
 
@@ -147,3 +153,9 @@ def sync(dry_run: bool, force: bool, skip_install: bool, no_ai: bool, verify: bo
         console.print("[green]→[/green] 已补写 .xb.json 项目清单")
 
     _maybe_invoke_ai(project_root, result, no_ai)
+
+    if commit and not result.dry_run:
+        version_span = (
+            f"（xb {result.synced_from} → {result.synced_to}）" if result.synced_from else ""
+        )
+        auto_commit(project_root, result, f"chore: xb sync 模板基建升级{version_span}", console)
