@@ -23,6 +23,12 @@ from xb.utils.merge3 import merge3
 from xb.utils.template_engine import TemplateEngine
 
 
+@pytest.fixture(autouse=True)
+def _fake_ai_cli(monkeypatch):
+    """默认本机有 AI CLI（无 AI 拒绝执行的场景自行覆盖）。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", lambda: [("opencode", "opencode")])
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-c", "user.name=test", "-c", "user.email=test@test", *args],
@@ -276,6 +282,39 @@ def test_add_terminal_detects_missing_infra(tmp_path):
     brief = (project / result.brief_path.name).read_text(encoding="utf-8")
     assert "基础设施版本过旧" in brief
     assert "is_local_client" in brief
+
+
+def test_add_refuses_without_ai_when_conflicts(tmp_path, monkeypatch):
+    """有冲突且本机无 AI CLI → 拒绝执行，一个文件都不改。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", list)
+    project = _make_project(tmp_path)
+    readme = project / "README.md"
+    readme.write_text("# 完全重写\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "重写 README")
+    before = (project / "backend/main.py").read_bytes()
+
+    with pytest.raises(AddError, match="未找到可用的 AI CLI"):
+        _add(project, "logs")
+
+    assert not (project / "backend/api/logs.py").exists()  # 新文件也没落地
+    assert (project / "backend/main.py").read_bytes() == before
+    assert "logs" not in load_manifest(project)["features"]
+
+
+def test_add_refuses_without_ai_when_infra_missing(tmp_path, monkeypatch):
+    """基建缺失（无冲突）且无 AI CLI → 同样拒绝执行。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", list)
+    project = _make_project(tmp_path, with_manifest=False)
+    (project / "backend/api/__init__.py").write_text(
+        "from fastapi import APIRouter\n\nrouter = APIRouter()\n", encoding="utf-8"
+    )
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "old infra")
+
+    with pytest.raises(AddError, match="未找到可用的 AI CLI"):
+        _add(project, "terminal")
+    assert not (project / "backend/api/terminal/routes.py").exists()
 
 
 def test_add_refuses_dirty_worktree(tmp_path):

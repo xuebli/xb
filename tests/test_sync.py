@@ -6,14 +6,24 @@
 
 from pathlib import Path
 
+import pytest
+
 from tests.test_add import _git, _make_project
 from xb.utils.feature_adder import (
+    AddError,
     AddResult,
     _apply_actions,
     compute_sync_actions,
     run_sync,
 )
-from xb.utils.manifest import load_manifest, load_or_infer
+from xb.utils.manifest import load_manifest, load_or_infer, save_manifest
+from xb.utils.template_engine import TemplateEngine
+
+
+@pytest.fixture(autouse=True)
+def _fake_ai_cli(monkeypatch):
+    """默认本机有 AI CLI（无 AI 拒绝执行的场景自行覆盖）。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", lambda: [("opencode", "opencode")])
 
 
 def _sync(project: Path, **kwargs) -> AddResult:
@@ -156,9 +166,6 @@ def test_sync_end_to_end_template_evolved(tmp_path):
 
     sync 应把模板演进（health 端点回归）合并进来，且用户业务行保留。
     """
-    from xb.utils.manifest import save_manifest
-    from xb.utils.template_engine import TemplateEngine
-
     project = tmp_path / "demo"
     TemplateEngine().render_project(target_dir=project, package_name="demo")
 
@@ -214,6 +221,50 @@ def test_sync_never_touches_user_icons(tmp_path):
     result = AddResult(feature="sync")
     _apply_actions(project, actions, work, result)
     assert (project / "electron/resources/icon.png").read_text() == "CUSTOM"
+
+
+def test_sync_refuses_without_ai_when_conflicts(tmp_path, monkeypatch):
+    """sync 预测到冲突且无 AI CLI → 拒绝执行，一个文件都不改。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", list)
+
+    project = tmp_path / "demo"
+    TemplateEngine().render_project(target_dir=project, package_name="demo")
+    main_py = project / "backend/main.py"
+    content = main_py.read_text(encoding="utf-8")
+
+    # 伪造旧版模板：root 端点文案不同（模拟模板后来改了这一行）。
+    # 注意必须用"同一行双方改得不一样"来制造冲突——git 对"同位置双方
+    # 插入不同内容"会直接拼接不冲突（实测），不能依赖
+    marker_new = 'return {"message": "Hello from " + "Demo" + " Backend"}'
+    marker_old = 'return {"message": "Hi from " + "Demo" + " Backend"}'
+    assert marker_new in content
+    old = content.replace(marker_new, marker_old)
+    main_py.write_text(old, encoding="utf-8")
+    save_manifest(
+        project,
+        {
+            "xb_version": "9.9.9",
+            "package_name": "demo",
+            "display_name": None,
+            "backend_port": None,
+            "features": [],
+        },
+    )
+    _git(project, "init", "-q")
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "chore: xb init（旧版）")
+
+    # 用户也改了同一行 → 与模板演进必冲突
+    ours = old.replace(marker_old, 'return {"message": "我的根路由"}')
+    assert ours != old
+    main_py.write_text(ours, encoding="utf-8")
+    before = main_py.read_bytes()
+    _git(project, "add", ".")
+    _git(project, "commit", "-q", "-m", "用户改动")
+
+    with pytest.raises(AddError, match="未找到可用的 AI CLI"):
+        _sync(project)
+    assert main_py.read_bytes() == before  # 一个文件都没改
 
 
 def test_sync_dry_run_writes_nothing(tmp_path):

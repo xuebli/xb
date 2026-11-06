@@ -14,6 +14,13 @@ from xb.utils.feature_adder import (
 )
 from xb.utils.manifest import load_or_infer
 
+
+@pytest.fixture(autouse=True)
+def _fake_ai_cli(monkeypatch):
+    """默认本机有 AI CLI（无 AI 拒绝执行的场景自行覆盖）。"""
+    monkeypatch.setattr("xb.utils.feature_adder.detect_ai_clis", lambda: [("opencode", "opencode")])
+
+
 # ---------------------------------------------------------------- YAML 顶层键追加
 
 OURS_YAML = """\

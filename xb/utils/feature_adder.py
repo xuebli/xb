@@ -25,6 +25,7 @@ from pathlib import Path
 
 import yaml
 
+from .ai_cli import detect_ai_clis
 from .manifest import render_flags, save_manifest
 from .merge3 import LABEL_BASE, LABEL_OURS, LABEL_THEIRS, merge3
 from .template_engine import TemplateEngine
@@ -351,6 +352,44 @@ def compute_actions(
     return actions
 
 
+def _predict_conflicts(project_dir: Path, actions: list[FileAction], work: Path) -> list[str]:
+    """只读预测：对 merge 动作跑三方合并（不落盘），返回将产生冲突的文件。"""
+    conflicts = []
+    for action in actions:
+        if action.kind != "merge":
+            continue
+        _, conflict_count = merge3(
+            ours=project_dir / action.relpath,
+            base=work / "base" / action.relpath,
+            theirs=work / "theirs" / action.relpath,
+        )
+        if conflict_count:
+            conflicts.append(action.relpath)
+    return conflicts
+
+
+def _require_ai_if_needed(conflicts: list[str], missing_infra: list[tuple[str, str]]) -> None:
+    """需要 AI 语义裁决但本机没有可用 AI CLI 时，拒绝执行（一个文件都不改）。
+
+    xb 不做规则猜测：冲突/基建缺失只能由大模型理解语义后处理，
+    没有 AI 助手就先装好再来，避免留下一堆没人会解的冲突标记。
+    """
+    if not (conflicts or missing_infra):
+        return
+    if detect_ai_clis():
+        return
+    parts = []
+    if conflicts:
+        parts.append(f"{len(conflicts)} 个文件冲突")
+    if missing_infra:
+        parts.append(f"{len(missing_infra)} 个基建符号缺失")
+    raise AddError(
+        f"本次操作需要 AI 语义裁决（{'、'.join(parts)}），"
+        "但本机未找到可用的 AI CLI（opencode / Claude Code / Codex）。\n"
+        "已拒绝执行，未改动任何文件。请先安装任一 AI 编码助手再重试。"
+    )
+
+
 def _apply_actions(
     project_dir: Path, actions: list[FileAction], work: Path, result: AddResult
 ) -> None:
@@ -625,18 +664,14 @@ def run_add(
         actions = compute_actions(project_dir, manifest, spec, work)
 
         if dry_run:
+            predicted = set(_predict_conflicts(project_dir, actions, work))
             for action in actions:
                 if action.kind == "new":
                     result.added.append(action.relpath)
                 elif action.kind == "merge":
-                    _, conflict_count = merge3(
-                        ours=project_dir / action.relpath,
-                        base=work / "base" / action.relpath,
-                        theirs=work / "theirs" / action.relpath,
-                    )
-                    (result.conflicts if conflict_count else result.merged_clean).append(
-                        action.relpath
-                    )
+                    (
+                        result.conflicts if action.relpath in predicted else result.merged_clean
+                    ).append(action.relpath)
                 elif action.kind == "yaml_append":
                     result.yaml_appended.append(action.relpath)
                 elif action.kind == "delete":
@@ -646,6 +681,14 @@ def run_add(
                 if "备份" in action.note:
                     result.backed_up.append(action.relpath)
             return result
+
+        # 无 AI 不执行：预测冲突与基建缺失（被本次合并覆盖的文件不算缺失）
+        touched = {a.relpath for a in actions}
+        predicted_conflicts = _predict_conflicts(project_dir, actions, work)
+        predicted_missing = [
+            (p, s) for p, s in _check_required_symbols(project_dir, spec) if p not in touched
+        ]
+        _require_ai_if_needed(predicted_conflicts, predicted_missing)
 
         _apply_actions(project_dir, actions, work, result)
 
@@ -842,20 +885,16 @@ def run_sync(
         actions = compute_sync_actions(project_dir, theirs_dir, work, base_files, read_base)
 
         if dry_run:
+            predicted = set(_predict_conflicts(project_dir, actions, work))
             for action in actions:
                 if action.kind == "new":
                     result.added.append(action.relpath)
                 elif action.kind == "ff":
                     result.merged_clean.append(action.relpath)
                 elif action.kind == "merge":
-                    _, conflict_count = merge3(
-                        ours=project_dir / action.relpath,
-                        base=work / "base" / action.relpath,
-                        theirs=work / "theirs" / action.relpath,
-                    )
-                    (result.conflicts if conflict_count else result.merged_clean).append(
-                        action.relpath
-                    )
+                    (
+                        result.conflicts if action.relpath in predicted else result.merged_clean
+                    ).append(action.relpath)
                 elif action.kind == "yaml_append":
                     result.yaml_appended.append(action.relpath)
                 elif action.kind == "delete":
@@ -863,6 +902,9 @@ def run_sync(
                 else:
                     result.skipped.append(action)
             return result
+
+        # 无 AI 不执行：预测到冲突先拒绝，一个文件都不改
+        _require_ai_if_needed(_predict_conflicts(project_dir, actions, work), [])
 
         _apply_actions(project_dir, actions, work, result)
 
