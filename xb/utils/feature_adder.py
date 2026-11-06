@@ -119,6 +119,16 @@ YAML_APPEND_FILES = {
     "configs/secrets.yaml",
 }
 
+# sync 永不触碰的用户资产：图标是 init 时按 --icon 定制的，
+# 清单不记录图标来源，同步会把用户图标覆盖成模板默认图标
+SYNC_EXCLUDE_FILES = {
+    "electron/resources/icon.png",
+    "electron/resources/icon.ico",
+    "frontend/public/app-icon.png",
+    "frontend/public/app-icon.ico",
+}
+SYNC_EXCLUDE_PREFIXES = ("electron/resources/icons/",)
+
 _TOP_KEY_RE = re.compile(r"^[A-Za-z_][\w\-]*:")
 
 
@@ -144,6 +154,8 @@ class AddResult:
     missing_infra: list[tuple[str, str]] = field(default_factory=list)  # (文件, 符号)
     verified: bool | None = None  # --verify 启动验证结果（None=未执行）
     verify_note: str = ""
+    synced_from: str | None = None  # sync：升级前 xb 版本
+    synced_to: str | None = None  # sync：升级后 xb 版本
 
 
 def _tree_files(root: Path) -> dict[str, Path]:
@@ -370,6 +382,13 @@ def _apply_actions(
             result.deleted.append(relpath)
             continue
 
+        if action.kind == "ff":
+            # fast-forward：用户从未碰过该文件（与 base 一致），直接升级到新模板
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(theirs_path, dest)
+            result.merged_clean.append(relpath)
+            continue
+
         if action.kind == "yaml_append":
             merged_text, _keys = yaml_merge_missing_keys(
                 dest.read_text(encoding="utf-8"), theirs_path.read_text(encoding="utf-8")
@@ -405,9 +424,11 @@ def _check_required_symbols(project_dir: Path, spec: FeatureSpec) -> list[tuple[
     return missing
 
 
-def _write_merge_brief(project_dir: Path, result: AddResult, spec: FeatureSpec) -> Path:
+def _write_merge_brief(
+    project_dir: Path, result: AddResult, *, slug: str, title: str, description: str
+) -> Path:
     """生成 AI 裁决任务文件：用户的 AI 编码助手读它完成冲突合并。"""
-    brief = project_dir / f"xb-add-{spec.name}-conflicts.md"
+    brief = project_dir / f"xb-{slug}-conflicts.md"
     files = "\n".join(f"- [ ] `{path}`" for path in result.conflicts)
     conflicts_section = f"""
 ## 冲突文件
@@ -433,25 +454,25 @@ def _write_merge_brief(project_dir: Path, result: AddResult, spec: FeatureSpec) 
 保持对现有代码的向后兼容。
 """
     brief.write_text(
-        f"""# xb add {spec.name} — 合并冲突裁决任务（写给 AI 编码助手）
+        f"""# {title} — 合并冲突裁决任务（写给 AI 编码助手）
 
-本项目刚执行了 `xb add {spec.name}`（{spec.description}），
+本项目刚执行了 `{description}`，
 以下事项需要你理解语义后完成。
 
 ## 冲突标记格式（diff3）
 
 ```
 <<<<<<< {LABEL_OURS}      ← 项目当前的代码（用户业务，可能已大幅改动，必须保留）
-||||||| {LABEL_BASE}      ← 特性添加前的纯净模板（裁决的基准参照）
+||||||| {LABEL_BASE}      ← 变更前的纯净模板（裁决的基准参照）
 =======                   ← 分隔线，下方是新模板
->>>>>>> {LABEL_THEIRS}    ← 特性添加后的纯净模板（含本次特性增量）
+>>>>>>> {LABEL_THEIRS}    ← 变更后的纯净模板（含本次模板增量）
 ```
 
 ## 裁决原则
 
-1. 对比「{LABEL_BASE}」与「{LABEL_THEIRS}」，先识别本次特性带来的**增量**
-   （import、路由注册、导航项、依赖、文档行等）
-2. 把特性增量融入「{LABEL_OURS}」——**用户的业务改动必须全部保留**，
+1. 对比「{LABEL_BASE}」与「{LABEL_THEIRS}」，先识别本次变更带来的**增量**
+   （import、路由注册、导航项、依赖、文档行、基建 helper 等）
+2. 把模板增量融入「{LABEL_OURS}」——**用户的业务改动必须全部保留**，
    用户删掉的模板内容不要复活（删除是刻意的）
 3. 依赖条目重复时保留用户版本（如用户的 `websockets>=x` 优先于模板的 `websockets==x`）
 4. 删除全部冲突标记，保证 Python/Vue/JSON/TOML 语法合法
@@ -463,9 +484,9 @@ def _write_merge_brief(project_dir: Path, result: AddResult, spec: FeatureSpec) 
     return brief
 
 
-def _post_install(project_dir: Path, spec: FeatureSpec, applied: set[str], console) -> None:
+def _post_install(project_dir: Path, *, uv_sync: bool, npm_dirs: list[str], console) -> None:
     """依赖文件变化时自动同步依赖；失败仅提示，不中断。"""
-    if spec.needs_uv_sync and "pyproject.toml" in applied and shutil.which("uv"):
+    if uv_sync and shutil.which("uv"):
         console.print("[green]→[/green] pyproject.toml 已更新，执行 uv sync --all-extras ...")
         # --all-extras：模板把 pyinstaller 等构建工具放在 optional-dependencies，
         # 裸 uv sync 会把它们从虚拟环境里清掉，导致 build.py 打包失败
@@ -480,23 +501,24 @@ def _post_install(project_dir: Path, spec: FeatureSpec, applied: set[str], conso
             console.print(
                 "[yellow]⚠[/yellow]  uv sync 失败，请稍后手动执行 [cyan]uv sync --all-extras[/cyan]"
             )
-    if spec.needs_npm_install and "frontend/package.json" in applied and shutil.which("npm"):
+    if npm_dirs and shutil.which("npm"):
         import os
 
         npm_command = "npm.cmd" if os.name == "nt" and shutil.which("npm.cmd") else "npm"
-        console.print("[green]→[/green] frontend/package.json 已更新，执行 npm install ...")
-        proc = subprocess.run(
-            [npm_command, "install", "--no-audit", "--no-fund"],
-            cwd=project_dir / "frontend",
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        if proc.returncode != 0:
-            console.print(
-                "[yellow]⚠[/yellow]  npm install 失败，请稍后手动执行 "
-                "[cyan]cd frontend && npm install[/cyan]"
+        for sub in npm_dirs:
+            console.print(f"[green]→[/green] {sub}/package.json 已更新，执行 npm install ...")
+            proc = subprocess.run(
+                [npm_command, "install", "--no-audit", "--no-fund"],
+                cwd=project_dir / sub,
+                capture_output=True,
+                text=True,
+                timeout=600,
             )
+            if proc.returncode != 0:
+                console.print(
+                    f"[yellow]⚠[/yellow]  {sub} npm install 失败，请稍后手动执行 "
+                    f"[cyan]cd {sub} && npm install[/cyan]"
+                )
 
 
 # ---------------------------------------------------------------- --verify 启动验证
@@ -535,7 +557,7 @@ def _backend_port(project_dir: Path) -> int:
     return 8000
 
 
-def verify_startup(project_dir: Path, spec: FeatureSpec, console) -> tuple[bool, str]:
+def verify_startup(project_dir: Path, health_endpoint: str | None, console) -> tuple[bool, str]:
     """启动开发环境，探测后端健康端点与特性路由，最后恢复停止。
 
     判定：/api/health 有任何 HTTP 响应 = 后端活着（401 是登录墙正常行为）；
@@ -557,13 +579,13 @@ def verify_startup(project_dir: Path, spec: FeatureSpec, console) -> tuple[bool,
             return False, "dev.py start 失败: " + " / ".join(tail)
         if _poll_status(f"{base}/api/health", timeout_s=60) is None:
             return False, "后端 /api/health 60s 无响应（查 datas/logs/backend.log）"
-        if spec.health_endpoint:
-            status = _poll_status(f"{base}{spec.health_endpoint}", timeout_s=20)
+        if health_endpoint:
+            status = _poll_status(f"{base}{health_endpoint}", timeout_s=20)
             if status is None:
-                return False, f"{spec.health_endpoint} 无响应"
+                return False, f"{health_endpoint} 无响应"
             if status == 404:
-                return False, f"{spec.health_endpoint} 返回 404，特性路由未注册"
-            return True, f"后端正常，{spec.health_endpoint} 已注册（HTTP {status}）"
+                return False, f"{health_endpoint} 返回 404，特性路由未注册"
+            return True, f"后端正常，{health_endpoint} 已注册（HTTP {status}）"
         return True, "后端正常"
     finally:
         subprocess.run(
@@ -631,17 +653,241 @@ def run_add(
 
     if result.conflicts or result.missing_infra:
         # 有冲突：TOML/JSON 里带标记，装依赖必失败，留给裁决后手动执行
-        result.brief_path = _write_merge_brief(project_dir, result, spec)
+        result.brief_path = _write_merge_brief(
+            project_dir,
+            result,
+            slug=f"add-{spec.name}",
+            title=f"xb add {spec.name}",
+            description=f"xb add {spec.name}（{spec.description}）",
+        )
     else:
         if install:
             applied = set(result.added) | set(result.merged_clean) | set(result.yaml_appended)
-            _post_install(project_dir, spec, applied, console)
+            _post_install(
+                project_dir,
+                uv_sync=spec.needs_uv_sync and "pyproject.toml" in applied,
+                npm_dirs=(
+                    ["frontend"]
+                    if spec.needs_npm_install and "frontend/package.json" in applied
+                    else []
+                ),
+                console=console,
+            )
         if verify:
-            ok, note = verify_startup(project_dir, spec, console)
+            ok, note = verify_startup(project_dir, spec.health_endpoint, console)
             result.verified, result.verify_note = ok, note
 
     # 更新清单：标记特性已启用（老项目推断出的清单也在此一并补写落盘）
     features = list(dict.fromkeys([*manifest.get("features", []), feature_name]))
     manifest["features"] = features
+    save_manifest(project_dir, manifest)
+    return result
+
+
+# ---------------------------------------------------------------- xb sync 模板升级
+
+
+def _first_commit(project_dir: Path):
+    """首个 commit（= init 时旧版 xb 渲染的纯净模板）的文件清单与内容读取器。
+
+    这是 sync 的基准面：base 取首个 commit 而非当前模板重渲染，
+    这样 theirs − base 恰好是"模板自项目创建以来的全部演进"。
+    """
+    proc = subprocess.run(
+        ["git", "rev-list", "--max-parents=0", "HEAD"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+    )
+    roots = proc.stdout.split()
+    if proc.returncode != 0 or not roots:
+        raise AddError("仓库没有任何 commit，无法确定 init 时的模板基准")
+    root = roots[-1]  # 多个 root 时取最老的
+    files = set(
+        subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", root],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+
+    def read(relpath: str) -> bytes | None:
+        proc = subprocess.run(
+            ["git", "show", f"{root}:{relpath}"],
+            cwd=project_dir,
+            capture_output=True,
+        )
+        return proc.stdout if proc.returncode == 0 else None
+
+    return files, read
+
+
+def compute_sync_actions(
+    project_dir: Path, theirs_dir: Path, work: Path, base_files: set[str], read_base
+) -> list[FileAction]:
+    """sync 差分：base=首个 commit（旧模板），theirs=当前 xb 同特性渲染。
+
+    - 模板未演进的文件（theirs == base）一律不碰，用户改动天然保留
+    - 用户从未碰过的文件（ours == base）直接快进升级（ff）
+    - 模板新增文件直接落地；模板删除的文件仅在用户未碰过时删除
+    """
+    actions: list[FileAction] = []
+    theirs_files = _tree_files(theirs_dir)
+    base_dir = work / "base"
+
+    for relpath, theirs_path in sorted(theirs_files.items()):
+        if (
+            relpath == ".xb.json"
+            or relpath in NEVER_MERGE
+            or relpath in SYNC_EXCLUDE_FILES
+            or relpath.startswith(SYNC_EXCLUDE_PREFIXES)
+        ):
+            continue
+        theirs_bytes = theirs_path.read_bytes()
+        dest = project_dir / relpath
+
+        # YAML 配置合并不需要 base（两级键补齐只认缺失键），最先处理
+        if relpath in YAML_APPEND_FILES:
+            if not dest.exists():
+                actions.append(FileAction(relpath, "new", "项目里缺失，按新模板补齐"))
+                continue
+            _merged, added_keys = yaml_merge_missing_keys(
+                dest.read_text(encoding="utf-8", errors="ignore"),
+                theirs_path.read_text(encoding="utf-8"),
+            )
+            if added_keys:
+                actions.append(
+                    FileAction(relpath, "yaml_append", f"追加键: {', '.join(added_keys)}")
+                )
+            continue
+
+        base_bytes = read_base(relpath) if relpath in base_files else None
+
+        if base_bytes is None:
+            # 首个 commit 里没有：模板新增文件，或项目是 pull 上游模板过来的
+            # （老项目无基准可比对，不猜）
+            if not dest.exists():
+                actions.append(FileAction(relpath, "new", "模板新增"))
+            elif dest.read_bytes() != theirs_bytes:
+                actions.append(
+                    FileAction(relpath, "skip", "无模板基准（不在首个 commit），请人工比对")
+                )
+            continue
+
+        if theirs_bytes == base_bytes:
+            continue  # 模板未演进，用户改动天然保留
+
+        # 模板有演进
+        if not dest.exists():
+            actions.append(FileAction(relpath, "new", "项目里缺失，按新模板补齐"))
+        elif dest.read_bytes() == base_bytes:
+            actions.append(FileAction(relpath, "ff"))  # 用户未碰过，直接升级
+        elif dest.read_bytes() == theirs_bytes:
+            continue  # 已是新模板内容
+        else:
+            base_path = base_dir / relpath
+            base_path.parent.mkdir(parents=True, exist_ok=True)
+            base_path.write_bytes(base_bytes)
+            actions.append(FileAction(relpath, "merge"))
+
+    # 模板删除的文件
+    for relpath in sorted(base_files - set(theirs_files)):
+        if (
+            relpath == ".xb.json"
+            or relpath in NEVER_MERGE
+            or relpath in YAML_APPEND_FILES
+            or relpath in SYNC_EXCLUDE_FILES
+            or relpath.startswith(SYNC_EXCLUDE_PREFIXES)
+        ):
+            continue
+        dest = project_dir / relpath
+        if not dest.exists():
+            continue
+        base_bytes = read_base(relpath)
+        if base_bytes is not None and dest.read_bytes() == base_bytes:
+            actions.append(FileAction(relpath, "delete"))
+        else:
+            actions.append(
+                FileAction(relpath, "skip", "新模板已移除此文件，但你已修改过，请人工确认后删除")
+            )
+
+    return actions
+
+
+def run_sync(
+    project_dir: Path,
+    manifest: dict,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+    install: bool = True,
+    verify: bool = False,
+    console=None,
+) -> AddResult:
+    """把项目的模板/基建升级到当前 xb 版本（特性开关不变）。"""
+    from .. import __version__
+
+    _check_preflight(project_dir, force)
+    base_files, read_base = _first_commit(project_dir)
+
+    result = AddResult(feature="sync", dry_run=dry_run)
+    result.synced_from = manifest.get("xb_version")
+    result.synced_to = __version__
+
+    with tempfile.TemporaryDirectory(prefix="xb-sync-") as tmp:
+        work = Path(tmp)
+        theirs_dir = work / "theirs"
+        _render_tree(theirs_dir, manifest, extra_flag=None)
+        actions = compute_sync_actions(project_dir, theirs_dir, work, base_files, read_base)
+
+        if dry_run:
+            for action in actions:
+                if action.kind == "new":
+                    result.added.append(action.relpath)
+                elif action.kind == "ff":
+                    result.merged_clean.append(action.relpath)
+                elif action.kind == "merge":
+                    _, conflict_count = merge3(
+                        ours=project_dir / action.relpath,
+                        base=work / "base" / action.relpath,
+                        theirs=work / "theirs" / action.relpath,
+                    )
+                    (result.conflicts if conflict_count else result.merged_clean).append(
+                        action.relpath
+                    )
+                elif action.kind == "yaml_append":
+                    result.yaml_appended.append(action.relpath)
+                elif action.kind == "delete":
+                    result.deleted.append(action.relpath)
+                else:
+                    result.skipped.append(action)
+            return result
+
+        _apply_actions(project_dir, actions, work, result)
+
+    if result.conflicts:
+        result.brief_path = _write_merge_brief(
+            project_dir,
+            result,
+            slug="sync",
+            title="xb sync",
+            description=f"xb sync（模板基建升级到 xb {__version__}）",
+        )
+    else:
+        if install:
+            applied = set(result.added) | set(result.merged_clean) | set(result.yaml_appended)
+            _post_install(
+                project_dir,
+                uv_sync="pyproject.toml" in applied,
+                npm_dirs=[d for d in ("frontend", "electron") if f"{d}/package.json" in applied],
+                console=console,
+            )
+        if verify:
+            ok, note = verify_startup(project_dir, None, console)
+            result.verified, result.verify_note = ok, note
+
+    # 记录同步后的 xb 版本（下次 sync 的演进参照）
+    manifest["xb_version"] = __version__
     save_manifest(project_dir, manifest)
     return result

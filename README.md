@@ -23,6 +23,7 @@
 - 特权操作免密提权标配（Linux polkit，管理员组无感、无密码落盘；helper 白名单执行器）
 - 可选自定义应用图标（`--icon`）
 - 老项目增量加特性（`xb add`，三方合并不覆盖业务代码）
+- 老项目模板升级（`xb sync`，基建/工具链随 xb 版本演进）
 - 内置开发、构建、版本管理命令
 - 自动版本检查与一键升级（`xb --upgrade`）
 - 环境诊断（`xb doctor`）
@@ -143,6 +144,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 |------|------|
 | `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--feishu-bitable] [--icon PATH] [--skip-install]` | 初始化项目 |
 | `xb add <特性> [--dry-run] [--force] [--skip-install] [--no-ai] [--verify]` | 向已有项目增量添加特性（`logs`/`terminal`/`update`/`csv-test`/`feishu-auth`/`feishu-notify`/`feishu-bitable`） |
+| `xb sync [--dry-run] [--force] [--skip-install] [--no-ai] [--verify]` | 把老项目的模板/基建升级到当前 xb 版本（特性开关不变） |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -187,6 +189,31 @@ commit 入库。`xb add` 据此重新渲染"加特性前/后"两份纯净模板�
 - 执行后不自动 commit：`git diff` 审查 → 解决冲突（如有）→ 验证 → 自行提交
 - `uv.lock`/`package-lock.json` 等可再生文件不参与合并（装依赖时自动更新）
 - 幂等：重复添加已启用特性直接提示退出
+
+## 老项目模板升级（`xb sync`）
+
+`xb upgrade` 升级的是 xb 工具本身；`xb sync` 把**已生成项目的模板/基建**
+（`dev.py`、`build.py`、`backend/managers/`、electron 主进程、版本管理脚本等）
+升级到当前 xb 版本：
+
+```bash
+xb sync              # 升级模板基建（特性开关不变）
+xb sync --dry-run    # 预览将升级的文件
+xb sync --verify     # 升级后自动启动开发环境验证后端
+```
+
+**原理**：base 取项目的**首个 commit**（= init 时旧版 xb 渲染的纯净模板），
+theirs 是当前 xb 按同一特性开关渲染的纯净模板，两者差分就是"模板自项目
+创建以来的全部演进"，再与你当前代码三方合并：
+
+- 模板没动的文件一律不碰（你的改动天然保留）
+- 你从未碰过的文件**直接快进升级**（与首个 commit 逐字节一致）
+- 你改过的走三方合并，冲突生成 AI 裁决任务文件（与 `xb add` 同一流程，
+  检测到本机 AI CLI 可一键唤起）
+- YAML 配置同样走两级键补齐；`--icon` 定制的图标文件**永不覆盖**
+- 项目是 pull 上游模板而来的（文件不在首个 commit 里）无法判定模板增量，
+  跳过并提示人工比对
+- 完成后清单里的 xb 版本写回当前版本，作为下次 sync 的参照
 
 ## 应用图标
 
@@ -300,6 +327,7 @@ xb/
 ├── commands/               # 子命令实现
 │   ├── init.py             #   初始化（升级检查、图标、npm install、git init、写 .xb.json 清单）
 │   ├── add.py              #   增量加特性（老项目免重建）
+│   ├── sync.py             #   模板/基建升级（首个 commit 为基准的三方合并）
 │   ├── dev.py              #   开发环境管理
 │   ├── build.py            #   构建
 │   ├── version.py          #   版本管理

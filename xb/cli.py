@@ -12,12 +12,13 @@ from .commands.build import build
 from .commands.dev import dev
 from .commands.doctor import doctor
 from .commands.init import XbGroup, init_command
+from .commands.sync import sync
 from .commands.upgrade import run_upgrade, upgrade
 from .commands.version import version
 from .utils.version_check import ensure_check, get_pending_upgrade_hint
 
 console = Console()
-COMMAND_ORDER = ["doctor", "init", "add", "dev", "build", "version", "upgrade"]
+COMMAND_ORDER = ["doctor", "init", "add", "sync", "dev", "build", "version", "upgrade"]
 
 
 def _upgrade_callback(ctx: click.Context, _param: click.Parameter, requested: bool) -> None:
@@ -108,6 +109,7 @@ def main():
 main.add_command(doctor, name="doctor")
 main.add_command(init_command, name="init")
 main.add_command(add, name="add")
+main.add_command(sync, name="sync")
 main.add_command(dev, name="dev")
 main.add_command(build, name="build")
 main.add_command(version, name="version")
