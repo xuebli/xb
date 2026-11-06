@@ -197,7 +197,13 @@ def _check_preflight(project_dir: Path, force: bool) -> None:
         capture_output=True,
         text=True,
     )
-    if proc.returncode == 0 and proc.stdout.strip() and not force:
+    # .xb/（模板缓存）是 xb 自产的可再生文件，未跟踪不算脏
+    dirty = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.strip() and not line.startswith(f"?? {SYNC_CACHE_DIR.split('/')[0]}/")
+    ]
+    if proc.returncode == 0 and dirty and not force:
         raise AddError(
             "工作区有未提交的改动。请先 commit 或 stash，"
             "确认合并结果前保持工作区干净（或用 --force 跳过检查）"
@@ -838,8 +844,13 @@ def _increment_integrated(ours_text: str, base_text: str, theirs_text: str) -> b
             for line in theirs_lines[j1:j2]:
                 if line.strip() and line.strip() not in ours_lines:
                     return False
-        elif tag in ("replace", "delete"):
-            return False
+        elif tag == "replace":
+            # 模板改行：新版行都已在用户文件里 → 视为已集成（裁决采用了新版本）
+            for line in theirs_lines[j1:j2]:
+                if line.strip() and line.strip() not in ours_lines:
+                    return False
+        elif tag == "delete":
+            return False  # 删除行无法安全判定（用户可能刻意保留），走正常合并
     return True
 
 

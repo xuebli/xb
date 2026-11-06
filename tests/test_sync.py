@@ -383,6 +383,19 @@ def test_sync_partially_integrated_merges_without_duplication(tmp_path):
     compile(text, "main.py", "exec")
 
 
+def test_increment_integrated_replace_semantics():
+    """修改类增量：新版行在用户文件里 → 已集成跳过；不在 → 走合并。"""
+    from xb.utils.feature_adder import _increment_integrated
+
+    base = "a\nb\nc\n"
+    theirs = "a\nB2\nc\n"  # 模板把 b 改成 B2
+    assert _increment_integrated("a\nB2\nUSER\nc\n", base, theirs)  # 裁决采用了新版
+    assert not _increment_integrated("a\nUSER\nc\n", base, theirs)  # 用户没有 B2
+    # 删除类增量无法判定 → 不视为已集成
+    assert not _increment_integrated("a\nc\n", base, "a\nc\n")
+    assert not _increment_integrated("a\nb\nc\n", base, "a\nc\n")
+
+
 def test_sync_dry_run_writes_nothing(tmp_path):
     project = _make_project(tmp_path)
     before = (project / "backend/main.py").read_bytes()
