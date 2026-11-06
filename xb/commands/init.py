@@ -110,9 +110,7 @@ def init_git_repo(target_dir: Path, package: str) -> bool:
 
     def _run(cmd: list[str]) -> tuple[bool, str]:
         try:
-            r = subprocess.run(
-                cmd, cwd=target_dir, capture_output=True, text=True, timeout=15
-            )
+            r = subprocess.run(cmd, cwd=target_dir, capture_output=True, text=True, timeout=15)
             return r.returncode == 0, (r.stderr or r.stdout).strip()
         except Exception as e:
             return False, str(e)
@@ -124,9 +122,7 @@ def init_git_repo(target_dir: Path, package: str) -> bool:
 
     _run(["git", "add", "."])
 
-    ok, msg = _run(
-        ["git", "commit", "-q", "-m", f"chore: xb init 初始化 {package} 项目"]
-    )
+    ok, msg = _run(["git", "commit", "-q", "-m", f"chore: xb init 初始化 {package} 项目"])
     if not ok:
         console.print(
             f"[yellow]⚠[/yellow]  git commit 失败（可能未配置 user.name/user.email）: {msg}\n"
@@ -145,6 +141,7 @@ def remove_existing_project(path: Path) -> None:
 
     def clear_readonly(func, filename, _exc):
         import stat
+
         os.chmod(filename, stat.S_IWRITE)
         func(filename)
 
@@ -229,11 +226,11 @@ def nrm_speedtest(console: Console, npm_command: str) -> None:
         console.print("[yellow]⚠[/yellow]  nrm 测速无可用结果（沿用当前 npm 源）")
         return
 
-    console.print(f"[green]✓[/green] 最快 npm 源: [cyan]{best_name}[/cyan]（{best_ms} ms），切换中...")
+    console.print(
+        f"[green]✓[/green] 最快 npm 源: [cyan]{best_name}[/cyan]（{best_ms} ms），切换中..."
+    )
     try:
-        subprocess.run(
-            [nrm_command, "use", best_name], capture_output=True, text=True, check=True
-        )
+        subprocess.run([nrm_command, "use", best_name], capture_output=True, text=True, check=True)
     except Exception as e:
         console.print(f"[yellow]⚠[/yellow]  切换 npm 源失败（沿用当前源）: {e}")
 
@@ -425,7 +422,9 @@ def init_command(
             raise click.Abort()
         console.print(f"[yellow]⚠[/yellow]  目录 {target_dir} 已存在!")
         if not sys.stdin.isatty():
-            console.print("[red]✗[/red] 非交互环境不能确认覆盖，已中止。请换目录或手动清理。", style="red")
+            console.print(
+                "[red]✗[/red] 非交互环境不能确认覆盖，已中止。请换目录或手动清理。", style="red"
+            )
             raise click.Abort()
         if not Confirm.ask("是否覆盖现有目录?", default=False):
             console.print("[yellow]已取消操作[/yellow]")
@@ -440,19 +439,22 @@ def init_command(
 
     # 交互式配置表单：CLI 传的参数预填，回车即确认；
     # stdin 非 tty（脚本/CI 管道）时自动跳过，直接沿用 CLI 参数
-    form_result = run_config_form(package_name, {
-        "display_name": display_name,
-        "port": port,
-        "terminal": terminal,
-        "update": update,
-        "logs": logs,
-        "csv_test": csv_test,
-        "feishu_auth": feishu_auth,
-        "feishu_notify": feishu_notify,
-        "feishu_bitable": feishu_bitable,
-        "icon": icon,
-        "skip_install": skip_install,
-    })
+    form_result = run_config_form(
+        package_name,
+        {
+            "display_name": display_name,
+            "port": port,
+            "terminal": terminal,
+            "update": update,
+            "logs": logs,
+            "csv_test": csv_test,
+            "feishu_auth": feishu_auth,
+            "feishu_notify": feishu_notify,
+            "feishu_bitable": feishu_bitable,
+            "icon": icon,
+            "skip_install": skip_install,
+        },
+    )
     display_name = form_result["display_name"]
     port = form_result["port"]
     terminal = form_result["terminal"]
@@ -541,18 +543,18 @@ def init_command(
             for sub in ("frontend", "electron"):
                 sub_dir = work_dir / sub
                 if (sub_dir / "package.json").exists():
-                    console.print(
-                        f"[green]→[/green] 正在安装 {sub} 依赖 ..."
-                    )
+                    console.print(f"[green]→[/green] 正在安装 {sub} 依赖 ...")
                     try:
                         environment = os.environ.copy()
                         if sub == "electron":
-                            environment.update({
-                                "ELECTRON_MIRROR": "https://mirrors.huaweicloud.com/electron/",
-                                "ELECTRON_BUILDER_BINARIES_MIRROR": (
-                                    "https://npmmirror.com/mirrors/electron-builder-binaries/"
-                                ),
-                            })
+                            environment.update(
+                                {
+                                    "ELECTRON_MIRROR": "https://mirrors.huaweicloud.com/electron/",
+                                    "ELECTRON_BUILDER_BINARIES_MIRROR": (
+                                        "https://npmmirror.com/mirrors/electron-builder-binaries/"
+                                    ),
+                                }
+                            )
                         result = subprocess.run(
                             [npm_command, "install", "--no-audit", "--no-fund"],
                             cwd=sub_dir,
@@ -598,13 +600,16 @@ def init_command(
             if on
         ]
         work_dir.mkdir(parents=True, exist_ok=True)
-        save_manifest(work_dir, {
-            "xb_version": __version__,
-            "package_name": package_name,
-            "display_name": display_name,
-            "backend_port": port,
-            "features": enabled_features,
-        })
+        save_manifest(
+            work_dir,
+            {
+                "xb_version": __version__,
+                "package_name": package_name,
+                "display_name": display_name,
+                "backend_port": port,
+                "features": enabled_features,
+            },
+        )
 
         git_ok = init_git_repo(work_dir, package_name)
         git_line = (

@@ -40,9 +40,7 @@ def version(bump_type: str):
     # 用 sys.executable 而非裸 "python"：Windows 上裸 python 可能解析到
     # WindowsApps 的假 python 或根本不存在，必须跟随当前解释器。
     if bump_type:
-        result = subprocess.run(
-            [sys.executable, str(version_script), bump_type], cwd=project_root
-        )
+        result = subprocess.run([sys.executable, str(version_script), bump_type], cwd=project_root)
         raise SystemExit(result.returncode)
 
     result = subprocess.run(

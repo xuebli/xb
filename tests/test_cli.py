@@ -42,9 +42,7 @@ def _invoke_init(monkeypatch, tmp_path, args, platform="linux"):
         lambda self, **kwargs: captured.update(kwargs),
     )
 
-    result = CliRunner().invoke(
-        cli.main, ["init", str(tmp_path / "demo"), *args], input="\n"
-    )
+    result = CliRunner().invoke(cli.main, ["init", str(tmp_path / "demo"), *args], input="\n")
     assert result.exit_code == 0, result.output
     return captured, result.output
 
@@ -58,9 +56,7 @@ def test_update_passed_through(monkeypatch, tmp_path):
 
 
 def test_update_hint_suppressed_on_windows(monkeypatch, tmp_path):
-    captured, output = _invoke_init(
-        monkeypatch, tmp_path, ["--update"], platform="win32"
-    )
+    captured, output = _invoke_init(monkeypatch, tmp_path, ["--update"], platform="win32")
 
     assert captured["enable_update"] is True
     assert "polkit" not in output
@@ -81,9 +77,7 @@ def test_plain_init_has_no_update(monkeypatch, tmp_path):
 
 
 def test_display_name_passed_through(monkeypatch, tmp_path):
-    captured, _ = _invoke_init(
-        monkeypatch, tmp_path, ["--name", "我的应用"], ""
-    )
+    captured, _ = _invoke_init(monkeypatch, tmp_path, ["--name", "我的应用"], "")
 
     assert captured["display_name"] == "我的应用"
 
@@ -256,5 +250,7 @@ def test_pick_fastest_from_nrm_output():
 
 
 def test_pick_fastest_from_nrm_output_all_failed():
-    output = "  npmMirror ---- 1265 ms (Fetch error, if this is your private registry, please ignore)\n"
+    output = (
+        "  npmMirror ---- 1265 ms (Fetch error, if this is your private registry, please ignore)\n"
+    )
     assert init_module._pick_fastest_from_nrm_output(output) == ("", None)

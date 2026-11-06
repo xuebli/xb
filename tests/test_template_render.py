@@ -31,9 +31,18 @@ from xb.utils.template_engine import TemplateEngine
 COMBOS = list(itertools.product([False, True], repeat=3))
 
 
-def _render(tmp_path, enable_terminal, enable_update, enable_logs=False,
-            display_name=None, backend_port=None, enable_csv_test=False,
-            enable_feishu_auth=False, enable_feishu_notify=False, enable_feishu_bitable=False):
+def _render(
+    tmp_path,
+    enable_terminal,
+    enable_update,
+    enable_logs=False,
+    display_name=None,
+    backend_port=None,
+    enable_csv_test=False,
+    enable_feishu_auth=False,
+    enable_feishu_notify=False,
+    enable_feishu_bitable=False,
+):
     target = tmp_path / "demo"
     TemplateEngine().render_project(
         target_dir=target,
@@ -86,7 +95,9 @@ def test_frontend_and_launcher_regressions(tmp_path):
     app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
     assert "currentPage.value = 'settingsView'" in app_vue
 
-    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(encoding="utf-8")
+    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(
+        encoding="utf-8"
+    )
     assert "updatePanelRef.value?.handleCheckUpdate" in badge
 
     vite = (target / "frontend" / "vite.config.js").read_text(encoding="utf-8")
@@ -99,7 +110,9 @@ def test_frontend_and_launcher_regressions(tmp_path):
 
     electron_main = (target / "electron" / "main.js").read_text(encoding="utf-8")
     assert "后端进程运行中退出" in electron_main
-    uninstaller = (target / "electron" / "resources" / "uninstaller.nsh").read_text(encoding="utf-8")
+    uninstaller = (target / "electron" / "resources" / "uninstaller.nsh").read_text(
+        encoding="utf-8"
+    )
     assert "[[ package_name]]-electron" not in uninstaller  # 渲染后应为真实包名
     assert "-electron" in uninstaller
 
@@ -107,8 +120,13 @@ def test_frontend_and_launcher_regressions(tmp_path):
 def test_legacy_config_api_preserves_yaml_comments(tmp_path):
     target = _render(tmp_path, False, True)
     config_api = (target / "backend" / "api" / "config.py").read_text(encoding="utf-8")
-    assert "dump_yaml_with_labels(config, parse_yaml_labels(config_file), config_file)" in config_api
-    assert "dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_file), secrets_file)" in config_api
+    assert (
+        "dump_yaml_with_labels(config, parse_yaml_labels(config_file), config_file)" in config_api
+    )
+    assert (
+        "dump_yaml_with_labels(secrets, parse_yaml_labels(secrets_file), secrets_file)"
+        in config_api
+    )
     assert "yaml.safe_dump(config" not in config_api
     assert "obfuscate_file_plain_secrets" in config_api
 
@@ -203,7 +221,7 @@ def test_version_manager_syncs_uv_lock(tmp_path):
 
     uv_lock = target / "uv.lock"
     uv_lock.write_text(
-        'version = 1\n\n'
+        "version = 1\n\n"
         '[[package]]\nname = "fastapi"\nversion = "0.100.0"\n'
         'source = { registry = "https://example.com" }\n\n'
         '[[package]]\nname = "demo"\nversion = "1.0.0"\n'
@@ -213,6 +231,7 @@ def test_version_manager_syncs_uv_lock(tmp_path):
 
     # 直接加载渲染出的脚本，验证真实行为而非仅字符串
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("version_manager", vm_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -233,17 +252,23 @@ def test_polkit_headless_server_support(tmp_path):
     """polkit 无头服务适配：rules 无 local/active 约束（systemd 服务不属 logind 会话）；
     helper 装完 DEB try-restart 服务 + server-service action（update 与非 update 项目都有）。"""
     target = _render(tmp_path, False, True)
-    rules = (target / "electron" / "resources" / "polkit" / "privileged.rules").read_text(encoding="utf-8")
+    rules = (target / "electron" / "resources" / "polkit" / "privileged.rules").read_text(
+        encoding="utf-8"
+    )
     assert "subject.local &&" not in rules
     assert "subject.active &&" not in rules
 
-    helper = (target / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(encoding="utf-8")
+    helper = (target / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(
+        encoding="utf-8"
+    )
     assert 'try-restart "${APP}-server.service"' in helper
     assert "server-service)" in helper
 
     # 非 update 项目：无 install-update/try-restart，但 server-service 保留
     target2 = _render(tmp_path / "plain", False, False)
-    helper2 = (target2 / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(encoding="utf-8")
+    helper2 = (target2 / "electron" / "resources" / "polkit" / "privileged-helper.sh").read_text(
+        encoding="utf-8"
+    )
     assert "install-update" not in helper2
     assert "try-restart" not in helper2
     assert "server-service)" in helper2
@@ -285,7 +310,9 @@ def test_update_windows_install_chain(tmp_path):
     assert "UpdateInstall" in doc
 
     # 网页模式（无头服务）更新闭环：不关闭窗口，轮询服务恢复后自动刷新
-    panel = (target / "frontend" / "src" / "components" / "version" / "UpdatePanel.vue").read_text(encoding="utf-8")
+    panel = (target / "frontend" / "src" / "components" / "version" / "UpdatePanel.vue").read_text(
+        encoding="utf-8"
+    )
     assert "window.desktopBridge" in panel
     assert "服务将自动重启" in panel
     assert "window.location.reload()" in panel
@@ -319,9 +346,7 @@ def test_server_deployment_template(tmp_path):
     assert "[[" not in doc
 
 
-@pytest.mark.parametrize(
-    ("enable_terminal", "enable_update", "enable_logs"), COMBOS
-)
+@pytest.mark.parametrize(("enable_terminal", "enable_update", "enable_logs"), COMBOS)
 def test_render_project_matrix(tmp_path, enable_terminal, enable_update, enable_logs):
     target = _render(tmp_path, enable_terminal, enable_update, enable_logs)
 
@@ -426,9 +451,7 @@ def test_network_defaults_lan_ready(tmp_path):
     assert "getLocalIP()" in vite
     assert "127.0.0.1:${VITE_DEV_PORT}" not in vite
 
-    terminal = (target / "backend" / "api" / "terminal" / "routes.py").read_text(
-        encoding="utf-8"
-    )
+    terminal = (target / "backend" / "api" / "terminal" / "routes.py").read_text(encoding="utf-8")
     assert 'is_local_origin(websocket.headers.get("origin"))' in terminal
     assert "code=1008" in terminal
 
@@ -453,10 +476,14 @@ def test_terminal_ssh_mode(tmp_path):
     reqs = (target / "pyproject.toml").read_text(encoding="utf-8")
     assert "paramiko" in reqs
 
-    sessions = (target / "frontend" / "src" / "composables" / "useTerminalSessions.js").read_text(encoding="utf-8")
+    sessions = (target / "frontend" / "src" / "composables" / "useTerminalSessions.js").read_text(
+        encoding="utf-8"
+    )
     assert "type: 'connect'" in sessions and "mode: 'ssh'" in sessions
 
-    panel = (target / "frontend" / "src" / "components" / "TerminalPanel.vue").read_text(encoding="utf-8")
+    panel = (target / "frontend" / "src" / "components" / "TerminalPanel.vue").read_text(
+        encoding="utf-8"
+    )
     assert "ssh-form" in panel
     assert "/api/terminal/mode" in panel
 
@@ -545,9 +572,7 @@ def test_logs_assets(tmp_path):
     assert "{ id: 'logs', label: '日志'" in app_vue
 
     # 前端不引入新 npm 依赖（SSE 用原生 EventSource）
-    frontend_pkg = json.loads(
-        (target / "frontend" / "package.json").read_text(encoding="utf-8")
-    )
+    frontend_pkg = json.loads((target / "frontend" / "package.json").read_text(encoding="utf-8"))
     assert "echarts" not in frontend_pkg["dependencies"]
 
     plain = _render(tmp_path / "plain", False, False, False)
@@ -670,9 +695,7 @@ def test_settings_assets(tmp_path):
 
 def test_display_name_defaults_to_capitalized_package(tmp_path):
     target = _render(tmp_path, False, False)
-    assert "<title>Demo</title>" in (target / "frontend" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    assert "<title>Demo</title>" in (target / "frontend" / "index.html").read_text(encoding="utf-8")
 
 
 def test_ports_written_to_global_config(tmp_path):
@@ -683,9 +706,7 @@ def test_ports_written_to_global_config(tmp_path):
     assert "frontend: 9101" in config
 
     default = _render(tmp_path / "d", False, False)
-    default_config = (default / "configs" / "global_config.yaml").read_text(
-        encoding="utf-8"
-    )
+    default_config = (default / "configs" / "global_config.yaml").read_text(encoding="utf-8")
     assert "backend: 8000" in default_config
     assert "frontend: 5173" in default_config
 
@@ -696,9 +717,9 @@ def test_display_name_with_quotes_and_chinese(tmp_path):
     target = _render(tmp_path, False, True, display_name=display_name)
 
     # HTML 文案直接使用显示名
-    assert f"<title>{display_name}</title>" in (
-        target / "frontend" / "index.html"
-    ).read_text(encoding="utf-8")
+    assert f"<title>{display_name}</title>" in (target / "frontend" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     # electron/package.json 必须是合法 JSON 且 description 正确
     pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
@@ -755,7 +776,9 @@ def test_web_version_manager_requires_session_token(tmp_path):
         with pytest.raises(urllib.error.HTTPError) as wrong:
             urllib.request.urlopen(post({"action": "skip", "token": "wrong"}), timeout=5)
         assert wrong.value.code == 403
-        with urllib.request.urlopen(post({"action": "noop", "token": token}), timeout=5) as response:
+        with urllib.request.urlopen(
+            post({"action": "noop", "token": token}), timeout=5
+        ) as response:
             assert json.loads(response.read()) == {"ok": True}
     finally:
         server.shutdown()
@@ -772,16 +795,18 @@ def test_postinst_never_chowns_symlink_targets(tmp_path):
     source = postinst_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "chown_tree"
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "chown_tree"
     )
     lchown = Mock()
     namespace = {
         "os": SimpleNamespace(lchown=lchown),
-        "pwd": SimpleNamespace(
-            getpwnam=lambda _user: SimpleNamespace(pw_uid=123, pw_gid=456)
-        ),
+        "pwd": SimpleNamespace(getpwnam=lambda _user: SimpleNamespace(pw_uid=123, pw_gid=456)),
     }
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(postinst_path), "exec"), namespace)
+    exec(
+        compile(ast.Module(body=[function], type_ignores=[]), str(postinst_path), "exec"), namespace
+    )
 
     config = tmp_path / "config"
     config.mkdir()
@@ -827,19 +852,14 @@ def test_polkit_assets_with_update(tmp_path):
     # 并用 program 白名单限定只对 privileged-helper 生效
     rules = (polkit_dir / "privileged.rules").read_text(encoding="utf-8")
     assert 'action.id == "org.freedesktop.policykit.exec"' in rules
-    assert (
-        'action.lookup("program") == "/usr/local/share/demo/privileged-helper"'
-        in rules
-    )
+    assert 'action.lookup("program") == "/usr/local/share/demo/privileged-helper"' in rules
     assert "isInGroup" in rules
     assert "com.demo.privileged" not in rules
 
     # managers 导出统一特权入口
     init = (target / "backend" / "managers" / "__init__.py").read_text(encoding="utf-8")
     assert "privileged_manager" in init
-    mgr = (target / "backend" / "managers" / "privileged_manager.py").read_text(
-        encoding="utf-8"
-    )
+    mgr = (target / "backend" / "managers" / "privileged_manager.py").read_text(encoding="utf-8")
     compile(mgr, "privileged_manager.py", "exec")
     assert 'HELPER = Path("/usr/local/share/demo/privileged-helper")' in mgr
 
@@ -881,15 +901,14 @@ def test_polkit_assets_standard_without_update(tmp_path):
     policy = ET.parse(polkit_dir / "privileged.policy").getroot()
     assert policy.find("action").get("id") == "com.demo.privileged"
     rules = (polkit_dir / "privileged.rules").read_text(encoding="utf-8")
-    assert (
-        'action.lookup("program") == "/usr/local/share/demo/privileged-helper"'
-        in rules
-    )
+    assert 'action.lookup("program") == "/usr/local/share/demo/privileged-helper"' in rules
     helper = (polkit_dir / "privileged-helper.sh").read_text(encoding="utf-8")
     assert "install-update" not in helper and "dpkg" not in helper
-    compile((target / "backend" / "managers" / "privileged_manager.py").read_text(
-        encoding="utf-8"
-    ), "privileged_manager.py", "exec")
+    compile(
+        (target / "backend" / "managers" / "privileged_manager.py").read_text(encoding="utf-8"),
+        "privileged_manager.py",
+        "exec",
+    )
     # managers 统一导出特权入口
     init = (target / "backend" / "managers" / "__init__.py").read_text(encoding="utf-8")
     assert "privileged_manager" in init
@@ -901,9 +920,7 @@ def test_polkit_assets_standard_without_update(tmp_path):
 
     # DEB 打包仍带 polkit 目录
     pkg = json.loads((target / "electron" / "package.json").read_text(encoding="utf-8"))
-    assert any(
-        r.get("from") == "resources/polkit" for r in pkg["build"]["extraResources"]
-    )
+    assert any(r.get("from") == "resources/polkit" for r in pkg["build"]["extraResources"])
 
     # 更新链路不生成，dev.py 的 polkit 管理命令可用
     assert not (target / "backend" / "services" / "updater.py").exists()
@@ -956,7 +973,9 @@ def test_csv_test_assets(tmp_path):
         assert (target / rel).exists(), f"缺少文件 {rel}"
 
     # 数据看板：归档写结构化 result.json + 聚合路由
-    report = (target / "backend" / "services" / "factory_test" / "report.py").read_text(encoding="utf-8")
+    report = (target / "backend" / "services" / "factory_test" / "report.py").read_text(
+        encoding="utf-8"
+    )
     assert "result.json" in report
     routes = (target / "backend" / "api" / "factory_test" / "routes.py").read_text(encoding="utf-8")
     assert '"/dashboard"' in routes
@@ -968,7 +987,9 @@ def test_csv_test_assets(tmp_path):
     assert "services.factory_test" in build_py and "schemas.factory_test" in build_py
 
     # 引擎不绑硬件：无 pyserial、无烧录/飞书残留
-    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(
+        encoding="utf-8"
+    )
     assert "serial_channel" not in runner and "upload_queue" not in runner
     assert "pyserial" not in (target / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -978,7 +999,9 @@ def test_csv_test_assets(tmp_path):
     assert "demo_echo" in csv_text and "delay:2" in csv_text
 
     # commands.py 注册了 demo_echo 示例指令
-    commands = (target / "backend" / "services" / "factory_test" / "commands.py").read_text(encoding="utf-8")
+    commands = (target / "backend" / "services" / "factory_test" / "commands.py").read_text(
+        encoding="utf-8"
+    )
     assert 'command_registry.register("demo_echo"' in commands
 
     # 前端：主页 + 6 组件（含看板面板） + API 客户端 + 导航
@@ -992,11 +1015,17 @@ def test_csv_test_assets(tmp_path):
         "frontend/src/components/factory_test/TestLogPanel.vue",
     ):
         assert (target / rel).exists(), f"缺少文件 {rel}"
-    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(encoding="utf-8")
+    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(
+        encoding="utf-8"
+    )
     assert "getDashboard" in api_js
-    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(
+        encoding="utf-8"
+    )
     assert "TestDataViewer" not in view  # 历史报告并入看板页，产测页不再有入口
-    assert not (target / "frontend" / "src" / "components" / "factory_test" / "TestDataViewer.vue").exists()
+    assert not (
+        target / "frontend" / "src" / "components" / "factory_test" / "TestDataViewer.vue"
+    ).exists()
     dash = (target / "frontend" / "src" / "views" / "DashboardView.vue").read_text(encoding="utf-8")
     assert "openViewer" in dash and "sandbox=" in dash  # 记录行内报告/日志直看
     app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
@@ -1015,11 +1044,15 @@ def test_csv_test_assets(tmp_path):
     assert "'home'" in plain_app and "'dashboard'" not in plain_app
     app_vue = (target / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
     assert "FactoryTestView" in app_vue and "产测" in app_vue
-    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(encoding="utf-8")
+    api_js = (target / "frontend" / "src" / "services" / "factoryTestApi.js").read_text(
+        encoding="utf-8"
+    )
     assert "feishu" not in api_js
 
     # report.py 的板卡名用显示名渲染
-    report_py = (target / "backend" / "services" / "factory_test" / "report.py").read_text(encoding="utf-8")
+    report_py = (target / "backend" / "services" / "factory_test" / "report.py").read_text(
+        encoding="utf-8"
+    )
     assert 'BOARD_NAME = "Demo"' in report_py
 
     # 文档随开关分发
@@ -1031,15 +1064,16 @@ def test_csv_test_assets(tmp_path):
 
     # 人工确认弹窗：开始测试按钮必须无条件显示（准备确认 autoCheck 模式
     # 只有这一个按钮，被门控会让弹窗无按钮且无法关闭，测试卡死）
-    banner = (target / "frontend" / "src" / "components" / "factory_test" / "ManualConfirmBanner.vue").read_text(
-        encoding="utf-8"
-    )
+    banner = (
+        target / "frontend" / "src" / "components" / "factory_test" / "ManualConfirmBanner.vue"
+    ).read_text(encoding="utf-8")
     assert 'class="btn btn-start"' in banner
     assert "isKeyTest" not in banner
     assert not re.search(r'<button[^>]*v-if="!autoCheck"[^>]*class="btn btn-start"', banner)
 
     # demo CSV 可被生成的 definition 表头解析（用 pandas-free 手工断言）
     import csv as csv_module
+
     with open(target / "configs" / "test_plan.csv", encoding="utf-8") as f:
         rows = list(csv_module.DictReader(f))
     assert len(rows) >= 4
@@ -1081,9 +1115,9 @@ def test_factory_polling_is_serial_and_cancelable(tmp_path):
 def test_history_report_preview_is_sandboxed(tmp_path):
     target = _render(tmp_path, False, False, enable_csv_test=True)
     # 报告预览在看板页的查看器里（TestDataViewer 已并入 DashboardView）
-    viewer = (
-        target / "frontend" / "src" / "views" / "DashboardView.vue"
-    ).read_text(encoding="utf-8")
+    viewer = (target / "frontend" / "src" / "views" / "DashboardView.vue").read_text(
+        encoding="utf-8"
+    )
     assert 'sandbox="allow-scripts"' in viewer
     assert "allow-same-origin" not in viewer
     assert 'referrerpolicy="no-referrer"' in viewer
@@ -1157,10 +1191,14 @@ def test_feishu_notify_template(tmp_path):
     assert "notify_webhook" in svc and "receive_id" in svc
 
     # csv 引擎归档后自动通知（runner 挂钩，前端勾选「飞书通知」才发）
-    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(
+        encoding="utf-8"
+    )
     assert "notify_test_report" in runner
     assert "if notify:" in runner
-    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    view = (target / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(
+        encoding="utf-8"
+    )
     assert "notifyFeishu" in view
     schemas = (target / "backend" / "schemas" / "factory_test.py").read_text(encoding="utf-8")
     assert "notify: bool = False" in schemas
@@ -1183,11 +1221,17 @@ def test_feishu_notify_template(tmp_path):
     plain = _render(tmp_path / "plain", False, False, enable_csv_test=True)
     assert not (plain / "backend" / "services" / "feishu_notify.py").exists()
     assert not (plain / "docs" / "飞书通知说明.md").exists()
-    plain_runner = (plain / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    plain_runner = (plain / "backend" / "services" / "factory_test" / "runner.py").read_text(
+        encoding="utf-8"
+    )
     assert "notify_test_report" not in plain_runner
-    plain_view = (plain / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(encoding="utf-8")
+    plain_view = (plain / "frontend" / "src" / "views" / "FactoryTestView.vue").read_text(
+        encoding="utf-8"
+    )
     assert "notifyFeishu" not in plain_view  # 无通知功能的项目不显示勾选框
-    assert "notify_webhook" not in (plain / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert "notify_webhook" not in (plain / "configs" / "secrets.yaml.example").read_text(
+        encoding="utf-8"
+    )
     assert not (plain / "backend" / "api" / "notify.py").exists()
     plain_app = (plain / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
     assert "testNotify" not in plain_app
@@ -1202,8 +1246,10 @@ def test_feishu_bitable_template(tmp_path):
     compile(svc, "feishu_bitable.py", "exec")
     assert "parse_bitable_url" in svc
     assert "重命名" in svc and "空白行" in svc  # 默认主字段改名 + 空白行清理
-    assert "bitable_file" in svc              # 附件上传
-    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(encoding="utf-8")
+    assert "bitable_file" in svc  # 附件上传
+    runner = (target / "backend" / "services" / "factory_test" / "runner.py").read_text(
+        encoding="utf-8"
+    )
     assert "write_test_session" in runner and "if notify:" in runner
     secrets = (target / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
     assert "bitable_url" in secrets
@@ -1212,5 +1258,7 @@ def test_feishu_bitable_template(tmp_path):
     # 未启用：全部缺席
     plain = _render(tmp_path / "plain", False, False, enable_csv_test=True)
     assert not (plain / "backend" / "services" / "feishu_bitable.py").exists()
-    assert "bitable_url" not in (plain / "configs" / "secrets.yaml.example").read_text(encoding="utf-8")
+    assert "bitable_url" not in (plain / "configs" / "secrets.yaml.example").read_text(
+        encoding="utf-8"
+    )
     assert not (plain / "docs" / "飞书多维表格说明.md").exists()

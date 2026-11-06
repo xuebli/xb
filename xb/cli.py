@@ -20,9 +20,7 @@ console = Console()
 COMMAND_ORDER = ["doctor", "init", "add", "dev", "build", "version", "upgrade"]
 
 
-def _upgrade_callback(
-    ctx: click.Context, _param: click.Parameter, requested: bool
-) -> None:
+def _upgrade_callback(ctx: click.Context, _param: click.Parameter, requested: bool) -> None:
     """在 Click 校验子命令前处理全局升级选项。"""
     if not requested or ctx.resilient_parsing:
         return

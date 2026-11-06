@@ -70,9 +70,13 @@ def test_node_21_is_rejected(monkeypatch):
         "git": "git version 2.43.0",
         "nrm": "2.0.0",
     }
-    monkeypatch.setattr(doctor_module, "_command_version", lambda command, args=None: versions.get(command))
+    monkeypatch.setattr(
+        doctor_module, "_command_version", lambda command, args=None: versions.get(command)
+    )
     monkeypatch.setattr(doctor_module.shutil, "which", lambda command: f"/bin/{command}")
-    monkeypatch.setattr(doctor_module, "_git_global_config", lambda key: "xb" if key == "user.name" else "x@b.c")
+    monkeypatch.setattr(
+        doctor_module, "_git_global_config", lambda key: "xb" if key == "user.name" else "x@b.c"
+    )
 
     checks = doctor_module._collect_checks()
     node = next(item for item in checks if item.name == "Node.js")
@@ -100,10 +104,12 @@ def test_doctor_fix_git_identity(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0)
 
     # 首次检查失败，修复成功后复查通过。
-    iter_values = iter([
-        [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
-        [CheckResult("git 身份", True, "张三 <zhangsan@test.com>", fixable=True)],
-    ])
+    iter_values = iter(
+        [
+            [CheckResult("git 身份", False, "未配置 user.name, user.email", fixable=True)],
+            [CheckResult("git 身份", True, "张三 <zhangsan@test.com>", fixable=True)],
+        ]
+    )
 
     def fake_checks():
         return next(iter_values)

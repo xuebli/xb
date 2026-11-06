@@ -8,8 +8,7 @@ def make_form(cli=None):
 
 
 def _cursor_key(form, key):
-    form.cursor = next(
-        i for i, r in enumerate(form.rows) if r["key"] == key)
+    form.cursor = next(i for i, r in enumerate(form.rows) if r["key"] == key)
 
 
 def test_toggle_switches_rows():
@@ -113,15 +112,18 @@ def test_backspace_only_on_checked_text_row():
 
 
 def test_run_config_form_skipped_when_not_tty():
-    result = run_config_form("demo", {
-        "display_name": None,
-        "port": 9100,
-        "terminal": True,
-        "update": True,
-        "logs": True,
-        "icon": None,
-        "skip_install": False,
-    })
+    result = run_config_form(
+        "demo",
+        {
+            "display_name": None,
+            "port": 9100,
+            "terminal": True,
+            "update": True,
+            "logs": True,
+            "icon": None,
+            "skip_install": False,
+        },
+    )
     # 非 tty 环境跳过表单，CLI 值原样透传
     assert result["port"] == 9100
     assert result["terminal"] is True

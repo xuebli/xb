@@ -72,9 +72,7 @@ def _load_updater(monkeypatch, path: Path):
 
 def test_update_hash_is_strict_sha256(monkeypatch, render_project, tmp_path):
     target = render_project("updatable_app", enable_update=True)
-    updater = _load_updater(
-        monkeypatch, target / "backend" / "services" / "updater.py"
-    )
+    updater = _load_updater(monkeypatch, target / "backend" / "services" / "updater.py")
     service = updater.UpdateService()
     package = tmp_path / "app.deb"
     payload = b"signed-package-content"
@@ -156,11 +154,7 @@ def test_startup_sync_reads_bundled_overwrite_declarations(monkeypatch, render_p
     bundled.mkdir()
     user.mkdir()
     (bundled / "config_changes.json").write_text(
-        json.dumps({
-            "1.0.0": {
-                "files": [{"action": "overwrite", "filename": "test_plan.csv"}]
-            }
-        }),
+        json.dumps({"1.0.0": {"files": [{"action": "overwrite", "filename": "test_plan.csv"}]}}),
         encoding="utf-8",
     )
     (bundled / "test_plan.csv").write_text("new-plan", encoding="utf-8")
@@ -177,6 +171,7 @@ def test_startup_sync_reads_bundled_overwrite_declarations(monkeypatch, render_p
 
 def _load_update_api(monkeypatch, path: Path, update_service):
     """加载更新路由并隔离 Web 框架，直接验证安装编排顺序。"""
+
     class StubHTTPExceptionError(Exception):
         def __init__(self, status_code, detail):
             super().__init__(detail)
@@ -221,9 +216,7 @@ def _load_update_api(monkeypatch, path: Path, update_service):
 
 def test_update_migration_failure_blocks_install(monkeypatch, render_project):
     target = render_project("updatable_app", enable_update=True)
-    api_source = (target / "backend" / "api" / "update" / "__init__.py").read_text(
-        encoding="utf-8"
-    )
+    api_source = (target / "backend" / "api" / "update" / "__init__.py").read_text(encoding="utf-8")
     # 路由内全部是同步 I/O，交给 FastAPI 线程池执行，不能占住事件循环。
     assert "async def" not in api_source
     service = Mock()
@@ -279,7 +272,9 @@ def test_init_without_update_skips_update_files(render_project):
         encoding="utf-8"
     )
     assert "import CommitHistoryPanel from './version/CommitHistoryPanel.vue'" in badge
-    assert (target / "frontend" / "src" / "components" / "version" / "CommitHistoryPanel.vue").exists()
+    assert (
+        target / "frontend" / "src" / "components" / "version" / "CommitHistoryPanel.vue"
+    ).exists()
 
 
 def test_init_with_update_renders_update_files(render_project):
@@ -292,7 +287,9 @@ def test_init_with_update_renders_update_files(render_project):
     json.loads((target / "configs" / "config_changes.json").read_text(encoding="utf-8"))
 
     # main.py 注册了更新路由
-    assert "app.include_router(update_router" in (target / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "app.include_router(update_router" in (target / "backend" / "main.py").read_text(
+        encoding="utf-8"
+    )
 
     # secret_obfuscator 与 feishu_upload 的混淆密钥保持一致
     obf = (target / "backend" / "managers" / "secret_obfuscator.py").read_text(encoding="utf-8")
@@ -312,7 +309,9 @@ def test_init_with_update_renders_update_files(render_project):
     assert "_upload_stage" in build
 
     # App.vue 挂载的 GitVersionBadge 集成了更新面板
-    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(encoding="utf-8")
+    badge = (target / "frontend" / "src" / "components" / "GitVersionBadge.vue").read_text(
+        encoding="utf-8"
+    )
     assert "UpdatePanel" in badge
     assert "CommitHistoryPanel" in badge
 
@@ -324,7 +323,7 @@ def test_init_with_update_renders_update_files(render_project):
     assert "版本信息未提供 SHA256 哈希" in updater
     assert '"/bin/bash", "-c"' not in updater
     assert 'path_manager.reload_config(item["filename"])' in updater
-    assert 'safe_name = Path(filename).name' in updater
+    assert "safe_name = Path(filename).name" in updater
 
     update_api = (target / "backend" / "api" / "update" / "__init__.py").read_text(encoding="utf-8")
     assert "hit_blocks" in update_api

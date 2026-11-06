@@ -61,8 +61,7 @@ class TemplateEngine:
         # 都有 favicon/窗口图标/安装包图标，不再退回 Electron 默认图标
         if icon_path is None:
             icon_path = (
-                Path(__file__).resolve().parent.parent
-                / "templates" / "assets" / "app-icon.png"
+                Path(__file__).resolve().parent.parent / "templates" / "assets" / "app-icon.png"
             )
         context = {
             "package_name": package_name,
@@ -108,9 +107,7 @@ class TemplateEngine:
         self._render_template(
             "backend/api/config.py.j2", backend_dir / "api" / "config.py", context
         )
-        self._render_template(
-            "backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context
-        )
+        self._render_template("backend/api/ports.py.j2", backend_dir / "api" / "ports.py", context)
 
         if context["enable_terminal"]:
             terminal_dir = backend_dir / "api" / "terminal"
@@ -328,7 +325,9 @@ class TemplateEngine:
         # csv-test 项目没有首页（看板即首页），DashboardHome 不生成
         if not context["enable_csv_test"]:
             self._render_template(
-                "frontend/src/components/DashboardHome.vue.j2", components_dir / "DashboardHome.vue", context
+                "frontend/src/components/DashboardHome.vue.j2",
+                components_dir / "DashboardHome.vue",
+                context,
             )
         self._render_template(
             "frontend/src/components/ThemeToggle.vue.j2",
@@ -450,7 +449,10 @@ class TemplateEngine:
         self._render_template("electron/package.json.j2", electron_dir / "package.json", context)
 
         self._render_template(
-            "electron/resources/postinst.py.j2", resources_dir / "postinst.py", context, executable=True
+            "electron/resources/postinst.py.j2",
+            resources_dir / "postinst.py",
+            context,
+            executable=True,
         )
         self._render_template(
             "electron/resources/postrm.py.j2", resources_dir / "postrm.py", context, executable=True
@@ -495,7 +497,6 @@ class TemplateEngine:
             systemd_dir / f"{context['package_name']}-server@.service",
             context,
         )
-
 
     def _copy_app_icon(self, output_path: Path, context: Dict[str, Any]):
         icon_path = context.get("icon_path")
@@ -557,9 +558,7 @@ class TemplateEngine:
         )
         # 同步生成一份 secrets.yaml：dev 模式设置页立即出现密钥框，build 的
         # example 同步也不再缺文件；该文件在 .gitignore 中，不会进仓库
-        shutil.copy2(
-            configs_dir / "secrets.yaml.example", configs_dir / "secrets.yaml"
-        )
+        shutil.copy2(configs_dir / "secrets.yaml.example", configs_dir / "secrets.yaml")
         if context["enable_update"]:
             self._render_template(
                 "configs/config_changes.json.j2",
@@ -586,7 +585,6 @@ class TemplateEngine:
                 context,
                 executable=True,
             )
-
 
     def _create_version(self, target_dir: Path, context: Dict[str, Any]):
         version_dir = target_dir / "version"

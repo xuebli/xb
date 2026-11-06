@@ -87,12 +87,8 @@ def install_upgrade(target_version: str) -> bool:
     installed_version = _installed_xb_version(xb_entry) if xb_entry else None
     if installed_version != target_version:
         actual = installed_version or "无法读取"
-        console.print(
-            f"[red]❌ 升级校验失败：目标 {target_version}，实际 {actual}。[/red]"
-        )
-        console.print(
-            "[yellow]请检查 uv 软件源配置与命令搜索路径，未继续重启。[/yellow]"
-        )
+        console.print(f"[red]❌ 升级校验失败：目标 {target_version}，实际 {actual}。[/red]")
+        console.print("[yellow]请检查 uv 软件源配置与命令搜索路径，未继续重启。[/yellow]")
         return False
 
     console.print(f"[green]✅ 已升级到 xb-init {target_version}[/green]")

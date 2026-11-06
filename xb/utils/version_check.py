@@ -116,7 +116,9 @@ def fetch_latest_from_pypi(timeout: float = HTTP_TIMEOUT_BG_SECONDS) -> Optional
     return _fetch_latest_from_pypi(timeout=timeout)
 
 
-def run_check_and_write_cache(current_version: str, timeout: float = HTTP_TIMEOUT_BG_SECONDS) -> None:
+def run_check_and_write_cache(
+    current_version: str, timeout: float = HTTP_TIMEOUT_BG_SECONDS
+) -> None:
     """同步拉 PyPI 写缓存。绝不抛异常。
 
     后台子进程入口（`python -m xb.utils.version_check <ver>`），

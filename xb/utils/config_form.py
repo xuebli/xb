@@ -31,69 +31,93 @@ class ConfigForm:
 
         rows = [
             {
-                "key": "display_name", "label": "应用显示名", "type": "text",
+                "key": "display_name",
+                "label": "应用显示名",
+                "type": "text",
                 "checked": False,
                 "value": str(cli.get("display_name") or package.capitalize()),
                 "default": package.capitalize(),
                 "placeholder": "",
             },
             {
-                "key": "port", "label": "端口（后端/前端）", "type": "text",
+                "key": "port",
+                "label": "端口（后端/前端）",
+                "type": "text",
                 "checked": False,
                 "value": str(cli.get("port") or 8000),
                 "default": "8000",
                 "placeholder": "",
             },
         ]
-        rows.extend([
-            {
-                "key": "terminal", "label": "内置终端", "type": "toggle",
-                "checked": bool(cli.get("terminal")),
-                "hint": "Web 终端组件",
-            },
-            {
-                "key": "update", "label": "应用内更新", "type": "toggle",
-                "checked": bool(cli.get("update")),
-                "hint": "Ubuntu 更新安装走 polkit 免密提权",
-            },
-            {
-                "key": "logs", "label": "日志中心", "type": "toggle",
-                "checked": bool(cli.get("logs")),
-                "hint": "实时查看后端日志，排障刚需",
-            },
-            {
-                "key": "csv_test", "label": "CSV 测试引擎", "type": "toggle",
-                "checked": bool(cli.get("csv_test")),
-                "hint": "产测专用：CSV 测试项 + HTML 报告",
-            },
-            {
-                "key": "feishu_auth", "label": "飞书登录", "type": "toggle",
-                "checked": bool(cli.get("feishu_auth")),
-                "hint": "OAuth 扫码登录 + 单会话制，多人协作/服务器部署用",
-            },
-            {
-                "key": "feishu_notify", "label": "飞书群通知", "type": "toggle",
-                "checked": bool(cli.get("feishu_notify")),
-                "hint": "webhook 只发文字 / 自建应用可发文件附件",
-            },
-            {
-                "key": "feishu_bitable", "label": "飞书多维表格", "type": "toggle",
-                "checked": bool(cli.get("feishu_bitable")),
-                "hint": "测试数据写入多维表格（自动建字段/附件上传）",
-            },
-            {
-                "key": "icon", "label": "应用图标", "type": "text",
-                "checked": False,
-                "value": str(cli.get("icon") or ""),
-                "default": "使用默认",
-                "placeholder": "PNG 路径",
-            },
-            {
-                "key": "skip_install", "label": "跳过依赖安装", "type": "toggle",
-                "checked": bool(cli.get("skip_install")),
-                "hint": "离线环境可跳过",
-            },
-        ])
+        rows.extend(
+            [
+                {
+                    "key": "terminal",
+                    "label": "内置终端",
+                    "type": "toggle",
+                    "checked": bool(cli.get("terminal")),
+                    "hint": "Web 终端组件",
+                },
+                {
+                    "key": "update",
+                    "label": "应用内更新",
+                    "type": "toggle",
+                    "checked": bool(cli.get("update")),
+                    "hint": "Ubuntu 更新安装走 polkit 免密提权",
+                },
+                {
+                    "key": "logs",
+                    "label": "日志中心",
+                    "type": "toggle",
+                    "checked": bool(cli.get("logs")),
+                    "hint": "实时查看后端日志，排障刚需",
+                },
+                {
+                    "key": "csv_test",
+                    "label": "CSV 测试引擎",
+                    "type": "toggle",
+                    "checked": bool(cli.get("csv_test")),
+                    "hint": "产测专用：CSV 测试项 + HTML 报告",
+                },
+                {
+                    "key": "feishu_auth",
+                    "label": "飞书登录",
+                    "type": "toggle",
+                    "checked": bool(cli.get("feishu_auth")),
+                    "hint": "OAuth 扫码登录 + 单会话制，多人协作/服务器部署用",
+                },
+                {
+                    "key": "feishu_notify",
+                    "label": "飞书群通知",
+                    "type": "toggle",
+                    "checked": bool(cli.get("feishu_notify")),
+                    "hint": "webhook 只发文字 / 自建应用可发文件附件",
+                },
+                {
+                    "key": "feishu_bitable",
+                    "label": "飞书多维表格",
+                    "type": "toggle",
+                    "checked": bool(cli.get("feishu_bitable")),
+                    "hint": "测试数据写入多维表格（自动建字段/附件上传）",
+                },
+                {
+                    "key": "icon",
+                    "label": "应用图标",
+                    "type": "text",
+                    "checked": False,
+                    "value": str(cli.get("icon") or ""),
+                    "default": "使用默认",
+                    "placeholder": "PNG 路径",
+                },
+                {
+                    "key": "skip_install",
+                    "label": "跳过依赖安装",
+                    "type": "toggle",
+                    "checked": bool(cli.get("skip_install")),
+                    "hint": "离线环境可跳过",
+                },
+            ]
+        )
         self.rows = rows
         # CLI 显式传的文本参数视为"已确认"，直接勾上
         for row in self.rows:
@@ -135,8 +159,7 @@ class ConfigForm:
                     shown = r["value"] or r["default"]
                 if r["checked"]:
                     caret = "█" if i == self.cursor else ""
-                    line = (f"{pointer}{box} {r['label']} : "
-                            f"{BOLD}[ {shown}{caret} ]{RESET}")
+                    line = f"{pointer}{box} {r['label']} : " f"{BOLD}[ {shown}{caret} ]{RESET}"
                 else:
                     line = f"{pointer}{box} {r['label']} : {DIM}{shown}{RESET}"
             else:
@@ -250,8 +273,7 @@ class ConfigForm:
             if raw:
                 import termios
 
-                termios.tcsetattr(
-                    sys.stdin.fileno(), termios.TCSADRAIN, old)
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
         return self.collect()
 
@@ -268,8 +290,7 @@ class ConfigForm:
                 port = int(value)
             else:
                 port_row["checked"] = False
-                self.message = (
-                    f"端口 {port_row['value'] or '(空)'} 无效，已回退默认 8000/5173")
+                self.message = f"端口 {port_row['value'] or '(空)'} 无效，已回退默认 8000/5173"
 
         update = self._row("update")["checked"]
         logs = self._row("logs")["checked"]
@@ -281,17 +302,20 @@ class ConfigForm:
         print()
         enabled = f"{GREEN}开{RESET}"
         disabled = f"{DIM}关{RESET}"
-        flags = f"  终端: {enabled if self._row('terminal')['checked'] else disabled}" \
-                f"   更新: {enabled if update else disabled}" \
-                f"   日志: {enabled if logs else disabled}" \
-                f"   产测: {enabled if csv_test else disabled}" \
-                f"   飞书登录: {enabled if feishu_auth else disabled}" \
-                f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
+        flags = (
+            f"  终端: {enabled if self._row('terminal')['checked'] else disabled}"
+            f"   更新: {enabled if update else disabled}"
+            f"   日志: {enabled if logs else disabled}"
+            f"   产测: {enabled if csv_test else disabled}"
+            f"   飞书登录: {enabled if feishu_auth else disabled}"
+            f"   依赖: {'跳过' if self._row('skip_install')['checked'] else '安装'}"
+        )
         port_text = f"{port}/{port + 1}" if port else "8000/5173"
         sys.stdout.write(
             f"  {GREEN}✓ 配置确认，开始创建项目 {self.package}{RESET}\n"
             f"  显示名: {display['value'] or display['default']}"
-            f"   端口: {port_text}\n{flags}\n\n")
+            f"   端口: {port_text}\n{flags}\n\n"
+        )
         sys.stdout.flush()
 
         return {

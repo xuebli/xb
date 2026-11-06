@@ -12,7 +12,9 @@ from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
 from ..utils.project import find_project_root
 
 
-def _selected_target(target: str, frontend: bool, backend: bool, electron: bool, all_build: bool) -> str:
+def _selected_target(
+    target: str, frontend: bool, backend: bool, electron: bool, all_build: bool
+) -> str:
     selected_flags = [
         ("frontend", frontend),
         ("backend", backend),

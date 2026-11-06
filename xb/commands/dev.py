@@ -34,8 +34,6 @@ def dev(action: str):
         raise click.Abort()
 
     dev_script = project_root / "dev.py"
-    result = subprocess.run(
-        [sys.executable, str(dev_script), action.lower()], cwd=project_root
-    )
+    result = subprocess.run([sys.executable, str(dev_script), action.lower()], cwd=project_root)
     # 透传 dev.py 的退出码，方便脚本化使用时感知失败
     raise SystemExit(result.returncode)
