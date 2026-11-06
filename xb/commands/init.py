@@ -19,6 +19,7 @@ from rich.prompt import Confirm
 from .. import __version__
 from ..utils.click_helpers import HELP_CONTEXT, ChineseHelpCommand
 from ..utils.config_form import run_config_form
+from ..utils.manifest import save_manifest
 from ..utils.template_engine import TemplateEngine
 from ..utils.validators import validate_package_name
 from ..utils.version_check import get_latest_if_newer
@@ -580,6 +581,30 @@ def init_command(
             console.print(
                 "[yellow]⚠[/yellow]  未检测到 npm，已跳过依赖安装（稍后请手动 npm install）"
             )
+
+        # 写入项目清单（渲染上下文 + 已启用特性），供 xb add 重建纯净模板做三方合并；
+        # 在 git 首个 commit 前写入，清单一并入库
+        enabled_features = [
+            name
+            for name, on in (
+                ("terminal", terminal),
+                ("update", update),
+                ("logs", logs),
+                ("csv-test", csv_test),
+                ("feishu-auth", feishu_auth),
+                ("feishu-notify", feishu_notify),
+                ("feishu-bitable", feishu_bitable),
+            )
+            if on
+        ]
+        work_dir.mkdir(parents=True, exist_ok=True)
+        save_manifest(work_dir, {
+            "xb_version": __version__,
+            "package_name": package_name,
+            "display_name": display_name,
+            "backend_port": port,
+            "features": enabled_features,
+        })
 
         git_ok = init_git_repo(work_dir, package_name)
         git_line = (
