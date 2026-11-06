@@ -65,6 +65,16 @@ def _print_result(result, spec) -> None:
         _files_group(lines, "✚ 新增", len(result.added), result.added, "green")
     if result.merged_clean:
         _files_group(lines, "⇄ 合并", len(result.merged_clean), result.merged_clean, "green")
+    if result.yaml_appended:
+        _files_group(
+            lines,
+            "⇢ 配置追加（只补缺失键）",
+            len(result.yaml_appended),
+            result.yaml_appended,
+            "green",
+        )
+    if result.deleted:
+        _files_group(lines, "🗑 移除", len(result.deleted), result.deleted, "yellow")
     if result.conflicts:
         _files_group(lines, "⚖ 待 AI 裁决", len(result.conflicts), result.conflicts, "yellow")
     if result.missing_infra:
@@ -81,6 +91,12 @@ def _print_result(result, spec) -> None:
         lines.append("")
     if not result.added and not result.merged_clean and not result.conflicts:
         lines.append("[dim]该特性没有需要变更的文件。[/dim]")
+    if result.verified is not None:
+        if result.verified:
+            lines.append(f"[green]✓ 启动验证通过[/green] [dim]{result.verify_note}[/dim]")
+        else:
+            lines.append(f"[red]✗ 启动验证失败[/red] {result.verify_note}")
+        lines.append("")
 
     # 下一步
     if result.dry_run:
@@ -150,7 +166,15 @@ def _maybe_invoke_ai(project_root: Path, result, no_ai: bool) -> None:
     "--skip-install", is_flag=True, default=False, help="跳过依赖自动安装（uv sync / npm install）"
 )
 @click.option("--no-ai", is_flag=True, default=False, help="检测到本机 AI CLI 也不自动唤起")
-def add(feature: str | None, dry_run: bool, force: bool, skip_install: bool, no_ai: bool):
+@click.option(
+    "--verify",
+    is_flag=True,
+    default=False,
+    help="添加后自动启动开发环境验证（探测后端健康端点与特性路由，完成自动停止）",
+)
+def add(
+    feature: str | None, dry_run: bool, force: bool, skip_install: bool, no_ai: bool, verify: bool
+):
     """
     向已有项目增量添加特性（老项目免重建）
 
@@ -177,10 +201,7 @@ def add(feature: str | None, dry_run: bool, force: bool, skip_install: bool, no_
 
     spec = FEATURE_REGISTRY.get(feature)
     if spec is None:
-        console.print(
-            f"[red]✗[/red] 暂不支持特性 '{feature}'"
-            f"（当前支持: {', '.join(FEATURE_REGISTRY)}，其余特性开发中）"
-        )
+        console.print(f"[red]✗[/red] 未知特性 '{feature}'（可用: {', '.join(FEATURE_REGISTRY)}）")
         raise click.Abort()
 
     manifest, inferred = load_or_infer(project_root)
@@ -199,6 +220,7 @@ def add(feature: str | None, dry_run: bool, force: bool, skip_install: bool, no_
             dry_run=dry_run,
             force=force,
             install=not skip_install,
+            verify=verify,
             console=console,
         )
     except AddError as e:

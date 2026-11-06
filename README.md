@@ -142,7 +142,7 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 | 命令 | 说明 |
 |------|------|
 | `xb init <name> [--name 显示名] [--port 9000] [--terminal] [--update] [--logs] [--csv-test] [--feishu-auth] [--feishu-notify] [--feishu-bitable] [--icon PATH] [--skip-install]` | 初始化项目 |
-| `xb add <特性> [--dry-run] [--force] [--skip-install] [--no-ai]` | 向已有项目增量添加特性（当前支持 `logs`/`terminal`，其余陆续开放） |
+| `xb add <特性> [--dry-run] [--force] [--skip-install] [--no-ai] [--verify]` | 向已有项目增量添加特性（`logs`/`terminal`/`update`/`csv-test`/`feishu-auth`/`feishu-notify`/`feishu-bitable`） |
 | `xb dev [start\|stop\|status]` | 启动/停止/查看开发环境 |
 | `xb build [all\|frontend\|backend\|electron]` | 构建项目 |
 | `xb build -f / -b / -e / -a` | 构建快捷 flag |
@@ -155,30 +155,37 @@ Electron 二进制镜像通过 `ELECTRON_MIRROR` 环境变量注入。
 建项目时没勾的特性，事后不用重建项目：
 
 ```bash
-xb add               # 列出可添加的特性及当前状态
+xb add               # 列出全部特性及当前状态
 xb add logs          # 给已有项目加上日志中心
 xb add terminal      # 加上内置 Web 终端（自动 uv sync + npm install）
+xb add feishu-auth   # 加上飞书登录（configs 自动补 auth 段，不动已有配置）
 xb add logs --dry-run   # 只预览变更，不落盘
+xb add update --verify  # 添加后自动启动开发环境验证（探后端健康端点+特性路由）
 ```
 
 **原理**：`xb init` 会写入 `.xb.json` 清单（渲染上下文 + 已启用特性）并随首个
 commit 入库。`xb add` 据此重新渲染"加特性前/后"两份纯净模板做文件树差分：
-新文件直接落地；模板侧有变化的文件（`main.py`/`App.vue` 等缝合点）与你的
-当前代码做 `git merge-file` 三方合并——**你的业务改动全部保留**，只叠加特性
-增量。干净合并直接落盘；语义冲突保留 **diff3 三段标记**（当前代码/原模板/
-新模板），并生成 `xb-add-<特性>-conflicts.md` **AI 裁决任务文件**。
-检测到本机装有 AI CLI（opencode / Claude Code / Codex）时会**询问并直接
-唤起它**读取任务文件完成合并（非交互前台运行，过程全程可见；`--no-ai`
-关闭）；没装则用任意 AI 编码助手打开项目读该文件即可。xb 自身不调任何
-大模型 API——不管 key、代码不出本机，裁决由你已装、已信任的 AI 助手完成。
 
-- 老项目（旧版 xb 生成）基建可能缺新特性依赖的 helper，`xb add` 会检查
-  特性声明的基础设施符号，缺失时写进任务文件让 AI 一并补齐
+- 新文件直接落地（撞名备份 `.xb-backup`）
+- 缝合点文件（`main.py`/`App.vue` 等）与你的当前代码做 `git merge-file`
+  三方合并——**你的业务改动全部保留**，只叠加特性增量
+- YAML 配置（`global_config.yaml`/`secrets.yaml`）做**顶层键追加**：
+  只补特性需要的缺失段（如 `auth:`/`feishu:`），你已填的值和注释原样不动
+- 特性移除的文件（如 csv-test 不生成首页组件）仅在你**没碰过**时才删，
+  改过的跳过并提示
+- 语义冲突保留 **diff3 三段标记**（当前代码/原模板/新模板），并生成
+  `xb-add-<特性>-conflicts.md` **AI 裁决任务文件**。检测到本机装有
+  AI CLI（opencode / Claude Code / Codex）时会**询问并直接唤起它**
+  读取任务文件完成合并（非交互前台运行，过程全程可见；`--no-ai` 关闭）；
+  没装则用任意 AI 编码助手打开项目读该文件即可。xb 自身不调任何大模型
+  API——不管 key、代码不出本机，裁决由你已装、已信任的 AI 助手完成
 
 - 老项目没有 `.xb.json` 时会按特征文件自动推断补写
+- 老项目（旧版 xb 生成）基建可能缺新特性依赖的 helper，`xb add` 会检查
+  特性声明的基础设施符号，缺失时写进任务文件让 AI 一并补齐
 - 前置要求：git 仓库且工作区干净（干净工作区 = 出错可 `git checkout .` 全回滚）
 - 执行后不自动 commit：`git diff` 审查 → 解决冲突（如有）→ 验证 → 自行提交
-- `configs/secrets.yaml` 等用户数据/可再生文件永不参与合并
+- `uv.lock`/`package-lock.json` 等可再生文件不参与合并（装依赖时自动更新）
 - 幂等：重复添加已启用特性直接提示退出
 
 ## 应用图标

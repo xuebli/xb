@@ -294,4 +294,4 @@ def test_add_refuses_non_git_project(tmp_path):
 def test_add_unknown_feature(tmp_path):
     project = _make_project(tmp_path)
     with pytest.raises(AddError, match="未知特性"):
-        _add(project, "feishu-bitable")
+        _add(project, "not-a-feature")

@@ -3,17 +3,27 @@
 原理：
 - base   = 按清单上下文渲染"未启用该特性"的纯净模板
 - theirs = 同上下文渲染"启用该特性"的纯净模板
-- 两者做文件树差分：新增的文件直接落地；内容变化的文件与用户当前代码
-  做 git merge-file 三方合并（ours=用户代码），模板增量叠加到用户代码上。
-- 干净合并直接落盘；语义冲突保留 diff3 三段标记，生成 AI 裁决任务文件
-  （merge_brief），由用户的 AI 编码助手理解语义后完成合并——不做规则猜测。
+- 两者做文件树差分：
+  - 新增的文件直接落地
+  - 内容变化的文本文件与用户当前代码做 git merge-file 三方合并
+    （干净合并直接落盘；语义冲突保留 diff3 三段标记，生成 AI 裁决任务文件）
+  - YAML 配置（global_config/secrets）做顶层键追加，只补缺失键不动用户值
+  - 特性删除的文件仅在与 base 逐字节一致（用户未碰过）时才删，否则交人工
+  - 收尾可按 --verify 启动开发环境探测后端健康端点与特性路由
 """
 
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 from .manifest import render_flags, save_manifest
 from .merge3 import LABEL_BASE, LABEL_OURS, LABEL_THEIRS, merge3
@@ -34,15 +44,17 @@ class FeatureSpec:
     # 新特性代码依赖的基础设施符号（文件, 符号）：老项目基础设施版本过旧时
     # 树差分发现不了（该文件模板侧无特性增量），需显式检查并提示补齐
     required_symbols: tuple[tuple[str, str], ...] = ()
+    # --verify 时探测的特性端点（任何非 404 响应即视为路由已注册，
+    # 401=登录墙拦截、405=方法不对但都证明路由存在）
+    health_endpoint: str | None = None
 
 
-# v1 先支持缝合点最少、无配置合并的两个特性；引擎是树差分驱动的，
-# 后续特性只需在此登记（补配置合并策略后开放 update/feishu-* 等）。
 FEATURE_REGISTRY: dict[str, FeatureSpec] = {
     "logs": FeatureSpec(
         name="logs",
         flag="enable_logs",
         description="日志中心（后端日志 SSE 实时推送 + 级别/关键词过滤）",
+        health_endpoint="/api/logs/recent",
     ),
     "terminal": FeatureSpec(
         name="terminal",
@@ -54,22 +66,66 @@ FEATURE_REGISTRY: dict[str, FeatureSpec] = {
             ("backend/api/__init__.py", "is_local_client"),
             ("backend/api/__init__.py", "is_local_origin"),
         ),
+        health_endpoint="/api/terminal/mode",
+    ),
+    "update": FeatureSpec(
+        name="update",
+        flag="enable_update",
+        description="应用内自动更新（飞书云盘发布 + 版本检查 + 下载安装）",
+        required_symbols=(
+            ("backend/managers/privileged_manager.py", "def run("),
+            ("backend/managers/secret_obfuscator.py", "obfuscate_file_plain_secrets"),
+            ("backend/managers/yaml_comments.py", "dump_yaml_with_labels"),
+        ),
+        health_endpoint="/api/update/check",
+    ),
+    "csv-test": FeatureSpec(
+        name="csv-test",
+        flag="enable_csv_test",
+        description="CSV 测试引擎（产测：测试项 CSV + 人工确认 + HTML 报告）",
+        health_endpoint="/api/factory-test/plan",
+    ),
+    "feishu-auth": FeatureSpec(
+        name="feishu-auth",
+        flag="enable_feishu_auth",
+        description="飞书登录（OAuth 扫码 + 单会话制 + 可开关强制登录墙）",
+        health_endpoint="/api/auth/me",
+    ),
+    "feishu-notify": FeatureSpec(
+        name="feishu-notify",
+        flag="enable_feishu_notify",
+        description="飞书群通知（webhook 发文字 / 自建应用发文件附件）",
+        health_endpoint="/api/notify/test",
+    ),
+    "feishu-bitable": FeatureSpec(
+        name="feishu-bitable",
+        flag="enable_feishu_bitable",
+        description="飞书多维表格上传（自动建字段 / 附件上传 / wiki 链接解析）",
+        health_endpoint="/api/notify/test",
     ),
 }
 
-# 用户数据/可再生文件：即使模板侧有变化也绝不三方合并，跳过并提示
+# 可再生文件：即使模板侧有变化也绝不合并，跳过并提示
 NEVER_MERGE = {
-    "configs/secrets.yaml",
     "uv.lock",
     "frontend/package-lock.json",
     "electron/package-lock.json",
 }
 
+# YAML 配置文件走顶层键追加（只补缺失键，用户已填的值和注释原样保留）
+YAML_APPEND_FILES = {
+    "configs/global_config.yaml",
+    "configs/secrets.yaml.example",
+    "configs/secrets.yaml",
+}
+
+_TOP_KEY_RE = re.compile(r"^[A-Za-z_][\w\-]*:")
+
 
 @dataclass
 class FileAction:
     relpath: str
-    kind: str  # "new" | "merge" | "skip"
+    kind: str  # "new" | "merge" | "yaml_append" | "delete" | "skip"
     note: str = ""
 
 
@@ -79,11 +135,15 @@ class AddResult:
     dry_run: bool = False
     added: list[str] = field(default_factory=list)
     merged_clean: list[str] = field(default_factory=list)
+    yaml_appended: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     skipped: list[FileAction] = field(default_factory=list)
     backed_up: list[str] = field(default_factory=list)
     brief_path: Path | None = None  # 冲突裁决任务文件（有冲突时生成）
     missing_infra: list[tuple[str, str]] = field(default_factory=list)  # (文件, 符号)
+    verified: bool | None = None  # --verify 启动验证结果（None=未执行）
+    verify_note: str = ""
 
 
 def _tree_files(root: Path) -> dict[str, Path]:
@@ -126,6 +186,88 @@ def _check_preflight(project_dir: Path, force: bool) -> None:
         )
 
 
+# ---------------------------------------------------------------- YAML 键级补齐（两级）
+
+
+def _yaml_top_sections(text: str) -> dict[str, tuple[int, int]]:
+    """顶层段切分：{键: (起始行, 结束行)}，结束行为下一顶层键或 EOF。"""
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if _TOP_KEY_RE.match(line)]
+    sections = {}
+    for idx, start in enumerate(starts):
+        key = lines[start].split(":", 1)[0].strip()
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
+        sections[key] = (start, end)
+    return sections
+
+
+def _yaml_sub_keys(section_lines: list[str]) -> set[str]:
+    """段内二级键（缩进一级的 `key:` 行）。"""
+    keys = set()
+    for line in section_lines:
+        match = re.match(r"^\s+([\w\-]+):", line)
+        if match:
+            keys.add(match.group(1))
+    return keys
+
+
+def yaml_merge_missing_keys(ours_text: str, theirs_text: str) -> tuple[str, list[str]]:
+    """两级键补齐：整段缺失 → 追加 theirs 原文块；段内缺子键 → 补子键行。
+
+    用户已填的值和注释一律不动。返回 (新文本, 追加描述如 ['feishu', 'auth.required'])。
+    """
+    ours_lines = ours_text.splitlines()
+    theirs_lines = theirs_text.splitlines()
+    ours_sections = _yaml_top_sections(ours_text)
+    theirs_sections = _yaml_top_sections(theirs_text)
+
+    appended: list[str] = []
+    tail_blocks: list[str] = []  # 整段缺失，追加到文末
+    inline_inserts: list[tuple[int, list[str]]] = []  # (用户段结束行, 子键行)
+
+    for key, (t_start, t_end) in theirs_sections.items():
+        theirs_block = theirs_lines[t_start:t_end]
+        if key not in ours_sections:
+            # 向上吃掉紧挨的注释行（如 # 分组说明）
+            block = list(theirs_block)
+            start = t_start
+            while start > 0 and theirs_lines[start - 1].lstrip().startswith("#"):
+                start -= 1
+                block.insert(0, theirs_lines[start])
+            tail_blocks.append("\n".join(block).rstrip())
+            appended.append(key)
+            continue
+        # 段内补缺失子键
+        o_start, o_end = ours_sections[key]
+        ours_subs = _yaml_sub_keys(ours_lines[o_start:o_end])
+        missing_subs = []
+        for line in theirs_block:
+            match = re.match(r"^\s+([\w\-]+):", line)
+            if match and match.group(1) not in ours_subs:
+                missing_subs.append(line)
+                appended.append(f"{key}.{match.group(1)}")
+        if missing_subs:
+            inline_inserts.append((o_end, missing_subs))
+
+    if not appended:
+        return ours_text, []
+
+    # 段内插入按行号从大到小执行，避免行号位移
+    for end, lines in sorted(inline_inserts, key=lambda item: item[0], reverse=True):
+        ours_lines[end:end] = lines
+    text = "\n".join(ours_lines)
+    if ours_text.endswith("\n"):
+        text += "\n"
+    for block in tail_blocks:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += "\n" + block + "\n"
+    return text, appended
+
+
+# ---------------------------------------------------------------- 文件树差分
+
+
 def compute_actions(
     project_dir: Path, manifest: dict, spec: FeatureSpec, work: Path
 ) -> list[FileAction]:
@@ -147,7 +289,7 @@ def compute_actions(
             continue  # 特性不影响该文件
 
         if relpath in NEVER_MERGE:
-            actions.append(FileAction(relpath, "skip", "用户数据/可再生文件，需手工对齐"))
+            actions.append(FileAction(relpath, "skip", "可再生文件，装依赖时自动更新"))
             continue
 
         dest = project_dir / relpath
@@ -160,13 +302,39 @@ def compute_actions(
                 actions.append(FileAction(relpath, "new"))
             continue
 
-        # 模板侧有变化的文件：与用户代码三方合并
         if not dest.exists():
             actions.append(FileAction(relpath, "new", "用户已删除原文件，按新模板重建"))
             continue
+
+        # YAML 配置：两级键补齐（用户已填的值和注释一律不动），不参与文本合并
+        if relpath in YAML_APPEND_FILES:
+            _merged, added_keys = yaml_merge_missing_keys(
+                dest.read_text(encoding="utf-8", errors="ignore"),
+                theirs_path.read_text(encoding="utf-8"),
+            )
+            if added_keys:
+                actions.append(
+                    FileAction(relpath, "yaml_append", f"追加键: {', '.join(added_keys)}")
+                )
+            continue
+
         if dest.read_bytes() == theirs_path.read_bytes():
             continue  # 用户文件已是新模板内容，幂等跳过
         actions.append(FileAction(relpath, "merge"))
+
+    # 特性删除的文件（如 csv-test 项目不生成首页 DashboardHome）
+    for relpath, base_path in sorted(base_files.items()):
+        if relpath in theirs_files or relpath in NEVER_MERGE or relpath in YAML_APPEND_FILES:
+            continue
+        dest = project_dir / relpath
+        if not dest.exists():
+            continue
+        if dest.read_bytes() == base_path.read_bytes():
+            actions.append(FileAction(relpath, "delete"))
+        else:
+            actions.append(
+                FileAction(relpath, "skip", "该特性会移除此文件，但你已修改过，请人工确认后删除")
+            )
 
     return actions
 
@@ -174,8 +342,8 @@ def compute_actions(
 def _apply_actions(
     project_dir: Path, actions: list[FileAction], work: Path, result: AddResult
 ) -> None:
-    base_dir = work / "base"
     theirs_dir = work / "theirs"
+    base_dir = work / "base"
 
     for action in actions:
         relpath = action.relpath
@@ -195,6 +363,19 @@ def _apply_actions(
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(theirs_path, dest)  # copy2 保留模板脚本的可执行位
             result.added.append(relpath)
+            continue
+
+        if action.kind == "delete":
+            dest.unlink()
+            result.deleted.append(relpath)
+            continue
+
+        if action.kind == "yaml_append":
+            merged_text, _keys = yaml_merge_missing_keys(
+                dest.read_text(encoding="utf-8"), theirs_path.read_text(encoding="utf-8")
+            )
+            dest.write_text(merged_text, encoding="utf-8", newline="")
+            result.yaml_appended.append(relpath)
             continue
 
         # merge：三方合并。冲突块保留 diff3 三段标记，交给 AI 助手做语义裁决
@@ -318,6 +499,82 @@ def _post_install(project_dir: Path, spec: FeatureSpec, applied: set[str], conso
             )
 
 
+# ---------------------------------------------------------------- --verify 启动验证
+
+
+def _http_status(url: str, timeout: float = 5) -> int | None:
+    """GET 探测：有 HTTP 响应返回状态码（含 401/405），连不上返回 None。"""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, OSError):
+        return None
+
+
+def _poll_status(url: str, timeout_s: float = 60) -> int | None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        status = _http_status(url)
+        if status is not None:
+            return status
+        time.sleep(1)
+    return None
+
+
+def _backend_port(project_dir: Path) -> int:
+    config = project_dir / "configs" / "global_config.yaml"
+    try:
+        data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        port = (data.get("ports") or {}).get("backend")
+        if isinstance(port, int):
+            return port
+    except (OSError, yaml.YAMLError):
+        pass
+    return 8000
+
+
+def verify_startup(project_dir: Path, spec: FeatureSpec, console) -> tuple[bool, str]:
+    """启动开发环境，探测后端健康端点与特性路由，最后恢复停止。
+
+    判定：/api/health 有任何 HTTP 响应 = 后端活着（401 是登录墙正常行为）；
+    特性端点响应非 404 = 路由已注册（405=只接受其他方法，同样证明已挂载）。
+    """
+    port = _backend_port(project_dir)
+    base = f"http://127.0.0.1:{port}"
+    console.print("[green]→[/green] 启动开发环境做验证（完成后自动停止）...")
+    start = subprocess.run(
+        [sys.executable, "dev.py", "start"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    try:
+        if start.returncode != 0:
+            tail = (start.stdout or "").strip().splitlines()[-3:]
+            return False, "dev.py start 失败: " + " / ".join(tail)
+        if _poll_status(f"{base}/api/health", timeout_s=60) is None:
+            return False, "后端 /api/health 60s 无响应（查 datas/logs/backend.log）"
+        if spec.health_endpoint:
+            status = _poll_status(f"{base}{spec.health_endpoint}", timeout_s=20)
+            if status is None:
+                return False, f"{spec.health_endpoint} 无响应"
+            if status == 404:
+                return False, f"{spec.health_endpoint} 返回 404，特性路由未注册"
+            return True, f"后端正常，{spec.health_endpoint} 已注册（HTTP {status}）"
+        return True, "后端正常"
+    finally:
+        subprocess.run(
+            [sys.executable, "dev.py", "stop"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+
 def run_add(
     project_dir: Path,
     feature_name: str,
@@ -326,6 +583,7 @@ def run_add(
     dry_run: bool = False,
     force: bool = False,
     install: bool = True,
+    verify: bool = False,
     console=None,
 ) -> AddResult:
     """执行特性添加。前置失败抛 AddError；结果通过 AddResult 返回。"""
@@ -357,6 +615,10 @@ def run_add(
                     (result.conflicts if conflict_count else result.merged_clean).append(
                         action.relpath
                     )
+                elif action.kind == "yaml_append":
+                    result.yaml_appended.append(action.relpath)
+                elif action.kind == "delete":
+                    result.deleted.append(action.relpath)
                 else:
                     result.skipped.append(action)
                 if "备份" in action.note:
@@ -370,9 +632,13 @@ def run_add(
     if result.conflicts or result.missing_infra:
         # 有冲突：TOML/JSON 里带标记，装依赖必失败，留给裁决后手动执行
         result.brief_path = _write_merge_brief(project_dir, result, spec)
-    elif install:
-        applied = set(result.added) | set(result.merged_clean)
-        _post_install(project_dir, spec, applied, console)
+    else:
+        if install:
+            applied = set(result.added) | set(result.merged_clean) | set(result.yaml_appended)
+            _post_install(project_dir, spec, applied, console)
+        if verify:
+            ok, note = verify_startup(project_dir, spec, console)
+            result.verified, result.verify_note = ok, note
 
     # 更新清单：标记特性已启用（老项目推断出的清单也在此一并补写落盘）
     features = list(dict.fromkeys([*manifest.get("features", []), feature_name]))
